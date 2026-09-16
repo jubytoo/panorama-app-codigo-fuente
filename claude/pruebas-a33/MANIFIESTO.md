@@ -117,7 +117,7 @@ Modificado: `a2/test-cableado.js` (+19 aserciones `REST-FLUSH-1..5`).
 | `p12/` | **P12 — «sin rango temporal demostrable no se infiere progreso».** `test-p12-nan.js` (matriz P12-1..P12-5 con `renderRail()` **ejecutada**), `electron-p12.ps1` (dashboard real) y `revertir-dashboard.js` (3 reversiones). Nació describiendo el defecto; desde el 15 sept 2026 **exige la corrección** |
 | `b4/` | **B4 — persistencia de la base de datos.** `test-b4-persistencia.js` (**144 OK / 0**) ejecuta el `db.js` REAL contra carpetas de usar y tirar e **inyecta fallos de `fs` acotados al sandbox**: no se puede abrir el temporal, la escritura se corta a mitad, falla el rename de publicación, y la carpeta de datos desaparece de verdad. Las secciones `A-Q` **describen y custodian** lo de A3.3 que no se toca; la sección `R` **EXIGE** que reordenar sea una sola operación, ejecutando el handler **extraído de `main.js`**. `electron-b4.ps1` (**17 OK / 0**) lo comprueba en la app real con proyectos de prueba. `revertir-b4.js` (2 reversiones) + `comprobar-reversiones-b4.js`. **No confundir con `real-run/b4.js`**, que es del **Bloque 4 de A3.3** |
 | `b5/` | **B5 — un envío en curso no se repite.** `test-b5-reentrancia.js` (**68 OK / 0**) ejecuta el `security-window/renderer.js` **REAL sobre un DOM doble** y **cuenta los IPC**: exige **1** con doble Enter, cinco Enter, click+Enter y doble click, en los cuatro modos, y que la guarda **no** sea un cerrojo permanente. Las secciones `B/C/D/F/G/H` describen y **custodian** las capas inferiores, que no se tocan. `electron-b5.ps1` (**24 OK / 0**) lo mide en la app real con un **espía sobre `ipcMain.handle`**, haciendo `setup` y `change` de verdad sobre material de prueba, **y conserva la custodia de la defensa inferior enviando dos IPC DIRECTOS** que se saltan el renderer. `revertir-b5.js` + `comprobar-reversiones-b5.js`, que exige reproducir los números originales (2/5/2). **No confundir con `bloque5/` ni con `real-run/b5.js`**, que son el **Bloque 5 de A3.3** (borrados) |
-| `c1/` | **C1 — residuos: diagnóstico, SIN implementar.** `test-c1-residuos.js` (**122 OK / 0**, **descriptiva**: da verde porque describe lo que HAY). Fabrica en sandbox las familias de residuo —backup huérfano anterior e intercalado, fila sin archivo, `.tmp-fallido` íntegro, `.tmp` completo y `.tmp` muerto, tmp de acción sin journal, journal propio/ajeno/ilegible/resuelto, proyecto borrado, CV huérfano, restos de rekey y de restauración, sonda de escritura— con las funciones **reales** de `main.js` y el `db.js` real, e **inyecta fallos de `fs`** acotados al sandbox. `C1-D` demuestra que el «contar y registrar» aprobado **no existe**; `C1-E9c` demuestra el mensaje engañoso del rekey; `C1-R` evalúa como **modelo** el arreglo de la auditoría y enseña por qué es inseguro. `electron-c1.ps1` (**10 OK / 0**, app real + `real-run/c1-particion.js`) mide qué queda de la partición de un proyecto borrado. `inventario-vivo.js` es el inventario de los datos **reales**, de **solo lectura** e imprimiendo solo agregados; comprueba la BD viva, la de P10 y el nº de entradas antes y después (exit 98 si algo cambia). **No confundir los `C1-*` de aquí con el corte `C1` de la matriz del Bloque 4** |
+| `c1/` | **C1 — residuos. C1-A cerrado, C1-B diferido.** Desde la ronda C1-A, `test-c1-residuos.js` (**165 OK / 0**) tiene una sección **`C1-A` que EXIGE**: el inventario de arranque deja exactamente una línea con los recuentos esperados, sin rutas (A1); no escribe, no crea, no mueve, no descifra de más, no entra en las cachés de Chromium, con **espías** de `fs`, `dbmod` y `securitymod` (A2); detecta y no elimina el intercalado, el `.tmp-fallido` y la partición huérfana (A3–A5); «Eliminar evaluación» e «Importar» retiran el CV solo con `aplicado+verificado`, sobre las **ramas reales del HTML** (A6–A8); los mensajes ya no prometen «se resuelve sola» (A9). Cinco aserciones descriptivas del diagnóstico (`C1-D3/D4`, `C1-E8b/c`, `C1-E9c`) se **invirtieron**, con nota. `revertir-c1.js` + `comprobar-reversiones-c1.js`: **siete reversiones**, cada una rompe solo lo suyo. `medir-inventario-vivo.js`: el inventario REAL sobre la carpeta de datos, con `fs` y `dbmod` que **lanzan** ante cualquier escritura. `electron-c1.ps1` (**31 OK / 0**, cuatro arranques). *Lo que sigue es la descripción del diagnóstico:* `test-c1-residuos.js` nació como batería **descriptiva** (122 OK / 0: da verde porque describe lo que HAY). Fabrica en sandbox las familias de residuo —backup huérfano anterior e intercalado, fila sin archivo, `.tmp-fallido` íntegro, `.tmp` completo y `.tmp` muerto, tmp de acción sin journal, journal propio/ajeno/ilegible/resuelto, proyecto borrado, CV huérfano, restos de rekey y de restauración, sonda de escritura— con las funciones **reales** de `main.js` y el `db.js` real, e **inyecta fallos de `fs`** acotados al sandbox. `C1-D` demuestra que el «contar y registrar» aprobado **no existe**; `C1-E9c` demuestra el mensaje engañoso del rekey; `C1-R` evalúa como **modelo** el arreglo de la auditoría y enseña por qué es inseguro. `electron-c1.ps1` (**10 OK / 0**, app real + `real-run/c1-particion.js`) mide qué queda de la partición de un proyecto borrado. `inventario-vivo.js` es el inventario de los datos **reales**, de **solo lectura** e imprimiendo solo agregados; comprueba la BD viva, la de P10 y el nº de entradas antes y después (exit 98 si algo cambia). **No confundir los `C1-*` de aquí con el corte `C1` de la matriz del Bloque 4** |
 | `real-run/` | Envoltorios que cargan el `main.js` REAL dentro de Electron. **Ojo con dos homonimias:** `b5.js` y `b4.js` son de los **Bloques 5 y 4 de A3.3**, no de los hallazgos B4/B5 de la auditoría; esos son `b4-reorder.js` y `b5-reentrancia.js`. `c1-particion.js` es de C1 |
 | `lock-harness/`, `nucleo-a33/`, `probe/`, y los sueltos de la raíz | Material de rondas anteriores (A1, A2 original, B2, `setMeta`, benchmarks). Se conservan como histórico |
 
@@ -126,13 +126,21 @@ Modificado: `a2/test-cableado.js` (+19 aserciones `REST-FLUSH-1..5`).
 ## 4. RESULTADO CONOCIDO MÁS RECIENTE
 
 ```
-REGRESIÓN AUTOMATIZADA COMPLETA:  1745 OK / 0 FALLOS   (16 sept 2026, tras B4)
+REGRESIÓN AUTOMATIZADA COMPLETA:  1745 OK / 0 FALLOS   (16 sept 2026, tras C1-A)
 ```
 
-Contra `main.js` = `DB7FF295E26279DD433F4F9C15D5F6748929FE4E482C90839B4A7B99DF362DB7`
-(573 142 B) y `db.js` = `B03C81FF5FC300009DC315E4B20F9BF88DCC6902B18C2EF434B251A022EDD830`
-(81 870 B — **la ronda B4 solo le cambió comentarios**; sin ellos el código es
-idéntico byte a byte al de antes).
+Contra `main.js` = `F81F0A3D3DF0AA1F9E2B8F5024A69F4AAC3C86DB201EE2F3E27DC4C7DD32A952`
+(587 045 B, 11 637 líneas) y `db.js` = `B03C81FF5FC300009DC315E4B20F9BF88DCC6902B18C2EF434B251A022EDD830`
+(81 870 B — sin cambios desde B4, que solo le cambió comentarios; sin ellos el
+código es idéntico byte a byte al de antes). Aparte, en la misma tirada: E1 47,
+P12 73, E2 67, B1 77, B3 85, B4 144, B5 68 y **C1 165**, todas a 0 fallos.
+
+> **C1-A tampoco mueve la cifra del núcleo**, y es lo esperado: sus
+> aserciones se cuentan en `c1/`. Lo que sí hubo que actualizar **a
+> conciencia, con su nota**, es `HASHES_TRAS_A2` de `e1/test-inventario-e1.js`
+> (main.js `DB7FF295…` → `F81F0A3D…`). La lista compartida de extracción **no**
+> hubo que tocarla: ninguna función que ya extrajeran los demás arneses llama a
+> las nuevas. Antes de C1-A: **1745 OK/0** contra `DB7FF295…` (tras B4 y B5).
 
 > **Tampoco se mueve con B4**, por lo mismo: sus 144 aserciones se cuentan
 > aparte, en `b4/`. Lo que sí hubo que actualizar **a conciencia, con su nota**
@@ -225,13 +233,13 @@ no solo lo de B3. Todas las cifras coinciden con las registradas:
 | `b3/electron-b3.ps1` | **36 / 0** *(era 8 / 0 cuando solo describía)* |
 | `b4/electron-b4.ps1` | **17 / 0** *(nuevo en la ronda B4)* |
 | `b5/electron-b5.ps1` | **24 / 0** *(nuevo en la ronda B5)* |
-| `c1/electron-c1.ps1` | **10 / 0** *(nuevo en el diagnóstico de C1; descriptivo)* |
+| `c1/electron-c1.ps1` | **31 / 0** *(10 / 0 en el diagnóstico; +21 con C1-A: línea de inventario en cuatro arranques reales y «Eliminar evaluación» con clic real)* |
 
 En los once: **BD viva idéntica por SHA-256** antes y después, carpeta de la
 BD sin archivos nuevos, **archivos productivos intactos** y sandbox borrado.
-*(La tabla se reejecutó entera tras B4 y otra vez tras B5, con las mismas
-cifras en ambas. El diagnóstico de C1 no tocó producción: no se reejecutó la
-tabla, solo se añadió su arnés.)*
+*(La tabla se reejecutó entera tras B4, tras B5 y **otra vez tras C1-A**
+—`main.js` cambió en el arranque y en los mensajes del rekey—, con las mismas
+cifras en las tres.)*
 
 > ## ADVERTENCIA
 >

@@ -464,7 +464,9 @@ puede llegar después que el archivo (`C1-R1..R6`).
   que **lanzan** ante cualquier escritura. `c1/inventario-vivo.js`: el del
   diagnóstico.
 - Regresión: núcleo **1745/0**, E1 47, P12 73, E2 67, B1 77, B3 85, B4 144,
-  B5 68. BD viva `D5C3FF53…` idéntica en todas las ejecuciones.
+  B5 68. **Electron real, los once arneses reejecutados:** A2 66, Bloque5 71,
+  CV 12, E1 21, P12 32, E2 42, B1 24, B3 36, B4 17, B5 24, **C1 31** — todos a
+  0 fallos. BD viva `D5C3FF53…` idéntica en todas las ejecuciones.
 
 ## 19. B5 — CERRADO: UN ENVÍO EN CURSO NO SE REPITE (16 sept 2026)
 
