@@ -1,0 +1,73 @@
+﻿=== 1) GUARDADOS REALES (launcher + dashboard + reunion + candidatos) ===
+
+--- resultados ---
+  [2026-09-14T18:57:45.582Z] OK    el LAUNCHER real abre
+  [2026-09-14T18:57:47.101Z] --- GUARDADOS REALES CON VENTANAS DE VERDAD ---
+  [2026-09-14T18:57:47.162Z] proyecto creado id=1
+  [2026-09-14T18:57:47.694Z] OK    la ventana del DASHBOARD real abre
+  [2026-09-14T18:57:50.796Z] OK    DASHBOARD: el preload real devuelve el CONTRATO DE ACCION
+  [2026-09-14T18:57:50.797Z] OK       con su action_id
+  [2026-09-14T18:57:51.605Z] OK       la fila existe en la BD real
+  [2026-09-14T18:57:51.607Z] OK       y su archivo en disco
+  [2026-09-14T18:57:51.607Z] OK       el nombre lleva nonce
+  [2026-09-14T18:57:51.608Z] OK       el titulo del proyecto se actualizo EN EL MISMO commit
+  [2026-09-14T18:57:51.609Z] OK       la marca de accion esta en app_meta
+  [2026-09-14T18:57:51.615Z] OK       NO queda ningun journal de accion
+  [2026-09-14T18:57:51.616Z] OK       ni .tmp/.old sueltos
+  [2026-09-14T18:57:54.202Z] proyecto del Directorio: 2
+  [2026-09-14T18:57:54.203Z] OK    la ventana del DIRECTORIO real abre
+  [2026-09-14T18:57:59.306Z] OK    DIRECTORIO: el preload real devuelve el CONTRATO DE ACCION
+  [2026-09-14T18:57:59.307Z] OK       con su fila y su archivo
+  [2026-09-14T18:57:59.352Z] OK    REUNION: saveMeetingPrep devuelve el contrato
+  [2026-09-14T18:57:59.353Z] OK       con su fila y su id
+  [2026-09-14T18:57:59.353Z] OK       y su archivo
+  [2026-09-14T18:57:59.389Z] OK    REUNION: updateMeetingPrep devuelve el contrato
+  [2026-09-14T18:57:59.389Z] OK       y sobrescribe EL MISMO archivo
+  [2026-09-14T18:57:59.389Z] OK       sin dejar .old
+  [2026-09-14T18:57:59.425Z] OK    CANDIDATOS: el PRIMER guardado (archivo inexistente) funciona
+  [2026-09-14T18:57:59.425Z] OK       con su archivo
+  [2026-09-14T18:57:59.426Z] OK       y su fila
+  [2026-09-14T18:57:59.469Z] OK    CANDIDATOS: el SEGUNDO es un reemplazo real
+  [2026-09-14T18:57:59.470Z] OK       sin residuos
+  [2026-09-14T18:57:59.472Z] --- FIN GUARDADOS ---
+
+=== 2) CIERRE Y REAPERTURA: los datos siguen ahi ===
+
+--- resultados ---
+  [2026-09-14T18:58:03.989Z] OK    el LAUNCHER real abre
+  [2026-09-14T18:58:05.506Z] --- REAPERTURA: los datos siguen ahi ---
+  [2026-09-14T18:58:05.510Z] OK    el proyecto sigue en la BD
+  [2026-09-14T18:58:05.512Z] OK    el backup sigue byte a byte igual
+  [2026-09-14T18:58:05.514Z] OK    la preparacion de reunion sigue igual
+  [2026-09-14T18:58:05.515Z] OK    la evaluacion de candidatos sigue igual
+  [2026-09-14T18:58:05.516Z] OK    no quedan journals de accion
+  [2026-09-14T18:58:05.517Z] --- FIN REAPERTURA ---
+
+=== 3) RECUPERACION REAL DE UN JOURNAL DE ACCION AL ARRANCAR ===
+  writer del sandbox:   edc10fbf110d956aa86d81d4afc5f0e0
+  base_commit_id real:  231089884a4728fd4622a34caf286af8
+  estado plantado: destino publicado + .old + journal
+
+--- resultados ---
+  [2026-09-14T18:58:09.740Z] OK    el LAUNCHER real abre
+  [2026-09-14T18:58:11.250Z] --- RECOVERY DE ACCION AL ARRANCAR ---
+  [2026-09-14T18:58:11.253Z] OK    la app ARRANCO (el journal era resoluble)
+  [2026-09-14T18:58:11.255Z] OK    el archivo volvio a su contenido ORIGINAL
+  [2026-09-14T18:58:11.258Z] OK    el journal se retiro
+  [2026-09-14T18:58:11.259Z] OK    y no quedan .tmp/.old
+  [2026-09-14T18:58:11.260Z] --- FIN RECOVERY ---
+  journals tras el arranque: 
+
+=== 4) PS-2006: un journal NO demostrable corta el arranque ===
+  journal no demostrable plantado: 38b9eb24e75c46efaed476e29ca59f61.json=B280C5A2F236
+  ESTE arranque registro PS-2006: True
+  NO llego a abrir el launcher:   True
+  journals INTACTOS:             True
+  destino INTACTO:               True
+  base de datos INTACTA:         True
+    [2026-09-14T18:58:15.041Z] ERROR PS-2006 — el destino de una acción pendiente no se corresponde con lo que el registro esperaba: "C:\Users\ADMIN~1.JLO\AppData\Local\Temp\claude\C--Codigo-Fuente-PS\e55d4471-ea3f-4279-b758-0366ccb6384c\scratchpad\bloque4\sandbox\Roaming\panorama-app\backups\1-proyecto-b4\evaluacion-candidatos\estado.json" no es ni lo que había ni lo que se preparó
+    [2026-09-14T18:58:15.041Z] ERROR PS-2006 — Un guardado quedó a medias entre el archivo y la base de datos
+
+PRODUCCION INTACTA: True   (F71F4140E7FD68504CBF65C1D930BC4A244554D7BFB013A70557A30CCF74F501)
+CARPETA COMPARTIDA: 30 -> 30 entradas (nunca referenciada por estas pruebas)
+sandbox borrado: True

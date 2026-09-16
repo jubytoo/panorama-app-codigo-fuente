@@ -1,0 +1,6 @@
+[2026-09-13T12:21:50.878Z] pid=7164 mode=relaunch requestSingleInstanceLock -> true
+[2026-09-13T12:21:50.912Z] pid=7164 mode=relaunch whenReady OK (esta instancia tiene el cerrojo)
+[2026-09-13T12:21:50.913Z] pid=7164 mode=relaunch generacion 0 -> app.relaunch() + app.exit(0)  [patron de changeUserDataLocation / resetUserDataLocationToDefault]
+[2026-09-13T12:21:51.072Z] pid=5812 mode=relaunch requestSingleInstanceLock -> true
+[2026-09-13T12:21:51.109Z] pid=5812 mode=relaunch whenReady OK (esta instancia tiene el cerrojo)
+[2026-09-13T12:21:51.109Z] pid=5812 mode=relaunch generacion 1 -> LA APP HA VUELTO A ARRANCAR TRAS relaunch() Y HA OBTENIDO EL CERROJO

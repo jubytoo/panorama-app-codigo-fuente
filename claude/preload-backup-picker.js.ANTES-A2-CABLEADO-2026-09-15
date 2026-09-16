@@ -1,0 +1,36 @@
+// Preload de la ventana "Restaurar un backup concreto..." (v0.1.50).
+// Superficie mínima: reutiliza tal cual los IPC 'backup:list'/'backup:restore'
+// que ya existía usaba el lanzador (con backupId fijo a null, "el último") —
+// aquí simplemente se deja elegir cuál. No hay ningún IPC nuevo por detrás.
+const { contextBridge, ipcRenderer } = require('electron');
+
+function getArgValue(flag) {
+  const arg = process.argv.find((a) => a.startsWith(flag + '='));
+  return arg ? arg.slice(flag.length + 1) : null;
+}
+
+const projectId = Number(getArgValue('--panorama-project-id'));
+const rawName = getArgValue('--panorama-project-name') || '';
+
+contextBridge.exposeInMainWorld('backupPickerAPI', {
+  projectId,
+  projectName: decodeURIComponent(rawName),
+  listBackups: () => ipcRenderer.invoke('backup:list', projectId),
+  restoreBackup: (backupId) => ipcRenderer.invoke('backup:restore', { projectId, backupId }),
+});
+
+// v2.0.16 — controles de ventana propios, ver createLauncherWindow() en main.js.
+contextBridge.exposeInMainWorld('winControls', {
+  minimize: () => ipcRenderer.invoke('win:minimize'),
+  toggleMaximize: () => ipcRenderer.invoke('win:toggleMaximize'),
+  close: () => ipcRenderer.invoke('win:close'),
+  isMaximized: () => ipcRenderer.invoke('win:isMaximized'),
+  onMaximizedChanged: (cb) => ipcRenderer.on('win:maximizedChanged', (evt, isMax) => cb(isMax)),
+});
+
+// v2.0.27 — tema visual GLOBAL de toda la app, ver vendor/theme.js.
+contextBridge.exposeInMainWorld('themeAPI', {
+  get: () => ipcRenderer.invoke('theme:get'),
+  set: (themeKey) => ipcRenderer.invoke('theme:set', themeKey),
+  onChanged: (cb) => ipcRenderer.on('theme:changed', (evt, themeKey) => cb(themeKey)),
+});

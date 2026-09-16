@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<title>Panorama del Servicio — Proyectos</title>
+<!-- v2.0.29: transiciones y movimiento (Fase 3), ver vendor/motion.css. -->
+<link rel="stylesheet" href="../vendor/motion.css">
+<style>
+  :root{
+    --bg:#0a0e13; --surface:#121821; --surface-2:#171f2a;
+    --border:#232e3a; --ink:#eef2f6; --ink-soft:#93a3b5; --ink-faint:#546578;
+    --amber:#f0a83c; --cyan:#4fc3d9; --green:#4caf82; --red:#e2596b;
+    /* v2.0.37: color de texto para el botón .btn de fondo sólido --cyan
+       -- fallback antes de que cargue el tema (ver comentario junto a
+       --cyan-ink en vendor/theme.js para el porqué de que exista). */
+    --cyan-ink:#06222a;
+    /* Semáforo de urgencia de las tarjetas (v0.1.26/27/28) — variables
+       propias, NO --amber (aunque el tono de partida salió de ahí): --amber
+       se comparte de nombre con el resto de ventanas de la app y no
+       queríamos tocar ese identificador por si acaso, aunque en ESTE
+       archivo en concreto no se usaba en ningún otro sitio. Ajustadas a
+       pedido del usuario tras ver las versiones anteriores lado a lado:
+       apenas se distinguían — el naranja se queda más naranja puro (menos
+       ámbar/marrón).
+       v0.1.28: se añade un CUARTO escalón, --sem-amarillo-claro, aún más
+       pálido que --sem-amarillo, para el hito "a 4-7 días vista, a
+       vigilar" — --sem-amarillo (el tono ya existente desde 0.1.27) pasa a
+       usarse para "2-3 días vista" (más urgente) y para los riesgos
+       abiertos sin materializar (sin cambios ahí). Ver computeProjectSemaforo
+       en main.js para los umbrales exactos en días.
+       v2.0.36: estos 3 valores son solo el FALLBACK antes de que cargue el
+       tema (y el valor que se queda si algo falla) — pasan a formar parte
+       de vendor/theme.js (THEMES.*.semNaranja/semAmarillo/semAmarilloClaro)
+       y applyTheme() los reasigna por encima de estos con
+       r.setProperty(...) según el tema activo. Antes NUNCA se reasignaban
+       al cambiar de tema y quedaban con este mismo tono pálido pensado
+       para el fondo casi negro de Medianoche — ilegibles sobre los 4 temas
+       claros (reportado: "el unico premium es medianoche que esta
+       perfecto, los otros son un desastre", confirmado viendo el aviso
+       "Servicio finaliza en N días" casi invisible en Niebla y Marfil).
+       Los valores de aquí abajo son a propósito IDÉNTICOS a
+       THEMES.medianoche.sem* — mismo aspecto que siempre en Medianoche. */
+    --sem-naranja:#ff7a1a; --sem-amarillo:#f0e6a0; --sem-amarillo-claro:#faf5da;
+    --mono:'JetBrains Mono', ui-monospace, Consolas, monospace;
+    --sans:'Segoe UI', system-ui, sans-serif;
+  }
+  *{box-sizing:border-box;}
+  /* v2.0.26: scrollbar propia, ver el mismo comentario en
+     dashboard/plantilla_dashboard.html -- mismos tokens de color
+     (este archivo no define --surface-2 aparte pero sí --surface/--border). */
+  ::-webkit-scrollbar{ width:10px; height:10px; }
+  ::-webkit-scrollbar-track{ background:var(--surface); }
+  ::-webkit-scrollbar-thumb{ background:var(--border); border-radius:99px; border:2px solid var(--surface); background-clip:padding-box; }
+  ::-webkit-scrollbar-thumb:hover{ background:var(--ink-faint); background-clip:padding-box; }
+  ::-webkit-scrollbar-corner{ background:var(--surface); }
+  body{
+    margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans);
+    height:100vh; display:flex; flex-direction:column;
+  }
+  header{
+    padding:22px 28px 14px; border-bottom:1px solid var(--border);
+    display:flex; align-items:center; justify-content:space-between;
+  }
+  header h1{ font-size:18px; margin:0; letter-spacing:.2px; }
+  header .sub{ font-size:11.5px; color:var(--ink-faint); margin-top:4px; font-family:var(--mono); }
+  .btn{
+    background:var(--cyan); color:var(--cyan-ink); border:none; border-radius:8px;
+    padding:9px 16px; font-size:13px; font-weight:600; cursor:pointer;
+  }
+  .btn:hover{ filter:brightness(1.08); }
+  .btn.ghost{ background:transparent; color:var(--ink-soft); border:1px solid var(--border); }
+  .btn.ghost:hover{ color:var(--ink); border-color:var(--ink-faint); }
+  .btn.small{ padding:6px 10px; font-size:11.5px; border-radius:6px; }
+  .btn.danger{ color:var(--red); border-color:#4a2530; }
+  .btn.danger:hover{ color:#fff; background:var(--red); border-color:var(--red); }
+  main{ flex:1; overflow-y:auto; padding:20px 28px 40px; }
+  .empty{ color:var(--ink-faint); font-size:13px; margin-top:60px; text-align:center; }
+  .grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(300px,1fr)); gap:14px; }
+  .card{
+    background:var(--surface); border:1px solid var(--border); border-left:3px solid var(--border); border-radius:12px;
+    /* v2.0.32: más aire debajo de los botones (16px->22px) -- el usuario
+       notó que quedaban pegados casi al borde inferior de la tarjeta. */
+    padding:16px 18px 22px 16px; display:flex; flex-direction:column; gap:8px;
+    cursor:grab;
+    /* v2.0.29: transform se añade aquí (no en vendor/motion.css) porque
+       esta regla, al ir DESPUÉS del <link> a motion.css en la cascada,
+       ganaría entera sobre la de allí si se declarara por separado --
+       transition es una propiedad shorthand, no se combinan dos
+       declaraciones con la misma especificidad, gana la última. Ver el
+       hover .card:hover de motion.css (el levantamiento en sí sigue
+       viniendo de ahí, solo la transición vive aquí). */
+    transition:opacity .15s ease, box-shadow .14s ease, transform .14s ease;
+  }
+  .card:active{ cursor:grabbing; }
+  .card h3{ margin:0; font-size:14.5px; }
+  .card .client{ font-size:11.5px; color:var(--ink-faint); }
+  .card .meta{ font-size:11px; color:var(--ink-soft); font-family:var(--mono); display:flex; flex-direction:column; gap:2px; margin-top:2px; }
+  /* v2.0.53: bug real reportado -- "Staffing IT" + "Servicio activo" queda
+     alineado (los dos empiezan con ✓), pero "Staffing IT" + "Servicio
+     finaliza en X días" no (✓ y ⏳ no ocupan el mismo ancho de fuente, así
+     que el texto de después arranca en una columna distinta según el
+     icono de esa línea). Ancho fijo para el icono -- el texto que sigue
+     siempre empieza en la misma columna, sea cual sea el glifo
+     (✓/⚠/📅/🔴/🚀/⏳/🛑, ver metaIcon() en renderer.js). */
+  .card .meta .meta-icon{ display:inline-block; width:1.35em; text-align:center; }
+  /* v2.0.47: bug real reportado -- con "Servicio finaliza en..." o "N
+     entrevistas pendientes" (líneas opcionales de .meta, ver renderer.js),
+     una tarjeta se vuelve más alta que sus vecinas de la misma fila. El
+     grid ya estira todas las tarjetas de la fila a la misma altura (grid
+     por defecto), y .card ya es flex-column -- pero .actions no tenía
+     margin-top:auto, así que en vez de anclarse abajo, se quedaba pegado
+     justo debajo de .meta, a distinta altura en cada tarjeta según cuántos
+     avisos tuviera. margin-top:auto empuja el bloque de botones al fondo
+     de la tarjeta SIEMPRE, alineado con el de sus vecinas. */
+  .card .actions{ display:flex; gap:8px 8px; row-gap:10px; margin-top:auto; padding-top:12px; flex-wrap:wrap; }
+  /* Semáforo de urgencia por proyecto (v0.1.26) — barra de acento a la
+     izquierda, mismo lenguaje visual que ya usan las tarjetas de KPI del
+     Directorio de Talento (.stat::before), en vez de un marco completo. */
+  .card.sem-rojo{ border-left-color:var(--red); }
+  .card.sem-naranja{ border-left-color:var(--sem-naranja); }
+  .card.sem-amarillo{ border-left-color:var(--sem-amarillo); }
+  .card.sem-amarillo-claro{ border-left-color:var(--sem-amarillo-claro); }
+  /* v0.1.76: "N entrevista(s) pendiente(s)" — mismo lenguaje de color que
+     el semáforo de arriba, pero como texto (a petición del usuario, para
+     no mezclar entrevistas con los hitos del dashboard). Sin nivel de
+     urgencia asignado (entrevista a más de 7 días vista) se queda en el
+     tono neutro de --ink-soft, igual que el resto de líneas de .meta.
+     v0.1.77: ahora es clicable (abre Evaluación de Candidatos en la
+     pestaña Evaluaciones — ver data-act="openEval" en renderer.js), así
+     que lleva cursor:pointer y un subrayado sutil al pasar el ratón para
+     que se note que responde al clic. */
+  .card .meta .interview-pending{ font-weight:600; cursor:pointer; }
+  .card .meta .interview-pending:hover{ text-decoration:underline; }
+  .card .meta .interview-pending.txt-rojo, .card .meta .service-end-warning.txt-rojo{ color:var(--red); }
+  .card .meta .interview-pending.txt-naranja, .card .meta .service-end-warning.txt-naranja{ color:var(--sem-naranja); }
+  .card .meta .interview-pending.txt-amarillo, .card .meta .service-end-warning.txt-amarillo{ color:var(--sem-amarillo); }
+  .card .meta .interview-pending.txt-amarillo-claro, .card .meta .service-end-warning.txt-amarillo-claro{ color:var(--sem-amarillo-claro); }
+  /* v2.0.52: "arranca en N días" (servicio que todavía no ha empezado por
+     fecha) no es un aviso de problema como el resto de estos colores
+     (rojo/naranja/amarillo son todos "algo va mal") -- es informativo, así
+     que usa el acento cian de toda la app en vez de un color de la escala
+     de urgencia. */
+  .card .meta .service-end-warning.txt-info{ color:var(--cyan); font-weight:600; }
+  /* v2.0.48: estado estable -- cuando no hay aviso real que mostrar, en vez
+     de no pintar nada (que hacía que la tarjeta tuviera menos líneas que
+     sus vecinas y toda la fila se sintiera desigual), se reserva la misma
+     línea con un mensaje neutro en verde apagado -- misma idea que
+     --green ya usa en el resto de la app para "todo en orden". */
+  .card .meta .txt-ok{ color:var(--green); font-weight:600; }
+  /* v2.0.11: aviso de "servicio finalizando/finalizado" (o prórroga estimada sin confirmar) — mismo
+     esquema de color que "N entrevista(s) pendiente(s)" de arriba, pero sin cursor:pointer: no abre
+     nada al pinchar, es solo informativo (ver computeServiceEndWarning en main.js). */
+  .card .meta .service-end-warning{ font-weight:600; }
+  /* Arrastrar y soltar para reordenar (v0.1.26) — la propia tarjeta que se
+     arrastra se mueve en vivo por la rejilla siguiendo al cursor (ver
+     dragover en renderer.js), así que no hace falta un indicador de
+     inserción aparte: la tarjeta atenuada ES el indicador. */
+  .card.dragging{ opacity:.35; }
+  .modal-backdrop{
+    position:fixed; inset:0; background:rgba(0,0,0,.55); display:none;
+    align-items:center; justify-content:center; z-index:10;
+  }
+  .modal-backdrop.open{ display:flex; }
+  .modal{
+    background:var(--surface-2); border:1px solid var(--border); border-radius:12px;
+    padding:22px; width:360px; display:flex; flex-direction:column; gap:12px;
+  }
+  .modal h2{ margin:0; font-size:15px; }
+  .modal label{ font-size:11.5px; color:var(--ink-soft); }
+  .modal input{
+    background:var(--bg); border:1px solid var(--border); border-radius:7px;
+    padding:9px 10px; color:var(--ink); font-size:13px; font-family:var(--sans);
+  }
+  .modal .row{ display:flex; flex-direction:column; gap:4px; }
+  .modal .row .hint{ font-size:10.5px; color:var(--ink-faint); }
+  .modal .actions{ display:flex; justify-content:flex-end; gap:8px; margin-top:6px; }
+  .modal .file-row{ display:flex; align-items:center; gap:8px; }
+  .modal .file-row span{ font-size:11.5px; color:var(--ink-faint); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .modal input:disabled{ opacity:.45; cursor:not-allowed; }
+  .modal label.disabled{ opacity:.45; }
+  #modal-error{ font-size:11.5px; color:var(--red); min-height:14px; }
+  /* v2.0.27: panel "Tema visual" -- único selector de tema de toda la app,
+     ver vendor/theme.js y el comentario junto a config-theme en este mismo
+     archivo. Reutiliza .modal-backdrop/.modal (mismo look que "Nuevo
+     proyecto"), solo añade la rejilla de muestras de color. */
+  #theme-modal{ width:400px; }
+  .theme-swatch-grid{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
+  .theme-swatch{
+    display:flex; flex-direction:column; align-items:center; gap:8px;
+    padding:12px 6px; border-radius:9px; border:1.5px solid var(--border);
+    cursor:pointer; font-family:var(--sans);
+  }
+  .theme-swatch.active{ border-color:var(--cyan); box-shadow:0 0 0 1px var(--cyan) inset; }
+  /* v2.0.27: el punto usa el color de ACENTO del tema (t.cyan), no su fondo
+     -- 4 de los 5 temas tienen un fondo casi blanco (Nube/Cielo/Niebla/
+     Marfil), apenas distinguibles entre sí; el acento sí es distinto en
+     cada uno. El propio botón sí lleva el fondo del tema, para dar una
+     idea real de cómo se ve la ventana con ese tema aplicado. */
+  .theme-swatch .dot{ width:26px; height:26px; border-radius:50%; border:1px solid rgba(0,0,0,.15); }
+  .theme-swatch .name{ font-size:11.5px; }
+  .badge{ font-size:10.5px; padding:2px 7px; border-radius:99px; background:var(--surface-2); color:var(--ink-soft); border:1px solid var(--border); }
+  #status{ font-size:11px; color:var(--ink-faint); font-family:var(--mono); padding:0 28px 10px; }
+
+  /* ------------------------------------------------------------------
+     v2.0.56 — rediseño de la tarjeta + vista de lista + resumen de salud
+     de cartera, a partir de tres referencias visuales que trajo el
+     usuario (mockups externos). Se adaptan al lenguaje visual YA
+     establecido en el resto de la app en vez de copiar literalmente esas
+     referencias: las píldoras de estado van con TINTE (fondo + texto +
+     borde del mismo color), nunca relleno sólido -- la guía interna de
+     diseño de esta app, puesta a prueba varias veces esta misma sesión
+     (Evaluación de Candidatos necesitó tres rondas hasta dejar de pintar
+     bloques sólidos).
+     ------------------------------------------------------------------ */
+  .view-switch{ display:flex; gap:2px; background:var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:2px; }
+  .view-switch button{
+    background:transparent; border:none; color:var(--ink-soft); font-family:var(--sans); font-size:12px;
+    padding:6px 12px; border-radius:6px; cursor:pointer;
+  }
+  .view-switch button:hover{ color:var(--ink); }
+  .view-switch button.active{ background:var(--cyan-bg); color:var(--cyan); font-weight:600; }
+
+  /* --- Tarjeta rediseñada --- */
+  .card{ padding:16px 16px 14px; gap:10px; }
+  .card .card-head h3{ margin:0; font-size:15px; }
+  .card .info-line{ font-size:11px; color:var(--ink-soft); font-family:var(--mono); display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+  .card .info-line .sep{ color:var(--ink-faint); }
+  .pill-row{ display:flex; flex-wrap:wrap; gap:6px; }
+  /* Píldora de estado -- mismo patrón que .exec-kpi/.stat del dashboard y
+     directorio: tinte de fondo + texto + borde del mismo color, icono de
+     ancho fijo delante (ver metaIcon en renderer.js, mismo bug de
+     alineación que ya se corrigió en 2.0.53). */
+  .pill{
+    display:inline-flex; align-items:center; gap:4px; font-family:var(--mono); font-size:10.5px; font-weight:600;
+    padding:4px 9px 4px 7px; border-radius:99px; border:1px solid var(--border); background:var(--surface-2); color:var(--ink-soft);
+    cursor:default;
+  }
+  .pill[data-clickable]{ cursor:pointer; }
+  .pill[data-clickable]:hover{ filter:brightness(1.15); }
+  .pill.pill-ok{ background:var(--green-bg); color:var(--green); border-color:var(--green); }
+  .pill.pill-rojo{ background:var(--red-bg); color:var(--red); border-color:var(--red); }
+  .pill.pill-naranja{ background:color-mix(in srgb, var(--sem-naranja) 18%, var(--surface-2)); color:var(--sem-naranja); border-color:var(--sem-naranja); }
+  .pill.pill-amarillo{ background:color-mix(in srgb, var(--sem-amarillo) 18%, var(--surface-2)); color:var(--sem-amarillo); border-color:var(--sem-amarillo); }
+  .pill.pill-info{ background:var(--cyan-bg); color:var(--cyan); border-color:var(--cyan); }
+  .card-actions-row{ display:flex; gap:8px; align-items:center; margin-top:auto; padding-top:12px; }
+  .btn-open-wide{
+    flex:1; background:var(--cyan); color:var(--cyan-ink); border:none; border-radius:8px;
+    padding:10px 14px; font-size:12.5px; font-weight:700; cursor:pointer; font-family:var(--sans);
+  }
+  .btn-open-wide:hover{ filter:brightness(1.08); }
+  .card-menu-wrap{ position:relative; }
+  .btn-menu-dots{
+    width:34px; height:36px; background:var(--surface-2); border:1px solid var(--border); border-radius:8px;
+    color:var(--ink-soft); font-size:15px; cursor:pointer; line-height:1;
+  }
+  .btn-menu-dots:hover{ color:var(--ink); border-color:var(--ink-faint); }
+  .card-dropdown{
+    display:none; position:absolute; bottom:100%; right:0; margin-bottom:4px; min-width:200px;
+    background:var(--surface-2); border:1px solid var(--border); border-radius:8px;
+    box-shadow:0 8px 24px rgba(0,0,0,.4); padding:5px; z-index:20; flex-direction:column; gap:1px;
+  }
+  .card-dropdown.open{ display:flex; }
+  .card-dropdown button{
+    background:transparent; border:none; color:var(--ink); text-align:left;
+    padding:7px 10px; border-radius:5px; font-size:12px; font-family:var(--sans); cursor:pointer;
+  }
+  .card-dropdown button:hover{ background:var(--bg); }
+  .card-dropdown button.danger{ color:var(--red); }
+  .card-dropdown button.danger:hover{ background:var(--red-bg); }
+  .card-dropdown .sep{ height:1px; background:var(--border); margin:4px 2px; }
+
+  /* --- Vista de lista --- */
+  .list-wrap{ display:flex; gap:16px; align-items:flex-start; }
+  .list-table-card{ flex:1; background:var(--surface); border:1px solid var(--border); border-radius:12px; overflow:hidden; min-width:0; }
+  table.list-table{ width:100%; border-collapse:collapse; font-size:12px; }
+  table.list-table th{
+    text-align:left; font-family:var(--mono); font-size:10px; text-transform:uppercase; letter-spacing:.05em;
+    color:var(--ink-faint); font-weight:600; padding:10px 12px; border-bottom:1px solid var(--border); background:var(--surface-2);
+  }
+  table.list-table td{ padding:9px 12px; border-bottom:1px solid var(--border); vertical-align:middle; }
+  table.list-table tr.list-row{ cursor:pointer; }
+  table.list-table tr.list-row:hover td{ background:var(--surface-2); }
+  table.list-table tr.list-row.selected td{ background:var(--cyan-bg); }
+  .list-name{ font-weight:600; color:var(--ink); }
+  .list-client{ font-size:10.5px; color:var(--ink-faint); }
+  .semaforo-dot{ width:9px; height:9px; border-radius:50%; display:inline-block; }
+  .semaforo-dot.sem-rojo{ background:var(--red); }
+  .semaforo-dot.sem-naranja{ background:var(--sem-naranja); }
+  .semaforo-dot.sem-amarillo{ background:var(--sem-amarillo); }
+  .semaforo-dot.sem-amarillo-claro{ background:var(--sem-amarillo-claro); }
+  .semaforo-dot.sem-verde{ background:var(--green); }
+  .staffing-bar{ width:70px; height:7px; border-radius:99px; background:var(--surface-2); border:1px solid var(--border); overflow:hidden; }
+  .staffing-bar .fill{ height:100%; background:var(--cyan); }
+  .side-panel{ width:280px; flex-shrink:0; background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px; }
+  .side-panel h3{ margin:0 0 4px; font-size:14px; }
+  .side-panel .side-empty{ color:var(--ink-faint); font-size:12px; margin-top:20px; }
+  .side-panel .side-section{ margin-top:16px; }
+  .side-panel .side-section h4{
+    margin:0 0 8px; font-size:10px; text-transform:uppercase; letter-spacing:.06em; font-family:var(--mono); color:var(--ink-faint);
+  }
+  .side-panel .side-row{ font-size:11.5px; color:var(--ink-soft); margin-bottom:5px; display:flex; justify-content:space-between; gap:8px; }
+  .side-panel .side-row b{ color:var(--ink); font-weight:600; }
+  .timeline-item{ font-size:11px; color:var(--ink-soft); padding:5px 0; border-bottom:1px solid var(--border); }
+  .timeline-item:last-child{ border-bottom:none; }
+  .timeline-item .t-date{ color:var(--ink-faint); font-family:var(--mono); font-size:10px; }
+
+  /* --- Resumen de salud de cartera --- */
+  .summary-kpis{ display:grid; grid-template-columns:repeat(auto-fit, minmax(200px,1fr)); gap:12px; margin-bottom:16px; }
+  .summary-kpi{
+    background:linear-gradient(160deg, color-mix(in srgb, var(--surface) 100%, white 8%) 0%, var(--surface) 60%);
+    border:1px solid var(--border); border-radius:12px; padding:14px 16px;
+  }
+  .summary-kpi .k-label{ font-family:var(--mono); font-size:10px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-faint); margin-bottom:6px; }
+  .summary-kpi .k-value{ font-size:26px; font-weight:700; font-family:var(--mono); }
+  .summary-kpi .k-sub{ font-size:11px; color:var(--ink-soft); margin-top:2px; }
+  .summary-kpi.ok .k-value{ color:var(--green); }
+  .summary-kpi.warn .k-value{ color:var(--sem-naranja); }
+  .summary-kpi.bad .k-value{ color:var(--red); }
+  .summary-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(260px,1fr)); gap:14px; }
+
+  /* ------------------------------------------------------------------
+     v2.0.14 — barra de título y menú PROPIOS, prueba piloto solo en esta
+     ventana (ver createLauncherWindow() en main.js: frame:false). Sustituye
+     por completo lo que antes dibujaba Windows: aquí van el color claro
+     pedido (#CDE7ED, el mismo que se intentó vía titleBarOverlay en 2.0.12,
+     pero ahora es contenido normal de la página, sin ninguna limitación de
+     Windows sobre qué se puede colorear), los 3 botones de ventana, y el
+     menú Archivo/Editar/Seguridad/Configuración como desplegables propios.
+     ------------------------------------------------------------------ */
+  html, body{ height:100%; }
+  .titlebar{
+    -webkit-app-region: drag;
+    display:flex; align-items:center; gap:8px;
+    height:32px; padding:0 0 0 10px;
+    /* v2.0.15: aquí vivía el degradado gris->lila "Windows claro" pedido
+       explícitamente en su día (ver historial de versiones para el
+       porqué). v2.0.48: pedido lo contrario -- que la barra de título
+       del lanzador siga el tema activo, igual que ya se hizo en 2.0.47
+       para dashboard/directorio/preparación de reunión/evaluación de
+       candidatos (vendor/window-chrome.css) -- el lanzador tenía su
+       propia copia suelta de este bloque (nunca cargó ese archivo
+       compartido) y se quedó atrás en ese cambio. Mismo patrón: fondo
+       var(--surface), texto var(--ink), borde inferior var(--border). */
+    background:var(--surface);
+    border-bottom:1px solid var(--border);
+    color:var(--ink);
+    font-family:var(--sans); font-size:12.5px; flex-shrink:0;
+    user-select:none;
+  }
+  .titlebar img{ width:16px; height:16px; -webkit-app-region: no-drag; pointer-events:none; }
+  .titlebar .tb-title{ font-weight:600; }
+  .titlebar .tb-spacer{ flex:1; }
+  .win-controls{ display:flex; height:100%; -webkit-app-region: no-drag; }
+  .win-controls button{
+    width:44px; height:100%; border:none; background:transparent; color:var(--ink-soft);
+    cursor:pointer; font-family:var(--sans); font-size:13px; line-height:1;
+  }
+  .win-controls button:hover{ background:var(--surface-2); color:var(--ink); }
+  .win-controls button.close:hover{ background:var(--red); color:#fff; }
+  .menubar{
+    -webkit-app-region: no-drag;
+    display:flex; align-items:center; gap:2px;
+    height:28px; padding:0 10px; background:var(--surface); border-bottom:1px solid var(--border);
+    font-size:12.5px; flex-shrink:0; position:relative;
+  }
+  .menu-group{ position:relative; }
+  .menubar .menu-item{
+    background:transparent; border:none; color:var(--ink-soft);
+    padding:5px 10px; border-radius:4px; cursor:pointer; font-family:var(--sans); font-size:12.5px;
+  }
+  .menubar .menu-item:hover, .menubar .menu-item.open{ background:var(--surface-2); color:var(--ink); }
+  .menu-dropdown{
+    display:none; position:absolute; top:100%; left:0; margin-top:2px; min-width:280px;
+    background:var(--surface-2); border:1px solid var(--border); border-radius:8px;
+    box-shadow:0 8px 24px rgba(0,0,0,.4); padding:5px; z-index:50; flex-direction:column; gap:1px;
+  }
+  .menu-dropdown.open{ display:flex; }
+  .menu-dropdown button{
+    background:transparent; border:none; color:var(--ink); text-align:left;
+    padding:7px 10px; border-radius:5px; font-size:12.5px; font-family:var(--sans); cursor:pointer;
+  }
+  .menu-dropdown button:hover{ background:var(--bg); }
+  .menu-dropdown .sep{ height:1px; background:var(--border); margin:4px 2px; }
+</style>
+</head>
+<body>
+  <div class="titlebar" id="titlebar">
+    <img src="../assets/icon-256.png" alt="" />
+    <span class="tb-title">Panorama del Servicio — Proyectos</span>
+    <span class="tb-spacer"></span>
+    <div class="win-controls">
+      <button id="tb-minimize" title="Minimizar">─</button>
+      <button id="tb-maximize" title="Maximizar">▢</button>
+      <button id="tb-close" class="close" title="Cerrar">✕</button>
+    </div>
+  </div>
+  <nav class="menubar" id="menubar">
+    <div class="menu-group">
+      <button class="menu-item" data-menu="archivo">Archivo</button>
+      <div class="menu-dropdown" data-dropdown="archivo">
+        <button data-action="archivo-nuevo">Nuevo proyecto…&emsp;&emsp;Ctrl+N</button>
+        <button data-action="archivo-directorio">Directorio de Talento</button>
+        <div class="sep"></div>
+        <button data-action="archivo-salir">Salir</button>
+      </div>
+    </div>
+    <div class="menu-group">
+      <button class="menu-item" data-menu="editar">Editar</button>
+      <div class="menu-dropdown" data-dropdown="editar">
+        <button data-action="editar-deshacer">Deshacer</button>
+        <button data-action="editar-rehacer">Rehacer</button>
+        <div class="sep"></div>
+        <button data-action="editar-cortar">Cortar</button>
+        <button data-action="editar-copiar">Copiar</button>
+        <button data-action="editar-pegar">Pegar</button>
+        <button data-action="editar-todo">Seleccionar todo</button>
+      </div>
+    </div>
+    <div class="menu-group">
+      <button class="menu-item" data-menu="seguridad">Seguridad</button>
+      <div class="menu-dropdown" data-dropdown="seguridad"></div>
+    </div>
+    <div class="menu-group">
+      <button class="menu-item" data-menu="configuracion">Configuración</button>
+      <div class="menu-dropdown" data-dropdown="configuracion">
+        <button data-action="config-open-data-folder">Abrir carpeta de datos de la aplicación</button>
+        <button data-action="config-change-data-location">Cambiar ubicación de los datos…</button>
+        <button data-action="config-reset-data-location">Volver a la ubicación de datos por defecto</button>
+        <div class="sep"></div>
+        <button data-action="config-drive-sync-log">Ver registro de la protección de apagado</button>
+        <div class="sep"></div>
+        <button data-action="config-apply-patch">Aplicar parche (app.asar)…</button>
+        <div class="sep"></div>
+        <!-- v2.0.27: único selector de tema de toda la app (antes cada
+             proyecto tenía su propio panel "Apariencia" con esto mismo) —
+             ver config-theme en renderer.js y vendor/theme.js. -->
+        <button data-action="config-theme">Tema visual…</button>
+        <div class="sep"></div>
+        <button data-action="config-diagnostics">Diagnóstico…</button>
+        <button data-action="config-open-install-folder">Abrir carpeta de instalación</button>
+        <button data-action="config-patch-log">Ver registro de parches (patch-log.txt)</button>
+        <button data-action="config-app-log">Ver registro de la aplicación (app.log)</button>
+        <button data-action="config-error-codes">Ver códigos de error…</button>
+        <div class="sep"></div>
+        <button data-action="config-about">Acerca de Panorama del Servicio</button>
+      </div>
+    </div>
+  </nav>
+  <header>
+    <div>
+      <h1><span id="header-title-text">Panorama del Servicio — Proyectos</span> <span class="badge" id="version-badge" title="Versión actualmente instalada — se actualiza sola con cada parche aplicado" style="vertical-align:middle; margin-left:4px;">v…</span></h1>
+      <div class="sub" id="db-path-line">cargando…</div>
+    </div>
+    <div style="display:flex; gap:10px; align-items:center;">
+      <!-- v2.0.56 puso aquí tres formas de ver los mismos proyectos:
+           Tarjetas (la de siempre), Lista (tabla + panel de detalle) y
+           Resumen de Salud de Cartera (KPIs agregados + timeline).
+
+           E1 — RETIRADO EL 15 sept 2026. La integración se quedó a medias:
+           el servidor y el marcado estaban completos, pero en renderer.js no
+           hay listener sobre este conmutador, `setView()` no se llama nunca y
+           `loadSummary()` no existe. Pulsar "Lista" o "Resumen" no hacía
+           absolutamente nada, y unos controles visibles que parecen
+           funcionales y no lo son bloqueaban la publicación.
+
+           Se retira EL CONTROL, no las vistas: `#view-list`, `#view-summary`,
+           su CSS, `setView()` y los helpers siguen donde estaban, ocultos e
+           inertes. Esto NO es la limpieza del código muerto, que es otra cosa
+           y no forma parte de esta corrección.
+
+           PARA REACTIVARLAS hay que terminar antes el lado cliente (listener,
+           `renderList()`, `loadSummary()`, rellenar `allProjects`) y resolver
+           el acoplamiento con E2: el `timeline` de `portfolio:summary` saca
+           los días con una regex sobre `serviceEndMessage`, que es texto de
+           UI producido por `computeServiceEndWarning()`. Reponer este bloque
+           SIN eso devuelve el defecto tal cual. Diagnóstico completo en
+           `claude/auditoria-2026-09-13.md` §E1 y en la batería
+           `claude/pruebas-a33/e1/`.
+
+      <div class="view-switch" id="view-switch">
+        <button data-view="cards" class="active">🗂 Tarjetas</button>
+        <button data-view="list">☰ Lista</button>
+        <button data-view="summary">📊 Resumen</button>
+      </div>
+      -->
+      <button class="btn" id="new-project-btn">+ Nuevo proyecto</button>
+      <button class="btn ghost" id="directorio-btn" title="Perfiles de equipo de todos los proyectos, consolidados">🗂 Directorio de Talento</button>
+      <button class="btn ghost" id="quit-btn" title="Cierra la aplicación por completo">Salir</button>
+    </div>
+  </header>
+  <main>
+    <div id="empty" class="empty" style="display:none;">
+      Todavía no hay proyectos. Crea el primero con "+ Nuevo proyecto".<br>
+      Cada proyecto es un dashboard independiente con su propio almacenamiento y sus propios backups.
+    </div>
+    <div id="view-list" class="list-wrap" style="display:none;">
+      <div class="list-table-card">
+        <table class="list-table">
+          <thead>
+            <tr>
+              <th>Nombre del servicio</th>
+              <th>Salud</th>
+              <th>Personal (activo/total)</th>
+              <th>Último backup</th>
+              <th>Días restantes/arranque</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="list-tbody"></tbody>
+        </table>
+      </div>
+      <div class="side-panel" id="side-panel">
+        <div class="side-empty">Elige un servicio de la lista para ver su detalle.</div>
+      </div>
+    </div>
+    <div id="view-summary" style="display:none;"></div>
+    <div id="grid" class="grid"></div>
+  </main>
+  <div id="status"></div>
+
+  <div class="modal-backdrop" id="modal-backdrop">
+    <div class="modal">
+      <h2>Nuevo proyecto</h2>
+      <div class="row">
+        <label id="input-json-label">Cargar copia de seguridad .json (opcional)</label>
+        <div class="file-row">
+          <button class="btn ghost small" id="input-json-btn" type="button">Elegir archivo…</button>
+          <span id="input-json-name">Ninguno — se crea vacío</span>
+          <button class="btn ghost small" id="input-json-clear" type="button" style="display:none;" title="Quitar archivo">✕</button>
+        </div>
+        <input id="input-json" type="file" accept="application/json,.json" style="display:none;" />
+        <span class="hint">Si eliges un archivo, el proyecto se crea con el nombre, la fecha y los datos que traiga ese archivo (los campos de abajo se desactivan). Admite copias cifradas: se pedirá la contraseña.</span>
+      </div>
+      <div class="row">
+        <label id="input-name-label">Nombre del servicio (genérico, sin cliente real)</label>
+        <input id="input-name" type="text" placeholder="p.ej. Soporte N1" />
+      </div>
+      <div class="row">
+        <label>Cliente / referencia interna (opcional)</label>
+        <input id="input-client" type="text" placeholder="p.ej. Cliente A" />
+      </div>
+      <div class="row">
+        <label id="input-start-label">Fecha de inicio del servicio (opcional)</label>
+        <input id="input-start" type="date" />
+      </div>
+      <div id="modal-error"></div>
+      <div class="actions">
+        <button class="btn ghost small" id="modal-cancel">Cancelar</button>
+        <button class="btn small" id="modal-create">Crear y abrir</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- v2.0.27: panel "Tema visual" -- único selector de tema de toda la
+       app, ver config-theme en renderer.js y vendor/theme.js. Las 5
+       muestras se generan en JS a partir de THEMES (vendor/theme.js), no
+       hay nada hardcodeado aquí. -->
+  <div class="modal-backdrop" id="theme-modal-backdrop">
+    <div class="modal" id="theme-modal">
+      <h2>Tema visual</h2>
+      <span class="hint">Se aplica a las 7 ventanas de la aplicación (esta, Proyecto/Directorio, Preparación de Reunión, Evaluación de Candidatos, Restaurar backup y Seguridad).</span>
+      <div class="theme-swatch-grid" id="theme-swatch-grid"></div>
+      <div class="actions">
+        <button class="btn ghost small" id="theme-modal-close">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- v2.0.27: tema visual GLOBAL de toda la app, ver vendor/theme.js. -->
+  <script src="../vendor/theme.js"></script>
+  <!-- v2.0.31: modal de confirmación/aviso propio (Fase 5a/5b), ver vendor/modal.js. -->
+  <script src="../vendor/modal.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>

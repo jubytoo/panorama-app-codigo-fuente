@@ -1,0 +1,269 @@
+
+---
+
+## 13. Ensayo aislado de coste y compatibilidad (EJECUTADO)
+
+**Único trabajo autorizado y ejecutado en esta ronda.** No se modificó código de
+la aplicación, no se tocó `BD-PanoramaServicio` ni ningún dato real.
+
+- **Runtime**: el Node incluido en nuestro Electron — `node 20.16.0`,
+  Electron 30.5.1, `arm64`, invocado con `ELECTRON_RUN_AS_NODE=1`.
+- **Equipo**: Snapdragon X 10-core X1P64100 @ 3,40 GHz, Windows 11 Pro 26200.
+- **Carpetas exclusivas de prueba**, creadas y borradas por el propio script:
+  `%TEMP%\_bench-a33-local` y `G:\Mi unidad\_bench-a33-tmp`. Borrado verificado
+  al terminar (`existe todavía: false` en las dos).
+- **Guarda de seguridad en el script**: cualquier ruta que contenga
+  `bd-panoramaservicio` o `panorama.sqlite3` aborta la ejecución.
+- **N**: 1.000 iteraciones en local (76 KB, 256 KB y 1 MB); **200** en Drive
+  (76 KB). En Drive se redujo a propósito: 1.000 reescrituras generarían
+  cientos de revisiones en el historial de versiones de la cuenta del usuario.
+- Script: `scratchpad/bench-fsync.js`. Salida completa: `scratchpad/bench.txt`.
+
+### 13.a Compatibilidad
+
+| | Disco local | `G:` (Drive) |
+|---|---|---|
+| `fsync` del archivo (`FlushFileBuffers`) | **SOPORTADO** | **SOPORTADO** |
+| Fallos en 1.200 llamadas | **0** | **0** |
+| `fsync` del **directorio** | **NO — `EPERM`** | **NO — `EPERM`** |
+| `writeSync` con escritura parcial | no observado | no observado |
+
+Esto **confirma medido** lo que §4.b afirmaba por razonamiento: el `fsync` del
+archivo se puede hacer y el del directorio no. La rama "fsync no soportado" del
+código es defensiva y no se ha observado en este equipo.
+
+### 13.b Coste — 76 KB, milisegundos
+
+| Operación | Local media | Local p95 | Drive media | Drive p95 |
+|---|---|---|---|---|
+| `stat` del `.sqlite3` | 0,082 | 0,144 | 0,484 | 1,006 |
+| Leer el `.gen` (~250 B) | 0,157 | 0,218 | 3,784 | 7,507 |
+| `sha256` en memoria (`F_mio`) | 0,052 | 0,082 | 0,164 | 0,214 |
+| **Leer el `.sqlite3` + `sha256` (`F_disk`)** | **4,509** | **7,088** | **17,732** | **26,591** |
+| Escribir el `.gen` sin `fsync` | 0,799 | 1,251 | 23,064 | 52,775 |
+| Escribir el `.gen` con `fsync` | 5,937 | 11,176 | 24,042 | 50,658 |
+| Escribir la BD sin `fsync` | 0,734 | 1,183 | 25,494 | 54,501 |
+| Escribir la BD con `fsync` | 4,204 | 9,258 | 26,230 | 54,048 |
+| **Ciclo `run()` sin `fsync`** | **1,653** | **2,579** | **52,289** | **98,730** |
+| **Ciclo `run()` con `fsync` en ambos** | **11,087** | **17,443** | **53,077** | **103,055** |
+
+Crecimiento con el tamaño, en local: ciclo con `fsync` = 11,1 ms a 76 KB,
+16,1 ms a 256 KB, 22,9 ms a 1 MB.
+
+### 13.c Qué decidió cada número
+
+1. **El `stat` es barato incluso en Drive** (0,48 ms frente a los 3,78 ms que ya
+   cuesta leer el `.gen` allí). El atajo de §6.1.a en carpeta local se queda.
+2. **Verificar los bytes cuesta +34 % en Drive** (17,7 ms sobre 52,3), no el
+   coste prohibitivo que supuse. **Por eso §6.1.c pasa a verificar bytes en cada
+   escritura compartida** y se retira la comprobación periódica del watchdog,
+   que no daba la garantía que decía dar. Esta es la corrección que más cambia
+   el diseño, y la ha decidido la medición, no una opinión.
+3. **El coste del `fsync` es por llamada, no por bytes**: 5,94 ms para 250 bytes
+   y 4,20 ms para 76 KB, en local. **Por eso se hace `fsync` solo del
+   `.sqlite3`**, cuya pérdida destruye, y no del `.gen`, cuya pérdida es
+   reparable. El sobrecoste local baja de 9,4 ms a ~3,5 ms.
+4. **Mi estimación previa de "0,1–1 ms" en local era falsa** por un orden de
+   magnitud: el `fsync` multiplica el ciclo por 6,7 si se aplica a los dos
+   archivos. Sigue siendo asumible en términos absolutos (≈5 ms cada 15 s), pero
+   la afirmación estaba mal y queda corregida.
+5. **En Drive el `fsync` es casi gratis** (+0,8 ms sobre 52,3). Eso es tan
+   sospechoso como cómodo: un vaciado que no cuesta nada probablemente no está
+   vaciando gran cosa en un sistema de archivos en modo usuario. **No demuestra
+   durabilidad y no se presenta como tal.**
+6. **`projects:reorder` ya es lento hoy**: N escrituras seguidas × 52 ms en
+   Drive ≈ 1 s con 20 proyectos, **sin A3.3**. A3.3 lo empeora en local (+70 ms
+   con 20 proyectos) y prácticamente nada en Drive. No lo crea, pero queda
+   anotado.
+
+### 13.d Lo que este ensayo NO demuestra
+
+- **No demuestra durabilidad ante un corte de alimentación.** Mide coste y
+  compatibilidad. Que `FlushFileBuffers` devuelva éxito no prueba que los bytes
+  estén en el medio físico, ni en NTFS con una caché de disco que mienta, ni
+  desde luego en `G:`.
+- **No mide contención real entre dos PCs**: es un solo proceso.
+- Los buffers son bytes aleatorios de 76 KB, no bases de datos SQLite reales.
+  Para coste de E/S y de hash es equivalente; para `integrity_check` no, y ese
+  camino se prueba aparte (prueba 42).
+
+---
+
+## 14. Dependencias de integración — trazado contra el código actual
+
+Respuesta a los cinco puntos, con función y línea. Se marca qué está
+**verificado leyendo el código** y qué es **razonamiento** sobre él. Nada de
+esto está probado en ejecución todavía.
+
+### 14.a ¿Puede algo levantar o saltarse el bloqueo `'comprometido'` de B2?
+
+**Verificado leyendo el código.** Hoy `procesoComprometido` vive solo en
+`main.js` (declarado en `main.js:5149`, puesto en `main.js:5165`) con 11 guardas
+repartidas. Dos agujeros concretos:
+
+- **`vacuum()` no tiene guarda.** `maybeRunPeriodicVacuum()` llama a
+  `dbmod.vacuum()` en **`main.js:844`** sin comprobar nada, y `vacuum()`
+  (`db.js:239-243`) hace `db.run('VACUUM')` + `persist()` directo, sin pasar por
+  `run()`. `setMeta` sí tiene guarda (`main.js:816`), pero se ejecuta **después**
+  del `vacuum()`.
+- **Escrituras internas alcanzadas desde una lectura**, que es lo que el
+  comentario de `main.js:5147` ya reconoce como "cobertura ~95 %".
+
+**Cómo queda cubierto:** el latch pasa a `db.js` (§3), y **`vacuum()` y
+`persistirConGeneracion()` consultan el mismo latch que `run()`**. Con eso no
+hay ningún camino de escritura que no pase por él.
+
+**Y sobre levantarlo — regla explícita que añado al diseño:**
+
+> `escrituraBloqueada = 'comprometido'` es **irreversible dentro del proceso**.
+> Las funciones que levantan el latch (`recargarDesdeDisco`,
+> `resolverConservandoLoMio`, la recuperación de Drive de §5.c y los dos
+> interruptores) solo pueden levantar los motivos `'conflicto'` y
+> `'degradado'`. Si el motivo es `'comprometido'`, `'desincronizada'` o
+> `'bd-ilegible'`, **devuelven error y no lo tocan**. No es una lista de
+> comprobaciones repartidas: es una única función `levantarLatch(motivo)` que
+> rechaza esos tres motivos. Prueba 47.
+
+### 14.b Conflicto durante la recuperación de rekey de A1
+
+**Verificado.** `recoverInterruptedRekeyIfAny()` se llama en **`main.js:5963`**,
+después de abrir la base de datos y **antes** de `runLoginFlow()` (5967),
+precisamente porque la sal y el verificador contra los que se validará la
+contraseña pueden depender de esa consolidación. Y `applyRekeyMeta()` escribe
+`security_salt`, `security_verifier` y `security_enabled` con `setMeta`, o sea
+`dbmod.run`.
+
+**El problema es real:** si A3.3 rechaza esa escritura por conflicto, quedan
+archivos ya cifrados con la clave nueva y una sal antigua en la base de datos.
+**El usuario no podría entrar.** Es el peor resultado posible de A3.3.
+
+**Propuesta acotada, y quiero tu visto bueno antes de implementarla:**
+
+1. La comprobación de conflicto se hace **una vez, al arrancar, antes** de
+   `recoverInterruptedRekeyIfAny()`.
+2. **Si hay conflicto y hay un journal de rekey pendiente**, no se ofrece el
+   modal normal de tres salidas. Se para antes: *"Hay un cambio de contraseña a
+   medias en este equipo y a la vez otro equipo ha modificado los datos. Hay que
+   resolver el conflicto antes de terminar el cambio de contraseña."* La app
+   queda en solo lectura y **no se toca ni el rekey ni la base de datos**.
+3. **Si no hay conflicto**, la recuperación del rekey se ejecuta con el latch
+   **explícitamente en modo "operación atómica en curso"**: durante esos
+   milisegundos no se vuelve a comprobar el `.gen` entre sus escrituras, para
+   que no pueda quedar a medias por una comprobación intermedia.
+
+El punto 3 es el que menos me gusta —abre una ventana sin comprobación— pero la
+alternativa (fallar a mitad de la consolidación) es peor, y la ventana es de
+milisegundos al arrancar, antes de que el usuario pueda hacer nada.
+
+### 14.c Coherencia de la Seguridad al adoptar otra base de datos
+
+**Verificado, y es la dependencia más delicada.** El reparto actual:
+
+| Dato | Dónde vive |
+|---|---|
+| `security_salt`, `security_verifier`, `security_enabled` | **En la base de datos** (`app_meta`) |
+| Columnas `encrypted` de `backups`, `meeting_preps`, `candidate_evals` | **En la base de datos** |
+| Los archivos cifrados de verdad | **En disco**, fuera de la base de datos |
+| `securityKey` (clave derivada) | **En memoria** (`main.js:781`, asignada en 3018, 3499, 7244) |
+
+Adoptar la base de datos de otro equipo **sustituye la sal, el verificador y
+todos los flags `encrypted`, y no toca ni un archivo**. Refrescar el lanzador no
+demuestra nada de esto: el usuario tiene razón.
+
+**Lo que hay que hacer al final de `recargarDesdeDisco()`, propuesto:**
+
+1. **Revalidar `securityKey`** contra la sal y el verificador nuevos:
+   `securitymod.verifierFor(securityKey) === getMeta('security_verifier')`. Es
+   una comparación en memoria, sin coste.
+2. **Si no encaja** → `securityKey = null` y se fuerza el flujo de login con la
+   nueva sal, avisando de que la configuración de Seguridad viene del otro
+   equipo. **Nunca se sigue con una clave que ya no deriva nada**: con ella se
+   escribirían archivos ilegibles.
+3. **Si `security_enabled` cambia de estado** (activa ↔ inactiva) se avisa
+   siempre, aunque la clave encajara.
+4. **Los flags `encrypted` no se pueden validar sin abrir los archivos.** Aquí
+   sí hay un límite honesto: `looksEncrypted()` (`security.js`) permite
+   comprobarlo archivo por archivo, pero hacerlo con todos en cada adopción es
+   caro. **Propuesta: validación perezosa** — al leer un archivo, si su flag
+   dice una cosa y `looksEncrypted()` dice otra, se cree a los bytes, se corrige
+   el flag y se registra. Ese camino de lectura ya existe (`main.js:1142-1155`,
+   `2392-2397`, `6554-6562`, `6621-6629`).
+
+**Recomendación:** dado lo que hay en juego, propongo que **con la Seguridad
+activada, "usar disco" exija además reintroducir la contraseña**. Es una
+fricción pequeña en una operación rarísima.
+
+### 14.d P8 — archivos borrados antes del `DELETE` en la base de datos
+
+**Verificado, y el riesgo es real.** `deleteProjectById()`
+(**`main.js:3227-3271`**) hace, en este orden:
+
+```
+3253  fs.rmSync(backupsDirForProject(row), …)      <- borra la carpeta de backups
+3258  fs.rmSync(projectDashboardDir(id), …)        <- borra el dashboard horneado
+3264  await ses.clearStorageData()                 <- vacía la partición
+3268  dbmod.run('DELETE FROM backups WHERE project_id=?')   <- PRIMERA escritura
+3269  dbmod.run('DELETE FROM projects WHERE id=?')
+```
+
+**Sí: con A3.3, el rechazo por conflicto puede llegar en 3268, con los archivos
+ya borrados.** Resultado: un proyecto que sigue apareciendo en el lanzador, con
+sus filas intactas y todo su contenido borrado. Es **peor** que el estado actual
+(donde el borrado siempre se completa), así que A3.3 no puede integrarse sin
+tocar esto.
+
+Mismo patrón, menos grave, en `migrateLegacyInlineBackupsToFiles()`: escribe el
+archivo en **`main.js:3196`** y actualiza la fila en **3197**. Un rechazo ahí
+deja un archivo suelto, que es aditivo y no destruye nada.
+
+**Protección previa acotada que propongo** — y es lo mínimo, no una
+reestructuración:
+
+> Una función `dbmod.comprobarEscrituraPosible()` que ejecuta **solo la fase de
+> detección** de §6.1, sin escribir nada, y devuelve si una escritura pasaría.
+> `deleteProjectById()` la llama **como primera línea** (antes del 3239) y
+> aborta con un error claro si no. La ventana entre esa comprobación y el 3268
+> son los pocos ms de cerrar la ventana y borrar archivos: no la cierra del
+> todo, pero convierte un fallo probable en uno muy improbable.
+>
+> Coste: una detección de más por borrado de proyecto — 0,08 ms en local,
+> ~21 ms en Drive (§13). Irrelevante para una operación manual.
+
+Los otros 27 sitios de escritura del inventario **no tienen este patrón**: o
+escriben la fila antes que el archivo, o no borran nada. Lo he mirado uno a uno
+en `a3-3-paso0-inventario.md`; los únicos dos con "efecto en disco antes de la
+escritura en base de datos" son los dos citados.
+
+### 14.e Si no se puede preservar nuestra imagen en ningún sitio
+
+**Regla que faltaba y que añado:**
+
+> Si el volcado de nuestra imagen falla **tanto en la carpeta de datos como en
+> la de configuración local** (§7, paso 2), **"usar lo que hay en disco" queda
+> deshabilitado en el modal**, no solo desaconsejado. Descartar la única copia
+> de nuestra versión sin haber podido guardarla en ningún sitio es
+> destrucción de datos, y ninguna elección del usuario debería poder provocarla
+> por descuido.
+>
+> Quedan disponibles: **"conservar lo mío"** (que sí preserva la del disco,
+> §7.b) y **"decidir luego"** (solo lectura). Y el modal dice por qué la tercera
+> opción está gris, con la ruta y el error concretos.
+
+Prueba 52.
+
+### 14.f Resumen: qué hay que tocar fuera de `db.js`
+
+Alcance mínimo para integrar A3.3 con seguridad, **nada más**:
+
+| Archivo | Cambio | Por qué es imprescindible |
+|---|---|---|
+| `db.js:34-41` | La limpieza de `.tmp-*` deja de ser incondicional (§4.c) | Hoy puede borrar la única copia superviviente |
+| `main.js:844` | *(ninguno)* | Lo cubre el latch en `db.js` |
+| `main.js:3227` | Una llamada a `comprobarEscrituraPosible()` al principio | §14.d, evita el borrado a medias |
+| `main.js:5963` | Orden y guarda de la recuperación de rekey | §14.b, evita quedarse sin poder entrar |
+| `recargarDesdeDisco` (nueva) | Revalidar `securityKey` | §14.c |
+| Sitios que reintentan tras un `ErrorDb` | Mirar `aplicado` | §2.d caso (b), evita duplicar filas |
+
+Renderers, preloads, plantillas y contratos IPC: **sin cambios**. La única
+excepción es el campo `aplicado` en el error, que es aditivo y no rompe a nadie
+que no lo lea.

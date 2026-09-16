@@ -1,0 +1,53 @@
+--- plantilla_directorio.html (antes)
++++ plantilla_directorio.html (despues)
+@@ -3033,8 +3033,16 @@
+   // installHeaderSaveExitButtons más abajo) para saber de verdad si el guardado terminó bien antes
+   // de pintar el check. opts.force salta el atajo de "no ha cambiado nada" — un guardado manual
+   // pedido explícitamente por el usuario debe tocar disco de verdad para poder confirmárselo.
++  // A3.3/Bloque 4: ver el comentario equivalente en plantilla_dashboard.html — un
++  // guardado aplicado pero no verificable detiene la sesión en vez de repetirse.
++  let backupsDetenidos = false;
++  let avisoReinicioMostrado = false;
+   async function maybeBackup(reason, opts){
+     const force = !!(opts && opts.force);
++    if(backupsDetenidos){
++      logBackupAttempt(reason, force, 'skipped', 'sesion-detenida-tras-aplicado-sin-verificar');
++      return { ok:false, skipped:true, why:'requiere-reinicio' };
++    }
+     // v0.1.51: con un aviso de carga fallida activo (ver renderDataLoadWarning/initApp), no se crea
+     // ningún backup nuevo — evitaría guardar una copia del estado vacío de fábrica y, más
+     // importante, no toca en absoluto la lista de backups ya existentes de este proyecto mientras
+@@ -3072,14 +3080,29 @@
+       // compartida), la app se quedaba creyendo que ya estaba guardado — sin reintentar nunca más
+       // mientras no hubiera un cambio adicional. Ver el comentario largo en plantilla_dashboard.html
+       // para el detalle completo del razonamiento.
+-      const wroteOk = await window.panoramaBridge.saveBackup(serialized, reason || 'auto');
+-      if(!wroteOk){
++      //
++      // A3.3/Bloque 4: `saveBackup` devuelve el contrato de acción, no un booleano
++      // (ver preload.js). Con un objeto, el viejo `if(!wroteOk)` sería SIEMPRE falso
++      // y cualquier fallo pasaría por éxito — el mismo bug de arriba otra vez. Lo
++      // que manda es `aplicado`.
++      const res = await window.panoramaBridge.saveBackup(serialized, reason || 'auto');
++      if(!res || res.aplicado !== true){
+         logBackupAttempt(reason, force, 'error', 'write-failed', dump);
+-        return { ok:false, why:'write-failed' };
++        return { ok:false, why:'write-failed', error:(res && res.error) || null, reintentable:!!(res && res.reintentable) };
+       }
+       lastSerialized = serialized;
++      if(res.verificado === false){
++        backupsDetenidos = true;
++        logBackupAttempt(reason, force, 'error', 'aplicado-sin-verificar', dump);
++        if(!avisoReinicioMostrado){
++          avisoReinicioMostrado = true;
++          try{ await psAlert(res.aviso || 'El cambio se guardó pero no se pudo verificar. Cierra la aplicación y vuelve a abrirla.',
++            { title:'Hay que reiniciar la aplicación', danger:true }); }catch(e){}
++        }
++        return { ok:true, aplicado:true, verificado:false, requiereReinicio:true };
++      }
+       logBackupAttempt(reason, force, 'ok', null, dump);
+-      return { ok:true };
++      return { ok:true, aplicado:true, verificado:true };
+     }catch(e){
+       console.warn('[panoramaBridge] backup fallido:', e);
+       logBackupAttempt(reason, force, 'error', String((e && e.message) || e));

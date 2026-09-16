@@ -1,0 +1,57 @@
+--- plantilla_dashboard.html (antes)
++++ plantilla_dashboard.html (despues)
+@@ -5667,8 +5667,17 @@
+   // opts.force salta el atajo de "no ha cambiado nada desde el último guardado": un guardado manual
+   // pedido explícitamente por el usuario debe tocar disco de verdad para poder confirmárselo, no
+   // limitarse a confiar en que el automático ya lo hizo.
++  // A3.3/Bloque 4: si un guardado llega a aplicarse pero no se puede verificar, la
++  // sesión deja de guardar y se avisa UNA vez. Repetir un guardado ya aplicado es
++  // precisamente lo que no se debe hacer.
++  let backupsDetenidos = false;
++  let avisoReinicioMostrado = false;
+   async function maybeBackup(reason, opts){
+     const force = !!(opts && opts.force);
++    if(backupsDetenidos){
++      logBackupAttempt(reason, force, 'skipped', 'sesion-detenida-tras-aplicado-sin-verificar');
++      return { ok:false, skipped:true, why:'requiere-reinicio' };
++    }
+     // v0.1.40: con un aviso de carga fallida activo, no se crea ningún backup nuevo — evitaría
+     // guardar una copia del estado vacío de fábrica y, más importante, no toca en absoluto la lista
+     // de backups ya existentes de este proyecto mientras el problema no se investigue (ver
+@@ -5715,14 +5724,32 @@
+       // — el que lee el semáforo de la tarjeta del launcher, y el que se usa para crear un proyecto
+       // nuevo a partir de él — se quedaba en la versión anterior, sin el cambio. Ahora se comprueba
+       // de verdad el resultado, y `lastSerialized` solo se actualiza tras una escritura confirmada.
+-      const wroteOk = await window.panoramaBridge.saveBackup(serialized, reason || 'auto');
+-      if(!wroteOk){
++      // A3.3/Bloque 4: `saveBackup` ya NO devuelve un booleano sino el contrato de
++      // acción (ver preload.js). Ojo: con un objeto, el viejo `if(!wroteOk)` sería
++      // SIEMPRE falso y cualquier fallo pasaría por éxito — que es exactamente el
++      // bug de `lastSerialized` descrito arriba, otra vez. Lo que manda es
++      // `aplicado`, nunca la veracidad del objeto.
++      const res = await window.panoramaBridge.saveBackup(serialized, reason || 'auto');
++      if(!res || res.aplicado !== true){
+         logBackupAttempt(reason, force, 'error', 'write-failed', dump);
+-        return { ok:false, why:'write-failed' };
++        return { ok:false, why:'write-failed', error:(res && res.error) || null, reintentable:!!(res && res.reintentable) };
+       }
++      // El contenido SÍ está aplicado: `lastSerialized` avanza. Si además no se
++      // pudo verificar, NO se vuelve a intentar nunca — repetir un guardado ya
++      // aplicado es justo lo que no se debe hacer.
+       lastSerialized = serialized;
++      if(res.verificado === false){
++        backupsDetenidos = true;
++        logBackupAttempt(reason, force, 'error', 'aplicado-sin-verificar', dump);
++        if(!avisoReinicioMostrado){
++          avisoReinicioMostrado = true;
++          try{ await psAlert(res.aviso || 'El cambio se guardó pero no se pudo verificar. Cierra la aplicación y vuelve a abrirla.',
++            { title:'Hay que reiniciar la aplicación', danger:true }); }catch(e){}
++        }
++        return { ok:true, aplicado:true, verificado:false, requiereReinicio:true };
++      }
+       logBackupAttempt(reason, force, 'ok', null, dump);
+-      return { ok:true };
++      return { ok:true, aplicado:true, verificado:true };
+     }catch(e){
+       console.warn('[panoramaBridge] backup fallido:', e);
+       logBackupAttempt(reason, force, 'error', String((e && e.message) || e));

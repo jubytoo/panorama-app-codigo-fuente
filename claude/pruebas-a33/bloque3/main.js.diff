@@ -1,0 +1,1382 @@
+--- main.js (antes)
++++ main.js (despues)
+@@ -218,7 +218,56 @@
+ // candidateEval:save) repetían literalmente esta misma línea (auditoría
+ // 2026-09-12, sección 3, prioridad baja). `securityKey` es la clave de
+ // seguridad global de la app (null si la Seguridad está desactivada).
++//
++// Bloque 3 — BARRERA DE SEGURIDAD DE LA SESIÓN.
++//
++// Devuelve un motivo cuando NO se puede seguir escribiendo contenido del
++// usuario, o null cuando todo está en orden. Dos situaciones:
++//
++//   'revalidacion'       — la base de datos que tenemos delante ya no es la
++//                          que correspondía a la clave en memoria (adopción
++//                          de otro equipo), o tiene la Seguridad activa y
++//                          esta sesión todavía no ha validado ninguna clave.
++//   'rollback-incompleto'— un cambio de Seguridad se deshizo a medias y hay
++//                          archivos cuyo estado no se pudo demostrar.
++//
++// La comprobación NO puede depender de que exista una clave. Ese fue un
++// defecto real: `revalidarSeguridadTrasAdopcion()` pone `securityKey = null`,
++// los cuatro puntos de guardado calculan `isEncrypted = !!securityKey`, y con
++// la guarda atada a `isEncrypted` el resultado era que el contenido se
++// escribía EN CLARO, sin lanzar, justo después de invalidar la clave.
++let seguridadEnEstadoInconsistente = null;   // null | string con el detalle
++
++function bloqueoDeSeguridad() {
++  if (seguridadEnEstadoInconsistente) {
++    return {
++      motivo: 'rollback-incompleto',
++      mensaje:
++        'Un cambio de Seguridad se deshizo a medias y hay archivos cuyo estado no se ha podido comprobar. ' +
++        'Panorama del Servicio no va a escribir nada más en esta sesión para no empeorarlo.\n\n' +
++        seguridadEnEstadoInconsistente +
++        '\n\nCierra la aplicación y revisa el registro (app.log) antes de seguir trabajando.',
++    };
++  }
++  if (seguridadRequiereRevalidacion) {
++    return {
++      motivo: 'revalidacion',
++      mensaje:
++        'La base de datos ha cambiado desde otro equipo y la contraseña de esta sesión todavía no se ha ' +
++        'validado contra ella. Cierra Panorama del Servicio y vuelve a abrirlo para introducir la ' +
++        'contraseña correcta; no se ha guardado nada.',
++    };
++  }
++  return null;
++}
++
+ function encryptIfNeeded(payload, isEncrypted) {
++  // Se comprueba SIEMPRE, cifre o no: mientras la Seguridad de esta sesión no
++  // esté validada, escribir en claro es tan malo como cifrar con la clave
++  // equivocada — más, porque deja contenido del usuario legible en una
++  // carpeta compartida.
++  const b = bloqueoDeSeguridad();
++  if (b) { const e = new Error(b.mensaje); e.bloqueoSeguridad = b.motivo; throw e; }
+   return isEncrypted ? securitymod.encryptString(securityKey, payload) : payload;
+ }
+ 
+@@ -410,6 +459,46 @@
+       'recargarla la deja como estaba. Si la misma ventana se cae varias veces seguidas, la app deja de ' +
+       'ofrecer recargarla y conviene cerrar y volver a abrir.',
+   },
++  'PS-1016': {
++    titulo: 'No se pudo abrir la base de datos (y no se creó ninguna nueva)',
++    explicacion:
++      'Al arrancar, la base de datos no estaba donde debería, no se pudo leer, o no se pudo comprobar ' +
++      'que el archivo del disco sea realmente el tuyo — y esta instalación NO tenía autorización para ' +
++      'crear una nueva en esa carpeta. La app se cierra a propósito en vez de empezar desde cero: así ' +
++      'nunca aparece una base de datos vacía encima de la real. Si la carpeta de datos está en Google ' +
++      'Drive/OneDrive, lo más habitual es que todavía no haya terminado de sincronizar — espera y vuelve ' +
++      'a abrir. No se ha modificado ni borrado nada.',
++  },
++  'PS-1017': {
++    titulo: 'No se pudo dejar constancia del intento de crear la base de datos',
++    explicacion:
++      'La app iba a crear su base de datos por primera vez en esa carpeta, pero antes de escribir el ' +
++      'primer byte no pudo guardar (y releer) en la configuración local de Windows la constancia de ese ' +
++      'intento — o no pudo guardar la identidad de este equipo, que es lo que permite reconocer luego una ' +
++      'creación interrumpida como propia. Sin esa constancia, un corte de luz a mitad dejaría el permiso ' +
++      'de "primera creación" vivo para siempre, y la app podría acabar creando una base de datos vacía ' +
++      'más adelante. Por eso NO se ha creado ni escrito nada: revisa los permisos de la carpeta de ' +
++      'configuración que indica el propio aviso.',
++  },
++  'PS-1018': {
++    titulo: 'La base de datos está bien, pero no se pudo cerrar el registro local',
++    explicacion:
++      'La base de datos se abrió (o se creó) correctamente y está INTACTA — no se ha perdido nada — pero ' +
++      'no se pudo anotar en la configuración local de Windows que esa carpeta ya tiene datos. La app se ' +
++      'cierra a propósito en vez de seguir: si continuara con la ruta "sin constar", el permiso de ' +
++      'primera creación seguiría siendo renovable y un arranque posterior podría crear una base de datos ' +
++      'vacía. Comprueba los permisos de la carpeta de configuración y vuelve a abrir; se reintenta solo.',
++  },
++  'PS-1019': {
++    titulo: 'Se encontró tu base de datos pero no se pudo registrar esa carpeta',
++    explicacion:
++      'Es el caso de actualizar desde una versión anterior, o de apuntar un PC nuevo a una carpeta ' +
++      'compartida que ya tiene datos: la app SÍ ve tu base de datos, pero no pudo dejar constancia de ' +
++      'ello en la configuración local antes de abrirla. NO se ha abierto ni modificado la base de datos. ' +
++      'Se para aquí a propósito: sin esa marca previa, si más adelante el archivo no apareciera (unidad ' +
++      'de red caída, sincronización a medias), la app podría interpretar esa carpeta como "nunca usada" ' +
++      'y crear una vacía. Revisa los permisos de la carpeta de configuración y vuelve a abrir.',
++  },
+   'PS-2001': {
+     titulo: 'Datos del proyecto no encontrados al abrirlo',
+     explicacion:
+@@ -3212,6 +3301,127 @@
+   }
+ }
+ 
++// ------------------------------------------------------------------
++// BLOQUE 3 — JOURNAL v2
++//
++// Qué añade respecto a v1, y por qué cada cosa:
++//
++// · `base_commit_id` — el commit de la base de datos sobre el que se calculó
++//   el inventario, capturado ANTES de preparar nada y persistido antes de que
++//   cambie ni un archivo. Es lo que impide que una recuperación de un journal
++//   viejo consolide su sal sobre la base de datos que otro equipo dejó
++//   después. La base NUNCA se recalcula: recalcularla convertiría la
++//   comprobación en una tautología (declararía aceptable justo lo que hay).
++//
++// · `original_sha256` / `new_sha256` por item — "el archivo existe" no
++//   demuestra nada en una carpeta compartida: el otro equipo pudo
++//   reescribirlo mientras durábamos. Cada rename se decide comparando los
++//   bytes reales contra lo que el journal espera; un tercer hash significa
++//   "esto no es ni lo que había ni lo que preparé" y se para en seco.
++//
++// · `writer` — el staging vive DENTRO de la carpeta de datos, así que en una
++//   ubicación compartida es el MISMO para los dos equipos. No se recupera
++//   automáticamente el trabajo de otro: podría estar ejecutándose ahora mismo.
++//
++// · `phase: 'cleanup'` + `consolidated_commit_id` — se escriben tras
++//   confirmar la mutación única y antes de retirar el staging. Con eso, un
++//   staging SIN journal deja de poder deducirse como "residuo de limpieza":
++//   el journal vive hasta el final.
++//
++// · `remembered_final` — si el estado final lleva o no contraseña recordada.
++//   NUNCA el valor: en el staging no entra ningún secreto.
++// ------------------------------------------------------------------
++const REKEY_JOURNAL_V = 2;
++
++// Escritura durable de JSON, con la misma disciplina que
++// guardarRegistroUbicaciones(): tmp + writeSync con progreso + fsync + rename.
++// Un journal a medias es peor que no tenerlo, porque describe mal lo que hay.
++function escribirJsonDurable(ruta, obj) {
++  const tmp = `${ruta}.tmp-${process.pid}-${Date.now()}`;
++  try {
++    fs.mkdirSync(path.dirname(ruta), { recursive: true });
++    const fd = fs.openSync(tmp, 'w');
++    try {
++      const buf = Buffer.from(JSON.stringify(obj, null, 2), 'utf8');
++      let escritos = 0;
++      while (escritos < buf.length) {
++        const n = fs.writeSync(fd, buf, escritos, buf.length - escritos, escritos);
++        if (!(n > 0)) throw new Error('writeSync sin progreso');
++        escritos += n;
++      }
++      try {
++        fs.fsyncSync(fd);
++      } catch (e) {
++        if (!FSYNC_NO_SOPORTADO_REG.has(e && e.code)) {
++          throw new Error(`fsync falló (${(e && e.code) || '?'}): ${e && e.message}`);
++        }
++      }
++    } finally {
++      fs.closeSync(fd);
++    }
++    fs.renameSync(tmp, ruta);
++  } catch (e) {
++    try { fs.unlinkSync(tmp); } catch (e2) {}
++    return { ok: false, motivo: String((e && e.message) || e) };
++  }
++  // Releer: escribir sin comprobar no demuestra que quedó guardado.
++  try {
++    const v = JSON.parse(fs.readFileSync(ruta, 'utf8'));
++    if (!v) throw new Error('la relectura no devolvió nada');
++  } catch (e) {
++    return { ok: false, motivo: `tras escribir no se pudo releer: ${String((e && e.message) || e)}` };
++  }
++  return { ok: true };
++}
++
++function guardarJournalRekey(journal) {
++  return escribirJsonDurable(rekeyJournalPath(), journal);
++}
++
++// sha256 de un archivo. Distingue "no existe" de "no se pudo leer": lo segundo
++// NO autoriza a tratarlo como ausente.
++function sha256DeArchivo(p) {
++  try {
++    const b = fs.readFileSync(p);
++    return { existe: true, sha: crypto.createHash('sha256').update(b).digest('hex'), size: b.length };
++  } catch (e) {
++    const cod = (e && e.code) || '';
++    if (cod === 'ENOENT') return { existe: false, codigo: cod };
++    return { existe: false, ilegible: true, codigo: cod, motivo: String((e && e.message) || e) };
++  }
++}
++
++// Clasifica lo que hay en la carpeta de trabajo, SIN deducir nada por fechas.
++function leerJournalRekey() {
++  const staging = rekeyStagingDir();
++  const jp = rekeyJournalPath();
++  if (!fs.existsSync(staging)) return { clase: 'ausente' };
++  if (!fs.existsSync(jp)) return { clase: 'sin-journal' };
++  let j = null;
++  try {
++    j = JSON.parse(fs.readFileSync(jp, 'utf8'));
++  } catch (e) {
++    return { clase: 'ilegible', motivo: String((e && e.message) || e) };
++  }
++  if (!j || typeof j !== 'object') return { clase: 'ilegible', motivo: 'el journal no es un objeto' };
++  if (j.v === 1) return { clase: 'v1', journal: j };
++  if (j.v !== REKEY_JOURNAL_V || !Array.isArray(j.items)) {
++    return { clase: 'desconocido', motivo: `versión ${JSON.stringify(j.v)}` };
++  }
++  return { clase: 'v2', journal: j };
++}
++
++// ¿Hay algún `.old` en TODA la carpeta de trabajo? Es la pregunta que decide
++// si una operación llegó a sustituir algún original. Se recorre la carpeta de
++// verdad, no la lista de items del journal.
++function hayAlgunOldEnStaging() {
++  try {
++    return fs.readdirSync(rekeyStagingDir()).some((f) => /\.old$/i.test(f));
++  } catch (e) {
++    return true;   // si no se puede mirar, se asume lo peor
++  }
++}
++
+ // Las 3 familias de archivos gobernadas por la clave de Seguridad, con el
+ // MISMO criterio para las tres.
+ // - Los backups "legacy" (file_path vacío, contenido todavía dentro de
+@@ -3265,54 +3475,153 @@
+   return items;
+ }
+ 
+-// Fase 3, camino normal: todas las filas del inventario pasan al mismo flag.
+-// El WHERE es idéntico al de collectRekeyInventory() — y el bloqueo
+-// rekeyInProgress garantiza que ese conjunto no ha podido crecer entretanto.
+-function rekeySetFlagBulk(newFlag) {
+-  dbmod.run(
+-    "UPDATE backups SET encrypted=? WHERE file_path IS NOT NULL AND file_path != '' AND project_id IN (SELECT id FROM projects)",
+-    [newFlag]
+-  );
+-  dbmod.run(
+-    "UPDATE meeting_preps SET encrypted=? WHERE file_path IS NOT NULL AND file_path != '' AND project_id IN (SELECT id FROM projects)",
+-    [newFlag]
+-  );
+-  dbmod.run('UPDATE candidate_evals SET encrypted=? WHERE project_id IN (SELECT id FROM projects)', [newFlag]);
++// ------------------------------------------------------------------
++// BLOQUE 3 — UN CAMBIO DE SEGURIDAD = UNA SOLA MUTACIÓN DE LA BASE DE DATOS
++//
++// Antes esto eran dos funciones con SEIS `dbmod.run()` entre las dos, y cada
++// `dbmod.run()` es un commit A3.3 completo: exporta la base de datos entera y
++// la reescribe en disco. Es decir, había instantes reales y observables en el
++// archivo con la sal NUEVA y el verificador VIEJO. Si el segundo commit
++// fallaba —cosa normal con A3.3: entre uno y otro se vuelve a comprobar el
++// disco, y una carpeta compartida puede devolver conflicto— la vuelta atrás
++// deshacía los archivos pero NO la sal, y entonces no había contraseña capaz
++// de validar: ni la nueva (verificador viejo) ni la vieja (sal perdida). Los
++// backups, preparaciones y evaluaciones quedaban ilegibles para siempre.
++//
++// Ahora las marcas `encrypted`, la sal, el verificador, `security_enabled` y
++// la contraseña recordada salen en la MISMA imagen y el MISMO rename: o está
++// todo el estado nuevo, o está todo el anterior. El orden entre ellas deja de
++// importar porque ya no hay "entre ellas".
++//
++// El WHERE de los tres UPDATE es idéntico al de collectRekeyInventory().
++// ------------------------------------------------------------------
++function metaUpsert(key, value) {
++  return {
++    sql: 'INSERT INTO app_meta(key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
++    params: [key, value],
++  };
+ }
++function metaDelete(key) {
++  return { sql: 'DELETE FROM app_meta WHERE key=?', params: [key] };
++}
+ 
+-// Fase 3, vuelta atrás: fila a fila con su valor ORIGINAL, no un valor único.
+-// En la práctica todas las filas comparten flag, pero un estado mixto (por
+-// ejemplo, heredado de una migración antigua a medias) se restauraría mal con
+-// un UPDATE masivo. Solo se recorre en el camino de error, que es raro.
+-function rekeyRestoreFlagsPerItem(items) {
+-  for (const it of items) {
+-    if (it.table === 'backups') dbmod.run('UPDATE backups SET encrypted=? WHERE id=?', [it.hadFlag, it.rowKey]);
+-    else if (it.table === 'meeting_preps') dbmod.run('UPDATE meeting_preps SET encrypted=? WHERE id=?', [it.hadFlag, it.rowKey]);
+-    else if (it.table === 'candidate_evals') dbmod.run('UPDATE candidate_evals SET encrypted=? WHERE project_id=?', [it.hadFlag, it.rowKey]);
++function sentenciasDeSeguridad(mode, items, newFlag, newSalt, newVerifier, remembered) {
++  const s = [];
++  if (items.some((it) => it.hadFlag !== newFlag)) {
++    s.push({
++      sql: "UPDATE backups SET encrypted=? WHERE file_path IS NOT NULL AND file_path != '' AND project_id IN (SELECT id FROM projects)",
++      params: [newFlag],
++    });
++    s.push({
++      sql: "UPDATE meeting_preps SET encrypted=? WHERE file_path IS NOT NULL AND file_path != '' AND project_id IN (SELECT id FROM projects)",
++      params: [newFlag],
++    });
++    s.push({
++      sql: 'UPDATE candidate_evals SET encrypted=? WHERE project_id IN (SELECT id FROM projects)',
++      params: [newFlag],
++    });
+   }
++  if (mode === 'disable') {
++    s.push(metaDelete('security_enabled'));
++    s.push(metaDelete('security_salt'));
++    s.push(metaDelete('security_verifier'));
++    s.push(metaDelete('security_remembered'));
++  } else {
++    s.push(metaUpsert('security_salt', newSalt));
++    s.push(metaUpsert('security_verifier', newVerifier));
++    s.push(metaUpsert('security_enabled', '1'));
++    // La contraseña recordada forma parte del MISMO cambio lógico: si se
++    // consolidara aparte podría quedar apuntando a una contraseña que ya no
++    // vale (o sobrevivir a un cambio que sí se aplicó).
++    s.push(remembered && remembered.guardar && remembered.valor
++      ? metaUpsert('security_remembered', remembered.valor)
++      : metaDelete('security_remembered'));
++  }
++  return s;
+ }
+ 
+-// Fase 4. El orden importa en los dos sentidos:
+-// - Al ACTIVAR/CAMBIAR, `security_enabled` va el ÚLTIMO y hace de marca de
+-//   confirmación: si se cortara entre medias, isSecurityEnabled() sigue en
+-//   false y la app arranca sin pedir nada, en vez de pedir una contraseña
+-//   contra una sal a medio escribir.
+-// - Al DESACTIVAR va el PRIMERO, por el mismo motivo al revés: mientras
+-//   exista, la app pide contraseña al arrancar; es mejor quedarse "sin
+-//   seguridad" (los archivos ya están en claro a estas alturas) que "con
+-//   seguridad y sin sal".
+-function applyRekeyMeta(mode, newSalt, newVerifier) {
+-  if (mode === 'disable') {
+-    deleteMeta('security_enabled');
+-    deleteMeta('security_salt');
+-    deleteMeta('security_verifier');
++// ¿El estado final que describe el journal ESTÁ ya en la base de datos y en
++// los archivos? Es la prueba del caso B: un corte posterior a la confirmación.
++// Se demuestra por CONTENIDO, nunca por linaje — que la base de datos actual
++// descienda de `base_commit_id` no prueba absolutamente nada.
++function estadoFinalDelJournalYaAplicado(j) {
++  const faltan = [];
++  const enabled = getMeta('security_enabled');
++  const salt = getMeta('security_salt');
++  const verifier = getMeta('security_verifier');
++  const remembered = getMeta('security_remembered');
++
++  if (j.mode === 'disable') {
++    if (enabled !== null) faltan.push('security_enabled sigue presente');
++    if (salt !== null) faltan.push('security_salt sigue presente');
++    if (verifier !== null) faltan.push('security_verifier sigue presente');
++    if (remembered !== null) faltan.push('security_remembered sigue presente');
+   } else {
+-    setMeta('security_salt', newSalt);
+-    setMeta('security_verifier', newVerifier);
+-    setMeta('security_enabled', '1');
++    if (enabled !== '1') faltan.push('security_enabled no es "1"');
++    if (salt !== j.newSalt) faltan.push('security_salt no es el del journal');
++    if (verifier !== j.newVerifier) faltan.push('security_verifier no es el del journal');
++    const deberiaEstar = j.remembered_final === 'presente';
++    if (deberiaEstar !== (remembered !== null)) faltan.push('security_remembered no coincide con el estado final previsto');
+   }
++
++  // Las marcas `encrypted` de TODAS las filas afectadas.
++  for (const it of j.items) {
++    let fila = null;
++    if (it.table === 'backups') fila = dbmod.get('SELECT encrypted FROM backups WHERE id=?', [it.rowKey]);
++    else if (it.table === 'meeting_preps') fila = dbmod.get('SELECT encrypted FROM meeting_preps WHERE id=?', [it.rowKey]);
++    else if (it.table === 'candidate_evals') fila = dbmod.get('SELECT encrypted FROM candidate_evals WHERE project_id=?', [it.rowKey]);
++    if (!fila) continue;                       // la fila ya no existe: no prueba nada en contra
++    if ((fila.encrypted ? 1 : 0) !== j.newFlag) {
++      faltan.push(`${it.table}#${it.rowKey}.encrypted no es ${j.newFlag}`);
++      break;
++    }
++  }
++
++  // Y los archivos: cada item no ausente tiene que ser EXACTAMENTE el nuevo.
++  for (const it of j.items) {
++    if (it.missing) continue;
++    const h = sha256DeArchivo(it.absPath);
++    if (!h.existe || h.sha !== it.new_sha256) {
++      faltan.push(`"${path.basename(it.absPath)}" no es el archivo re-cifrado esperado`);
++      break;
++    }
++  }
++  return { aplicado: faltan.length === 0, faltan };
+ }
+ 
++// Estado de UN item deducido de los BYTES, no de la existencia de archivos.
++//   'preparado'     -> absPath es el original, .new listo
++//   'swap-a-medias' -> absPath no está, .old es el original, .new listo
++//   'intercambiado' -> absPath ya es el nuevo
++//   'ausente'       -> registrado como missing y sigue sin estar
++//   'ajeno'         -> un TERCER hash: alguien lo reescribió por fuera
++//   'staging-roto'  -> el .old o el .new no son los bytes que el journal dice
++function estadoItemPorHash(it) {
++  const a = sha256DeArchivo(it.absPath);
++  const o = sha256DeArchivo(rekeyItemPath(it.i, 'old'));
++  const nu = sha256DeArchivo(rekeyItemPath(it.i, 'new'));
++
++  if (a.ilegible) return { clase: 'ajeno', detalle: `no se pudo leer "${it.absPath}" (${a.codigo})` };
++  if (o.existe && o.sha !== it.original_sha256) return { clase: 'staging-roto', detalle: `el .old de ${it.i} no son los bytes originales` };
++  if (nu.existe && nu.sha !== it.new_sha256) return { clase: 'staging-roto', detalle: `el .new de ${it.i} no son los bytes preparados` };
++
++  if (it.missing) {
++    if (!a.existe) return { clase: 'ausente' };
++    return { clase: 'ajeno', detalle: `"${it.absPath}" estaba registrado como ausente y ahora existe` };
++  }
++
++  if (a.existe && a.sha === it.new_sha256) return { clase: 'intercambiado', old: o, nuevo: nu };
++  if (a.existe && a.sha === it.original_sha256) {
++    if (!nu.existe) return { clase: 'staging-roto', detalle: `falta el .new de ${it.i}` };
++    return { clase: 'preparado' };
++  }
++  if (!a.existe) {
++    if (o.existe && nu.existe) return { clase: 'swap-a-medias' };
++    return { clase: 'ajeno', detalle: `"${it.absPath}" no está y el staging no puede reponerlo` };
++  }
++  return { clase: 'ajeno', detalle: `"${it.absPath}" no es ni el original ni el re-cifrado` };
++}
++
+ // Devuelve { ok:true, migrated, missing, total } o { ok:false, error } con un
+ // mensaje ya listo para enseñar en la ventana de Seguridad. NUNCA lanza: el
+ // llamante (security-win:submit) solo tiene que mirar `ok`.
+@@ -3320,17 +3629,42 @@
+   const mode = (opts && opts.mode) || 'change';
+   const newSalt = (opts && opts.newSalt) || null;
+   const newVerifier = (opts && opts.newVerifier) || null;
++  const remembered = (opts && opts.remembered) || { guardar: false, valor: null };
+   const newFlag = newKey ? 1 : 0;
+ 
+   if (rekeyInProgress) {
+     return { ok: false, error: 'Ya hay una operación de Seguridad en curso. Espera a que termine.' };
+   }
++  // Una sesión con la Seguridad en estado no demostrado no empieza otra
++  // operación encima: ni con la clave sin validar, ni tras una vuelta atrás
++  // incompleta.
++  {
++    const b = bloqueoDeSeguridad();
++    if (b) return { ok: false, error: b.mensaje + errorCodeSuffix('PS-2004') };
++  }
++
++  // EXCLUSIVA DE OPERACIÓN (Bloque 3). No es un latch: es un cerrojo en
++  // memoria de db.js para que, mientras esto dura, NINGUNA otra escritura de
++  // este proceso (tema, geometría de ventanas, vacuum, guardados, borrados)
++  // se cuele entre la preparación, los intercambios y la consolidación.
++  // No protege los archivos frente a OTRO equipo: de eso se encargan los
++  // hashes por item del journal v2.
++  let ex = null;
++  try {
++    ex = dbmod.tomarExclusiva('seguridad');
++  } catch (e) {
++    return {
++      ok: false,
++      error: 'Hay otra operación en curso sobre la base de datos. No se ha tocado nada; espera unos ' +
++        'segundos y vuelve a intentarlo.' + errorCodeSuffix('PS-2003'),
++    };
++  }
+   rekeyInProgress = true;
+ 
+   const staging = rekeyStagingDir();
+   let items = [];
+   const swapped = [];
+-  let columnsApplied = false;
++  let journal = null;
+ 
+   try {
+     // ---- FASE 1: PREPARE (ningún original se toca) ----------------------
+@@ -3370,29 +3704,60 @@
+     fs.mkdirSync(staging, { recursive: true });
+     items = collectRekeyInventory();
+ 
+-    const journal = {
+-      v: 1,
++    // ---- LA BASE DE LA OPERACIÓN ----------------------------------------
++    // Se captura AQUÍ: justo después del inventario y antes de preparar ni un
++    // byte. Pertenece al journal y NUNCA se recalcula — recalcularla en una
++    // recuperación declararía aceptable precisamente la versión que otro
++    // equipo dejó después, que es lo contrario de comprobar algo.
++    const baseCommit = dbmod.getCommitActual();
++    if (!baseCommit) {
++      throw new Error('la base de datos todavía no tiene identidad; no se puede anclar la operación a una versión concreta.');
++    }
++
++    journal = {
++      v: REKEY_JOURNAL_V,
+       startedAt: new Date().toISOString(),
++      writer: dbmod.getInstallationId(),
+       mode,
+       newFlag,
+       newSalt,
+       newVerifier,
++      // El HECHO, nunca el valor: en el staging no entra ningún secreto.
++      remembered_final: (mode !== 'disable' && remembered.guardar && remembered.valor) ? 'presente' : 'ausente',
++      base_commit_id: baseCommit,
+       phase: 'prepare',
++      consolidated_commit_id: null,
+       items: items.map((it) => ({ i: it.i, table: it.table, rowKey: it.rowKey, absPath: it.absPath, hadFlag: it.hadFlag })),
+     };
+-    fs.writeFileSync(rekeyJournalPath(), JSON.stringify(journal, null, 2), 'utf8');
++    const g0 = guardarJournalRekey(journal);
++    if (!g0.ok) {
++      // Todavía no se ha tocado ningún original: se puede abortar limpio.
++      throw new Error('no se pudo dejar constancia durable de la operación: ' + g0.motivo);
++    }
+ 
+     let prepared = 0;
+     let missing = 0;
+     for (const it of items) {
+-      if (!fs.existsSync(it.absPath)) {
+-        // Fila con archivo ausente (borrado a mano, carpeta movida...). No es
+-        // un fallo: mismo criterio tolerante que ya tenía reencryptAllBackups.
+-        it.missing = true;
+-        missing++;
+-        continue;
++      let buf = null;
++      try {
++        buf = fs.readFileSync(it.absPath);
++      } catch (eLeer) {
++        if ((eLeer && eLeer.code) === 'ENOENT') {
++          // Fila con archivo ausente (borrado a mano, carpeta movida...). No es
++          // un fallo: mismo criterio tolerante que ya tenía reencryptAllBackups.
++          it.missing = true;
++          missing++;
++          continue;
++        }
++        // "No se pudo leer" NO es "no está": abortar es lo correcto.
++        throw new Error(`no se pudo leer "${it.absPath}" (${(eLeer && eLeer.code) || ''}): ${(eLeer && eLeer.message) || eLeer}`);
+       }
+-      const raw = fs.readFileSync(it.absPath, 'utf8');
++      // El hash sale del MISMO buffer que se descifra: dos lecturas separadas
++      // podrían ver dos contenidos distintos en una carpeta compartida.
++      it.original_sha256 = crypto.createHash('sha256').update(buf).digest('hex');
++      it.original_size = buf.length;
++      const raw = buf.toString('utf8');
++
+       // Manda el ARCHIVO, no la columna: si no coinciden (fila que dice
+       // cifrada sobre un archivo en claro, o al revés), lo que hay en disco
+       // es la verdad. Evita abortar por una incoherencia heredada.
+@@ -3409,36 +3774,102 @@
+       fs.writeFileSync(outPath, newKey ? securitymod.encryptString(newKey, plain) : plain, 'utf8');
+       // Ida y vuelta contra lo que de verdad quedó EN DISCO (no contra el
+       // buffer en memoria): detecta una escritura truncada o a medias ANTES
+-      // de tocar el original.
+-      const readBack = fs.readFileSync(outPath, 'utf8');
++      // de tocar el original. Y el hash del `.new` sale de ESOS bytes, no de
++      // lo que creíamos haber escrito.
++      const bufNew = fs.readFileSync(outPath);
++      const readBack = bufNew.toString('utf8');
+       const check = newKey ? securitymod.decryptString(newKey, readBack) : readBack;
+       if (check !== plain) {
+         throw new Error(`la copia re-cifrada de "${it.absPath}" no coincide con el original al releerla.`);
+       }
++      it.new_sha256 = crypto.createHash('sha256').update(bufNew).digest('hex');
++      it.new_size = bufNew.length;
+       prepared++;
+     }
+ 
+     // ---- FASE 2: SWAP ---------------------------------------------------
++    // El journal pasa a 'swap' CON LOS HASHES y de forma durable ANTES del
++    // primer intercambio: a partir de aquí, cualquier recuperación posterior
++    // puede demostrar qué bytes esperaba encontrar en cada sitio.
+     journal.phase = 'swap';
+-    fs.writeFileSync(rekeyJournalPath(), JSON.stringify(journal, null, 2), 'utf8');
++    journal.items = items.map((it) => ({
++      i: it.i, table: it.table, rowKey: it.rowKey, absPath: it.absPath, hadFlag: it.hadFlag,
++      missing: !!it.missing,
++      original_sha256: it.original_sha256 || null, original_size: it.original_size || 0,
++      new_sha256: it.new_sha256 || null, new_size: it.new_size || 0,
++    }));
++    const g1 = guardarJournalRekey(journal);
++    if (!g1.ok) throw new Error('no se pudo actualizar el registro de la operación: ' + g1.motivo);
++
+     for (const it of items) {
+       if (it.missing) continue;
++      // "El archivo existe" no demuestra que sea EL archivo. En una carpeta
++      // compartida, el otro equipo ha podido reescribirlo mientras durábamos.
++      const h = sha256DeArchivo(it.absPath);
++      if (!h.existe) {
++        throw new Error(`"${it.absPath}" desapareció entre la preparación y el intercambio.`);
++      }
++      if (h.sha === it.new_sha256) continue;                 // ya intercambiado
++      if (h.sha !== it.original_sha256) {
++        throw new Error(
++          `"${it.absPath}" ha cambiado desde que se preparó — probablemente lo ha guardado otro equipo. ` +
++          'No se toca.');
++      }
++      // Se apunta ANTES de mover: si falla el SEGUNDO rename, el original ya
++      // está en `.old` y el archivo no está en su sitio. Si no constara aquí,
++      // la vuelta atrás lo saltaría y el original se quedaría en la carpeta de
++      // trabajo — con el archivo del usuario simplemente ausente.
++      swapped.push(it);
+       fs.renameSync(it.absPath, rekeyItemPath(it.i, 'old'));
+       fs.renameSync(rekeyItemPath(it.i, 'new'), it.absPath);
+-      swapped.push(it);
+     }
+ 
+-    // ---- FASE 3: COLUMNAS ------------------------------------------------
+-    if (items.some((it) => it.hadFlag !== newFlag)) {
+-      rekeySetFlagBulk(newFlag);
+-      columnsApplied = true;
++    // ---- FASE 3+4: UNA SOLA MUTACIÓN DE LA BASE DE DATOS -----------------
++    // Marcas `encrypted`, sal, verificador, `security_enabled` y contraseña
++    // recordada, en la misma imagen y el mismo rename. Y anclada a la versión
++    // sobre la que empezó la operación: si otro equipo publicó algo entretanto,
++    // se rechaza en vez de consolidar encima.
++    const sentencias = sentenciasDeSeguridad(mode, items, newFlag, newSalt, newVerifier, remembered);
++    try {
++      dbmod.escribirMultiple(sentencias, { token: ex.token, exigirCommitBase: baseCommit });
++    } catch (eMut) {
++      if (eMut && eMut.aplicado === true) {
++        // POST-CONFIRMACIÓN: el cambio SÍ está en disco. Deshacer los archivos
++        // aquí es exactamente lo que dejaría "archivos viejos con sal nueva".
++        // No se deshace NADA y esta sesión no continúa.
++        securityKey = newKey;
++        journal.phase = 'cleanup';
++        journal.consolidated_commit_id = eMut.commit || null;
++        const gc = guardarJournalRekey(journal);
++        appLog(`ERROR PS-2004 — el cambio de Seguridad (${mode}) SÍ se guardó pero no se pudo verificar: ${eMut.message}`);
++        return {
++          ok: true,
++          aplicado: true,
++          limpiezaPendiente: true,
++          cleanupAnotado: gc.ok,
++          migrated: prepared,
++          missing,
++          total: items.length,
++          aviso:
++            'El cambio de Seguridad SÍ se ha aplicado: tus archivos y la base de datos ya están con la ' +
++            'contraseña nueva. Pero no se ha podido verificar el resultado, así que esta sesión no puede ' +
++            'continuar de forma segura.\n\nCierra Panorama del Servicio y vuelve a abrirlo. NO repitas la ' +
++            `operación.\n\nTus archivos originales siguen en:\n${staging}\n\nDetalle: ${eMut.message}`,
++        };
++      }
++      throw eMut;
+     }
+-
+-    // ---- FASE 4: META (consolidación) -------------------------------------
+-    applyRekeyMeta(mode, newSalt, newVerifier);
+     securityKey = newKey;
++    // La operación cerró bien: la clave en memoria y la base de datos vuelven
++    // a corresponderse, así que la barrera se levanta.
++    seguridadRequiereRevalidacion = false;
+ 
+     // ---- FASE 5: CLEANUP --------------------------------------------------
++    // La marca de cleanup va ANTES de retirar el staging: con ella, un staging
++    // sin journal deja de poder confundirse con "residuo de una limpieza".
++    journal.phase = 'cleanup';
++    journal.consolidated_commit_id = dbmod.getCommitActual();
++    guardarJournalRekey(journal);
+     removeRekeyStaging();
+     appLog(
+       `Seguridad — re-cifrado completo (${mode}): ${prepared} archivo(s) migrado(s), ` +
+@@ -3448,27 +3879,73 @@
+   } catch (e) {
+     const detail = String((e && e.message) || e);
+     appLog(`Seguridad — re-cifrado (${mode}) abortado: ${detail}`);
++
++    // La base de datos NO se ha tocado: la consolidación es una sola mutación
++    // y, si no llegó a confirmar, A3.3 ya restauró la memoria. Por eso aquí no
++    // hay nada que deshacer en la base de datos — solo archivos.
++    // La decisión de cada archivo sale de sus BYTES, tanto los del destino como
++    // los de la copia apartada. Nunca de "existe o no":
++    //
++    //   destino ILEGIBLE          -> no se puede demostrar qué hay: NO se toca
++    //   destino ausente + .old OK -> se repone el original
++    //   destino = original        -> no hay nada que deshacer
++    //   destino = re-cifrado      -> se deshace el intercambio, PERO solo si el
++    //                                `.old` son de verdad los bytes originales
++    //   destino = OTRA cosa       -> lo reescribió alguien más: NO se pisa, y su
++    //                                original se queda a salvo en `.old`
++    //
++    // Comprobar el `.old` por hash y no por existencia es lo que impide
++    // restaurar encima del archivo del usuario una copia que ya no es la suya.
+     let rollbackError = null;
+-    // Se deshace en orden inverso exactamente lo que se llegó a hacer.
+-    if (columnsApplied) {
+-      try {
+-        rekeyRestoreFlagsPerItem(items);
+-      } catch (e2) {
+-        rollbackError = 'no se pudieron restaurar las marcas de cifrado en la base de datos (' + String((e2 && e2.message) || e2) + ')';
+-      }
+-    }
++    const anota = (s) => { rollbackError = (rollbackError ? rollbackError + '; ' : '') + s; };
+     for (let k = swapped.length - 1; k >= 0; k--) {
+       const it = swapped[k];
+       try {
+-        if (fs.existsSync(it.absPath)) fs.renameSync(it.absPath, rekeyItemPath(it.i, 'new'));
++        const h = sha256DeArchivo(it.absPath);
++        const hOld = sha256DeArchivo(rekeyItemPath(it.i, 'old'));
++        const oldValido = hOld.existe && hOld.sha === it.original_sha256;
++
++        if (h.ilegible) {
++          anota(`no se pudo leer "${it.absPath}" (${h.codigo}): no se toca, y su original se conserva en la carpeta de trabajo`);
++          continue;
++        }
++        if (!h.existe) {
++          if (oldValido) fs.renameSync(rekeyItemPath(it.i, 'old'), it.absPath);
++          else if (hOld.existe) anota(`"${it.absPath}" no está y la copia apartada NO son sus bytes originales: se conserva sin restaurar`);
++          else anota(`"${it.absPath}" no está y no hay copia del original que reponer`);
++          continue;
++        }
++        if (h.sha === it.original_sha256) continue;            // nunca llegó a cambiarse
++        if (h.sha !== it.new_sha256) {
++          anota(`"${it.absPath}" fue reescrito desde fuera después del intercambio: se deja tal cual y su ` +
++            'original se conserva en la carpeta de trabajo');
++          continue;
++        }
++        if (!oldValido) {
++          anota(hOld.existe
++            ? `la copia apartada de "${it.absPath}" no son sus bytes originales: no se restaura nada y se conserva todo`
++            : `falta el original de "${it.absPath}" en la carpeta de trabajo`);
++          continue;
++        }
++        fs.renameSync(it.absPath, rekeyItemPath(it.i, 'new'));
+         fs.renameSync(rekeyItemPath(it.i, 'old'), it.absPath);
+       } catch (e3) {
+-        rollbackError =
+-          (rollbackError ? rollbackError + '; ' : '') +
+-          `no se pudo devolver a su sitio "${it.absPath}" (${String((e3 && e3.message) || e3)})`;
++        anota(`no se pudo devolver a su sitio "${it.absPath}" (${String((e3 && e3.message) || e3)})`);
+       }
+     }
+     if (rollbackError) {
++      // PROTECCIÓN EFECTIVA TRAS UN ROLLBACK INCOMPLETO.
++      //
++      // En cuanto el `finally` suelte `rekeyInProgress` y la exclusiva, la app
++      // seguiría viva y aceptando guardados — con archivos cuyo estado no se
++      // ha podido demostrar y con los únicos originales dentro de la carpeta
++      // de trabajo. Hasta ahora no lo impedía nada. Ahora la sesión queda
++      // marcada y la barrera de `encryptIfNeeded()` corta los cuatro puntos de
++      // guardado, la migración de backups antiguos y cualquier nuevo cambio de
++      // Seguridad. No se toca la base de datos: no hace falta, no llegó a
++      // mutarse.
++      seguridadEnEstadoInconsistente = rollbackError;
++      appLog('ERROR PS-2004 — la sesión queda bloqueada para escritura tras una vuelta atrás incompleta: ' + rollbackError);
+       // NO se borra el staging: los originales apartados como .old son la
+       // única copia que queda de lo que no se pudo devolver a su sitio.
+       return {
+@@ -3482,6 +3959,16 @@
+       };
+     }
+     removeRekeyStaging();
++    if (e && e.kind === 'base-cambiada') {
++      return {
++        ok: false,
++        error:
++          'Otro equipo guardó cambios mientras se re-cifraban tus archivos, así que la operación se ha ' +
++          'deshecho entera: tus archivos, tu contraseña y la base de datos siguen exactamente como ' +
++          'estaban.\n\nVuelve a intentarlo — esta vez partirá de la versión actualizada.' +
++          errorCodeSuffix('PS-2003'),
++      };
++    }
+     return {
+       ok: false,
+       error:
+@@ -3492,6 +3979,7 @@
+     };
+   } finally {
+     rekeyInProgress = false;
++    try { dbmod.soltarExclusiva(ex.token); } catch (e4) {}
+   }
+ }
+ 
+@@ -3505,88 +3993,182 @@
+ // original/.old/.new existe), no de lo que dijera el journal antes de morir.
+ // ------------------------------------------------------------------
+ function recoverInterruptedRekeyIfAny() {
+-  let journal;
+-  try {
+-    if (!fs.existsSync(rekeyJournalPath())) {
+-      // Carpeta de trabajo SIN journal: solo puede ser el resto de una
+-      // limpieza (fase 5) que no llegó a terminar. El journal se escribe
+-      // inmediatamente después de crear la carpeta y ANTES de tocar ningún
+-      // original, así que un staging sin journal nunca puede contener una
+-      // migración recuperable. Se retira: si no, se quedan ahí para siempre
+-      // los `.old` de la operación ya completada (con datos reales, decenas
+-      // de MB dentro de la carpeta sincronizada) y además bloquearían
+-      // cualquier cambio de contraseña posterior (ver rekeyAllUserFiles).
+-      if (fs.existsSync(rekeyStagingDir())) {
+-        appLog('Seguridad — retirando restos de una limpieza de re-cifrado que no llegó a terminar (carpeta sin journal).');
+-        removeRekeyStaging();
+-      }
+-      return null;
++  const staging = rekeyStagingDir();
++  const lec = leerJournalRekey();
++  if (lec.clase === 'ausente') return null;
++
++  // Fail-closed: ni renames, ni borrados, ni consolidación. Se conserva TODO
++  // tal cual y la aplicación no continúa (ver el arranque). La salida de un
++  // caso excepcional es manual y conservadora, nunca una deducción.
++  const cerrar = (motivo, detalle, extra) => {
++    appLog(`ERROR PS-2004 — ${motivo}${detalle ? ': ' + detalle : ''}`);
++    return Object.assign({ fallaCerrado: true, mode: (lec.journal && lec.journal.mode) || null, motivo, detalle: detalle || null, staging }, extra || {});
++  };
++
++  if (lec.clase === 'sin-journal') {
++    // Con el formato v2 el registro vive hasta el final (la marca de limpieza
++    // se escribe ANTES de retirar la carpeta), así que su ausencia ya no
++    // demuestra "residuo de una limpieza". Y dentro puede haber `.old`, que
++    // son la única copia de los bytes anteriores.
++    return cerrar('hay una carpeta de trabajo de un cambio de Seguridad sin su registro', null);
++  }
++  if (lec.clase === 'ilegible') {
++    return cerrar('el registro del cambio de Seguridad no se puede leer', lec.motivo);
++  }
++  if (lec.clase === 'desconocido') {
++    return cerrar('el registro del cambio de Seguridad es de una versión que esta app no entiende', lec.motivo);
++  }
++
++  if (lec.clase === 'v1') {
++    // Formato anterior: sin base_commit_id y sin hashes. Nada de lo que hace
++    // falta para demostrar un estado se puede reconstruir a posteriori, así
++    // que NUNCA se usa para recuperar. Lo único admisible es retirar una
++    // carpeta de trabajo que demostrablemente no llegó a sustituir ningún
++    // original: en el algoritmo anterior los `.old` solo los creaba el bucle
++    // de intercambio, así que "ningún .old en toda la carpeta" prueba que
++    // ningún original se movió. No se deduce nada por fechas.
++    const jv1 = lec.journal;
++    const sinNingunOld = !hayAlgunOldEnStaging();
++    if (sinNingunOld && (jv1.phase === 'prepare' || jv1.phase === 'swap')) {
++      appLog(`Seguridad — registro de formato anterior (fase ${jv1.phase}) sin ningún original sustituido: se retira solo la carpeta de trabajo.`);
++      removeRekeyStaging();
++      return { recovered: false, mode: jv1.mode, formatoAnterior: true };
+     }
+-    journal = JSON.parse(fs.readFileSync(rekeyJournalPath(), 'utf8'));
+-  } catch (e) {
+-    appLog('Seguridad — había una carpeta de re-cifrado a medias pero su journal no se pudo leer; se retira sin tocar nada más: ' + String((e && e.message) || e));
+-    removeRekeyStaging();
+-    return null;
++    return cerrar(
++      'un cambio de Seguridad de una versión anterior quedó a medias y ya había apartado archivos originales',
++      `fase "${jv1.phase}"; el formato anterior no guarda ni la versión de la base de datos ni las huellas de cada archivo, así que no se puede demostrar el estado`,
++      { formatoAnterior: true });
+   }
+-  if (!journal || journal.v !== 1 || !Array.isArray(journal.items)) {
+-    appLog('Seguridad — journal de re-cifrado con formato no reconocido; se retira sin tocar nada más.');
+-    removeRekeyStaging();
+-    return null;
++
++  const j = lec.journal;
++
++  // PROPIEDAD DEL TRABAJO. La carpeta de trabajo vive DENTRO de la carpeta de
++  // datos: en una ubicación compartida es la MISMA para los dos equipos. No se
++  // termina ni se limpia el trabajo de otro — podría estar ejecutándose ahora
++  // mismo, o reanudarse en cuanto ese equipo se encienda.
++  const yo = dbmod.getInstallationId();
++  if (j.writer && yo && j.writer !== yo) {
++    return cerrar('el cambio de Seguridad pendiente lo inició OTRO equipo', `registro de "${j.writer}", este equipo es "${yo}"`, { ajeno: true });
+   }
+ 
+-  const anySwapped = journal.items.some((it) => fs.existsSync(rekeyItemPath(it.i, 'old')));
+-  if (!anySwapped) {
+-    // Murió durante la fase 1: no se había tocado ni un original. Nada que
+-    // deshacer, solo retirar el trabajo preparado.
+-    appLog(`Seguridad — se encontró un re-cifrado (${journal.mode}) interrumpido antes de tocar ningún archivo; no había nada que deshacer.`);
+-    removeRekeyStaging();
+-    return { recovered: false, mode: journal.mode };
++  let ex = null;
++  try {
++    ex = dbmod.tomarExclusiva('seguridad-recuperacion');
++  } catch (e) {
++    return cerrar('no se pudo tomar el control exclusivo de la base de datos para recuperar', String((e && e.message) || e));
+   }
+ 
+-  // Ya hay archivos con la clave nueva. Volver atrás exigiría la contraseña
+-  // ANTERIOR, que aquí no tiene nadie; terminar de aplicar, en cambio, no
+-  // necesita ninguna clave: solo renombrar lo que quedara a medias y
+-  // consolidar la sal y el verificador que el journal guardó antes de empezar.
+-  let finished = 0;
+-  let problem = null;
+-  for (const it of journal.items) {
+-    const oldPath = rekeyItemPath(it.i, 'old');
+-    const newPath = rekeyItemPath(it.i, 'new');
+-    try {
+-      if (fs.existsSync(oldPath)) {
+-        // El original ya se apartó. Si el destino no existe, el segundo
+-        // rename no llegó a hacerse.
+-        if (!fs.existsSync(it.absPath) && fs.existsSync(newPath)) {
+-          fs.renameSync(newPath, it.absPath);
+-          finished++;
+-        }
+-      } else if (fs.existsSync(newPath)) {
+-        // Este todavía no se había intercambiado.
+-        if (fs.existsSync(it.absPath)) fs.renameSync(it.absPath, oldPath);
+-        fs.renameSync(newPath, it.absPath);
++  try {
++    // --- ¿la mutación ya estaba confirmada? -------------------------------
++    // 'cleanup' significa que la consolidación confirmó. Y un corte POSTERIOR
++    // a la confirmación puede haber impedido escribir esa marca, así que la
++    // otra forma de llegar aquí es que la base de datos ya NO esté en la base
++    // de la operación. En los dos casos se decide por CONTENIDO: que la base
++    // de datos descienda de `base_commit_id` no prueba nada.
++    const actual = dbmod.getCommitActual();
++    const yaConfirmada = j.phase === 'cleanup' || actual !== j.base_commit_id;
++
++    if (yaConfirmada) {
++      const prueba = estadoFinalDelJournalYaAplicado(j);
++      if (!prueba.aplicado) {
++        return cerrar(
++          j.phase === 'cleanup'
++            ? 'el cambio de Seguridad decía estar terminado pero la base de datos no lo confirma'
++            : 'la base de datos ha cambiado desde que empezó el cambio de Seguridad y no se puede demostrar que ya terminara',
++          prueba.faltan.join('; '),
++          { casoC: true });
++      }
++      appLog(`Seguridad — el cambio (${j.mode}) ya estaba aplicado por completo: se retira la carpeta de trabajo sin tocar ningún metadato.`);
++      removeRekeyStaging();
++      return { recovered: true, mode: j.mode, finished: 0, yaEstaba: true };
++    }
++
++    // --- CASO A: la base sigue siendo la de la operación --------------------
++    // Estado de cada archivo deducido de sus BYTES, nunca de "existe o no".
++    const estados = j.items.map((it) => ({ it, e: estadoItemPorHash(it) }));
++    const roto = estados.find((x) => x.e.clase === 'ajeno' || x.e.clase === 'staging-roto');
++    if (roto) {
++      return cerrar('un archivo del cambio de Seguridad no se corresponde con lo que el registro esperaba', roto.e.detalle, { terceroHash: true });
++    }
++
++    // ¿Se llegó a mover ALGÚN original? Solo entonces se puede retirar el
++    // trabajo preparado sin perder nada.
++    //
++    // `swap-a-medias` NO cuenta como "preparado": significa que el original ya
++    // está en `<i>.old` y su sitio está vacío. Contarlo entre los pendientes
++    // era un error real — con el primer archivo cortado justo entre sus dos
++    // renames, la limpieza se llevaba por delante el `.old` (única copia del
++    // original) y el `.new`, dejando el archivo del usuario simplemente
++    // ausente.
++    const noAusentes = estados.filter((x) => x.e.clase !== 'ausente');
++    const ningunOriginalMovido = noAusentes.every((x) => x.e.clase === 'preparado');
++
++    if (ningunOriginalMovido) {
++      // Murió durante la fase 1: no se había sustituido ni un original. Nada
++      // que deshacer, solo retirar el trabajo preparado.
++      appLog(`Seguridad — se encontró un re-cifrado (${j.mode}) interrumpido antes de tocar ningún archivo; no había nada que deshacer.`);
++      removeRekeyStaging();
++      return { recovered: false, mode: j.mode };
++    }
++
++    // Ya hay archivos con la clave nueva. Volver atrás exigiría la contraseña
++    // ANTERIOR, que aquí no tiene nadie; terminar de aplicar, en cambio, no
++    // necesita ninguna clave: solo renombrar lo que quedara a medias y
++    // consolidar la sal y el verificador que el journal guardó antes de empezar.
++    let finished = 0;
++    for (const { it, e } of estados) {
++      if (e.clase === 'preparado') {
++        fs.renameSync(it.absPath, rekeyItemPath(it.i, 'old'));
++        fs.renameSync(rekeyItemPath(it.i, 'new'), it.absPath);
+         finished++;
++      } else if (e.clase === 'swap-a-medias') {
++        fs.renameSync(rekeyItemPath(it.i, 'new'), it.absPath);
++        finished++;
+       }
+-    } catch (e) {
+-      problem = (problem ? problem + '; ' : '') + `"${it.absPath}" (${String((e && e.message) || e)})`;
+     }
+-  }
+-  if (problem) {
+-    appLog(`ERROR PS-2004 — no se pudo completar del todo un re-cifrado interrumpido: ${problem}`);
+-    return { recovered: true, mode: journal.mode, finished, problem };
+-  }
+-  try {
+-    if (journal.items.some((it) => it.hadFlag !== journal.newFlag)) rekeySetFlagBulk(journal.newFlag);
+-    applyRekeyMeta(journal.mode, journal.newSalt, journal.newVerifier);
++
++    // La recuperación NO tiene la contraseña, así que no puede reponer la
++    // contraseña recordada: se borra. Y se deja constancia durable de ello
++    // ANTES de consolidar, para que la prueba del "ya estaba aplicado" siga
++    // siendo válida si hubiera un segundo corte.
++    if (j.remembered_final !== 'ausente') {
++      j.remembered_final = 'ausente';
++      const gr = guardarJournalRekey(j);
++      if (!gr.ok) {
++        return cerrar('no se pudo actualizar el registro antes de consolidar', gr.motivo);
++      }
++    }
++
++    const sentencias = sentenciasDeSeguridad(j.mode, j.items, j.newFlag, j.newSalt, j.newVerifier, { guardar: false, valor: null });
++    try {
++      dbmod.escribirMultiple(sentencias, { token: ex.token, exigirCommitBase: j.base_commit_id });
++    } catch (eMut) {
++      if (eMut && eMut.aplicado === true) {
++        // Confirmó y falló al verificar: la base de datos YA tiene el estado
++        // final. No se deshace nada y la sesión no continúa.
++        j.phase = 'cleanup';
++        j.consolidated_commit_id = eMut.commit || null;
++        guardarJournalRekey(j);
++        return cerrar('el cambio de Seguridad se terminó de aplicar pero no se pudo verificar', String(eMut.message), { aplicado: true });
++      }
++      // A propósito NO se borra el staging: al siguiente arranque se reintenta.
++      return cerrar('el re-cifrado interrumpido se terminó en disco pero no se pudo consolidar en la base de datos', String((eMut && eMut.message) || eMut), { finished });
++    }
++
++    j.phase = 'cleanup';
++    j.consolidated_commit_id = dbmod.getCommitActual();
++    guardarJournalRekey(j);
++    removeRekeyStaging();
++    appLog(`Seguridad — se completó un re-cifrado (${j.mode}) que había quedado interrumpido: ${finished} archivo(s) pendientes terminados.`);
++    return { recovered: true, mode: j.mode, finished };
+   } catch (e) {
+-    // A propósito NO se borra el staging: al siguiente arranque se reintenta.
+-    appLog(`ERROR PS-2004 — el re-cifrado interrumpido se terminó en disco pero no se pudo consolidar en la base de datos: ${String((e && e.message) || e)}`);
+-    return { recovered: true, mode: journal.mode, finished, problem: 'no se pudo consolidar en la base de datos' };
++    return cerrar('fallo inesperado al recuperar un cambio de Seguridad interrumpido', String((e && e.message) || e));
++  } finally {
++    try { dbmod.soltarExclusiva(ex.token); } catch (e2) {}
+   }
+-  removeRekeyStaging();
+-  appLog(`Seguridad — se completó un re-cifrado (${journal.mode}) que había quedado interrumpido: ${finished} archivo(s) pendientes terminados.`);
+-  return { recovered: true, mode: journal.mode, finished };
+ }
+ 
++
+ // ------------------------------------------------------------------
+ // Migración única de backups "viejos": versiones anteriores de esta app
+ // guardaban el JSON completo de cada backup dentro de la propia base de
+@@ -3602,6 +4184,15 @@
+ // al arrancar, después de desbloquear la seguridad (si aplica).
+ // ------------------------------------------------------------------
+ function migrateLegacyInlineBackupsToFiles() {
++  // Bloque 3: esta migración cifra con `securityKey` por su cuenta, sin pasar
++  // por encryptIfNeeded(). Si la Seguridad de la sesión no está validada, no
++  // se migra nada: volcar a archivo en claro el contenido de filas antiguas
++  // sería exactamente el agujero que cierra la barrera.
++  const bloq = bloqueoDeSeguridad();
++  if (bloq) {
++    appLog('Seguridad — migración de backups antiguos aplazada: ' + bloq.motivo);
++    return;
++  }
+   const rows = dbmod.all(
+     `SELECT b.id as backup_id, p.id as pid, p.name, p.backup_dir, b.payload
+        FROM backups b JOIN projects p ON p.id = b.project_id
+@@ -3900,12 +4491,125 @@
+   }
+ }
+ function forgetRememberedPassword() {
++  // Solo escribe si de verdad hay algo que borrar: un login correcto no tiene
++  // por qué producir una escritura en la base de datos.
++  if (getMeta('security_remembered') === null) return;
+   deleteMeta('security_remembered');
+ }
+ 
++// Bloque 3 — el blob que se guardaría en `security_remembered`, calculado
++// ANTES de la operación para poder meterlo en su MISMA mutación. Devuelve null
++// si no se puede (equipo sin safeStorage), que es exactamente "no recordar".
++function blobDeContrasena(password) {
++  try {
++    if (!safeStorage.isEncryptionAvailable()) return null;
++    return safeStorage.encryptString(password).toString('base64');
++  } catch (e) {
++    console.warn('No se pudo preparar la contraseña recordada:', e);
++    return null;
++  }
++}
++
++// ------------------------------------------------------------------
++// BLOQUE 3 — COHERENCIA ENTRE LA CLAVE EN MEMORIA Y LA BASE DE DATOS
++//
++// Con una carpeta compartida, A3.3 puede ADOPTAR en silencio una versión de la
++// base de datos publicada por otro equipo (descendencia lineal estricta, ver
++// recargarDesdeDisco en db.js). Si ese otro equipo cambió la contraseña, la
++// sal y el verificador de la base de datos adoptada son otros — y seguir
++// cifrando con la clave anterior dejaría ILEGIBLE cada archivo nuevo.
++//
++// `verifierFor(clave)` es un HMAC de la CLAVE, no depende de la sal: eso
++// permite validar la clave que ya está en memoria contra el verificador de la
++// base de datos que acabamos de adoptar, sin pedir nada al usuario.
++//
++// Esta capa NO cierra el problema completo de las acciones archivo+BD (un
++// handler puede cifrar un archivo y descubrir DESPUÉS, al confirmar, que el
++// disco avanzó). Eso pertenece al bloque de contratos de acción/IPC. Lo que sí
++// garantiza: tras cualquier adopción efectiva, la clave queda invalidada ANTES
++// de la siguiente operación, y ningún código sigue usando a sabiendas una
++// clave cuyo verificador ya no coincide.
++// ------------------------------------------------------------------
++let seguridadRequiereRevalidacion = false;
++
++function revalidarSeguridadTrasAdopcion(motivo) {
++  let habilitada = false;
++  let verifier = null;
++  try {
++    habilitada = getMeta('security_enabled') === '1';
++    verifier = getMeta('security_verifier');
++  } catch (e) {
++    // Si ni siquiera se puede leer, lo prudente es dejar de usar la clave.
++    securityKey = null;
++    seguridadRequiereRevalidacion = true;
++    return;
++  }
++  if (!habilitada) {
++    // La base de datos adoptada tiene la Seguridad desactivada: la clave que
++    // tuviéramos ya no manda nada. No se escribe nada en ningún sitio.
++    if (securityKey) appLog(`Seguridad — la base de datos adoptada (${motivo}) no tiene cifrado activo: se descarta la clave en memoria.`);
++    securityKey = null;
++    seguridadRequiereRevalidacion = false;
++    return;
++  }
++  // TRANSICIÓN EXPLÍCITA "sesión sin Seguridad -> base de datos CON Seguridad".
++  // Antes esto era `if (!securityKey) return;`, que dejaba la sesión escribiendo
++  // en claro sobre una base de datos que exige cifrado. Ahora se bloquea hasta
++  // que alguien valide una clave contra ESA base de datos.
++  if (!securityKey) {
++    if (motivo !== 'apertura') {
++      appLog(`Seguridad — la base de datos adoptada (${motivo}) tiene el cifrado ACTIVO y esta sesión no tiene clave validada: no se escribirá nada hasta validarla.`);
++    }
++    seguridadRequiereRevalidacion = true;
++    return;
++  }
++  if (securitymod.verifierFor(securityKey) !== verifier) {
++    appLog(`ERROR PS-2004 — la base de datos adoptada (${motivo}) pertenece a otra contraseña: se invalida la clave en memoria y se pedirá de nuevo.`);
++    securityKey = null;
++    seguridadRequiereRevalidacion = true;
++    return;
++  }
++  seguridadRequiereRevalidacion = false;
++}
++
++// COMPROBACIÓN REAL, no `looksEncrypted`: se descifra de verdad un archivo que
++// la base de datos dice cifrado. AES-GCM está autenticado, así que una clave
++// equivocada FALLA en vez de devolver basura. Devuelve true también cuando no
++// hay ningún archivo cifrado contra el que comprobar (no hay nada que probar).
++function claveDescifraDeVerdad(key) {
++  if (!key) return false;
++  const candidatos = [];
++  try {
++    dbmod.all(
++      `SELECT b.file_path, p.id AS project_id, p.name, p.backup_dir
++         FROM backups b JOIN projects p ON p.id = b.project_id
++        WHERE b.encrypted=1 AND b.file_path IS NOT NULL AND b.file_path != ''
++        ORDER BY b.id DESC LIMIT 5`
++    ).forEach((r) => {
++      candidatos.push(path.join(backupsDirForProject({ id: r.project_id, name: r.name, backup_dir: r.backup_dir }), r.file_path));
++    });
++  } catch (e) { /* se prueba con lo que haya */ }
++  for (const f of candidatos) {
++    let raw = null;
++    try { raw = fs.readFileSync(f, 'utf8'); } catch (e) { continue; }   // ausente: no prueba nada
++    if (!securitymod.looksEncrypted(raw)) continue;                     // fila y archivo no coinciden
++    try {
++      securitymod.decryptString(key, raw);
++      return true;                                                      // descifrado REAL correcto
++    } catch (e) {
++      appLog('Seguridad — la contraseña valida contra el verificador pero NO descifra un backup real: se rechaza.');
++      return false;
++    }
++  }
++  return true;   // no había ningún archivo cifrado legible con el que probar
++}
++
+ // Al arrancar: si la seguridad está activada y hay una contraseña recordada
+ // en este equipo (y sigue siendo válida), desbloquea sin pedir nada. Si no,
+ // hace falta pasar por la ventana de login.
++//
++// Nunca escribe: una contraseña recordada que ya no vale se ignora sin tocar
++// la base de datos. Quien la borre será una operación explícita del usuario.
+ function tryAutoUnlock() {
+   if (!isSecurityEnabled()) return true;
+   if (!safeStorage.isEncryptionAvailable()) return false;
+@@ -3917,7 +4621,9 @@
+     const verifier = getMeta('security_verifier');
+     const key = securitymod.deriveKey(password, salt);
+     if (securitymod.verifierFor(key) !== verifier) return false;
++    if (!claveDescifraDeVerdad(key)) return false;
+     securityKey = key;
++    seguridadRequiereRevalidacion = false;
+     return true;
+   } catch (e) {
+     return false;
+@@ -6545,6 +7251,16 @@
+     }
+   }
+ 
++  // Bloque 3 — A3.3 puede ADOPTAR en silencio una versión publicada por otro
++  // equipo. Cuando eso pasa, la sal y el verificador pueden ser otros: hay que
++  // revalidar la clave de Seguridad que tengamos en memoria ANTES de la
++  // siguiente operación. Se registra antes de abrir para no perder ni el
++  // primer aviso.
++  dbmod.alCambiarImagenEnMemoria((ev) => {
++    if (!ev || ev.motivo === 'commit-propio') return;   // lo escribimos nosotros
++    revalidarSeguridadTrasAdopcion(ev.motivo);
++  });
++
+   try {
+     await dbmod.getDb({ crearSiAusente: permiso.crear });
+   } catch (e) {
+@@ -6604,18 +7320,55 @@
+     return;
+   }
+ 
+-  maybeRunPeriodicVacuum();
+   // A1: si un re-cifrado de la Seguridad quedó interrumpido de verdad (corte
+   // de luz, cierre forzado del proceso a mitad), se resuelve AQUÍ — después
+   // de abrir la base de datos y ANTES del login, porque la sal y el
+   // verificador contra los que se validará la contraseña tecleada pueden
+   // depender justo de esta consolidación pendiente.
++  //
++  // Bloque 3: va LO PRIMERO, antes de cualquier otra escritura. Hasta ahora
++  // maybeRunPeriodicVacuum() —que escribe (VACUUM + last_vacuum_at)— corría
++  // por delante, es decir, se tocaba la base de datos antes de saber si había
++  // un cambio de Seguridad a medias sobre ella.
+   let rekeyRecovery = null;
+   try {
+     rekeyRecovery = recoverInterruptedRekeyIfAny();
+   } catch (e) {
+-    appLog('ERROR PS-2004 — fallo inesperado al recuperar un re-cifrado interrumpido: ' + String((e && e.message) || e));
++    rekeyRecovery = { fallaCerrado: true, motivo: 'fallo inesperado al recuperar un cambio de Seguridad interrumpido', detalle: String((e && e.message) || e), staging: rekeyStagingDir() };
++    appLog('ERROR PS-2004 — ' + rekeyRecovery.motivo + ': ' + rekeyRecovery.detalle);
+   }
++
++  // FAIL-CLOSED. Si la recuperación tocó o terminó archivos pero no puede
++  // demostrar y confirmar la base de datos que les corresponde, esta sesión no
++  // continúa: ni login, ni launcher, ni migraciones, ni vacuum, ni ninguna
++  // escritura auxiliar. El journal y la carpeta de trabajo quedan INTACTOS y
++  // se reintenta en el siguiente arranque.
++  if (rekeyRecovery && rekeyRecovery.fallaCerrado) {
++    const queHacer = rekeyRecovery.ajeno
++      ? 'Este cambio de Seguridad fue iniciado por otro equipo. Cierra Panorama del Servicio en todos los ' +
++        'equipos y vuelve a abrirlo primero en el equipo que inició el cambio. Si ese equipo ya no existe, ' +
++        'conserva la carpeta ".panorama-rekey" para recuperación manual.'
++      : 'No se ha modificado ni borrado nada: tus archivos originales y el registro del cambio siguen ' +
++        'intactos en la carpeta de trabajo. La aplicación se cierra a propósito en vez de seguir con la ' +
++        'Seguridad a medias. Vuelve a abrirla: si el problema era temporal (otro equipo escribiendo, la ' +
++        'carpeta compartida sin conexión), se resuelve solo.';
++    dialog.showMessageBoxSync(undefined, {
++      type: 'error',
++      title: 'Cambio de Seguridad sin terminar',
++      message: 'Panorama del Servicio ha encontrado un cambio de Seguridad que no puede completar con garantías.',
++      detail:
++        `${rekeyRecovery.motivo}.\n\n` +
++        (rekeyRecovery.detalle ? `Detalle: ${rekeyRecovery.detalle}\n\n` : '') +
++        `Carpeta de trabajo:\n${rekeyRecovery.staging}\n\n${queHacer}` +
++        errorCodeSuffix('PS-2004'),
++      buttons: ['Cerrar'],
++      noLink: true,
++    });
++    closeSplashWindow(() => app.quit());
++    return;
++  }
++
++  maybeRunPeriodicVacuum();
+   const loggedIn = await runLoginFlow();
+   if (!loggedIn) {
+     // El usuario canceló/cerró la ventana de login con la seguridad
+@@ -6629,20 +7382,26 @@
+   // a medias, hay que decirlo — sobre todo porque puede significar que la
+   // contraseña válida a partir de ahora es la NUEVA, no la que el usuario
+   // recuerda haber estado usando.
++  //
++  // Bloque 3: los caminos "quedó algo pendiente" ya no llegan hasta aquí — se
++  // cierran antes (fail-closed). Lo que puede llegar es una recuperación
++  // completada, o la comprobación de que el cambio ya estaba aplicado del todo
++  // y solo faltaba retirar la carpeta de trabajo.
+   if (rekeyRecovery && rekeyRecovery.recovered) {
+-    const queDecir = rekeyRecovery.problem
+-      ? 'Se ha intentado terminarlo al abrir, pero algo quedó pendiente: ' +
+-        rekeyRecovery.problem +
+-        '.\n\nTus archivos originales NO se han borrado: están en la carpeta ".panorama-rekey" dentro de la ' +
+-        'carpeta de datos. Revisa "Ver registro de la aplicación (app.log)" antes de volver a cambiar la contraseña.'
+-      : 'Se ha terminado de aplicar automáticamente al abrir la app, sin perder nada.' +
+-        (rekeyRecovery.mode === 'disable'
+-          ? '\n\nEl cifrado de backups queda DESACTIVADO.'
+-          : '\n\nA partir de ahora la contraseña válida es la NUEVA que estabas poniendo cuando se interrumpió.');
++    const queDecir = rekeyRecovery.yaEstaba
++      ? 'Ya se había aplicado por completo; al abrir solo quedaba retirar la carpeta de trabajo. No se ha ' +
++        'cambiado ningún dato.'
++      : 'Se ha terminado de aplicar automáticamente al abrir la app, sin perder nada.';
++    const cual = rekeyRecovery.mode === 'disable'
++      ? '\n\nEl cifrado de backups queda DESACTIVADO.'
++      : '\n\nA partir de ahora la contraseña válida es la NUEVA que estabas poniendo cuando se interrumpió.' +
++        (rekeyRecovery.yaEstaba ? '' : '\n\nSi tenías marcado "recordar en este equipo", habrá que volver a ' +
++          'introducirla una vez: la recuperación no puede reponer una contraseña que nadie le dio.');
+     modalAlert(
+       launcherWin,
+-      'La última vez, un cambio en la Seguridad (' + rekeyRecovery.mode + ') se quedó a medias.\n\n' + queDecir + errorCodeSuffix('PS-2004'),
+-      { title: 'Cambio de Seguridad interrumpido', danger: !!rekeyRecovery.problem }
++      'La última vez, un cambio en la Seguridad (' + rekeyRecovery.mode + ') se quedó a medias.\n\n' +
++        queDecir + cual + errorCodeSuffix('PS-2004'),
++      { title: 'Cambio de Seguridad interrumpido' }
+     );
+   }
+   if (customUserDataDirFailure) {
+@@ -7893,7 +8652,19 @@
+       if (securitymod.verifierFor(key) !== verifier) {
+         return { error: 'Contraseña incorrecta.' };
+       }
++      // Bloque 3 — el verificador dice que la contraseña es la de ESTA base de
++      // datos; esto comprueba además que de verdad abre los archivos, con un
++      // descifrado AES-GCM real (autenticado: una clave equivocada falla, no
++      // devuelve basura).
++      if (!claveDescifraDeVerdad(key)) {
++        return {
++          error: 'La contraseña coincide con la de esta base de datos, pero no consigue abrir tus archivos ' +
++            'cifrados. Puede que la base de datos y los archivos vengan de equipos distintos. No se ha ' +
++            'modificado nada: cierra la app y revisa el registro antes de seguir.',
++        };
++      }
+       securityKey = key;
++      seguridadRequiereRevalidacion = false;
+       if (remember) rememberPassword(password);
+       else forgetRememberedPassword();
+       finishSecurityWindow();
+@@ -7906,16 +8677,40 @@
+     // por dentro, SOLO si todo fue bien. Si devuelve ok:false no se ha tocado
+     // nada: se devuelve el error y la ventana se queda abierta mostrándolo,
+     // exactamente igual que con una contraseña incorrecta.
++    // Bloque 3 — si la mutación única de Seguridad SÍ confirmó pero no se pudo
++    // verificar, db.js queda en `desincronizada`: esta sesión ya no puede
++    // escribir nada más. NO se deshace nada (los archivos y la base de datos
++    // están los dos en el estado nuevo) y la aplicación se cierra.
++    const cerrarPorAplicadoSinVerificar = (res) => {
++      appLog('Seguridad — la sesión termina aquí: el cambio se aplicó pero no se pudo verificar.');
++      try {
++        dialog.showMessageBoxSync(undefined, {
++          type: 'warning',
++          title: 'El cambio se aplicó, pero hay que reiniciar',
++          message: 'El cambio de Seguridad SÍ se ha guardado.',
++          detail: res.aviso + errorCodeSuffix('PS-2004'),
++          buttons: ['Cerrar'],
++          noLink: true,
++        });
++      } catch (e) { /* si ni el diálogo se puede pintar, se cierra igual */ }
++      cerrandoApp = true;
++      app.quit();
++      return { error: res.aviso, fatal: true };
++    };
++
+     if (mode === 'setup') {
+       const salt = securitymod.newSaltHex();
+       const key = securitymod.deriveKey(password, salt);
+       const verifier = securitymod.verifierFor(key);
+       // Todo lo que ya hubiera guardado en claro antes de activar la
+-      // seguridad se cifra ahora con la clave nueva.
+-      const res = rekeyAllUserFiles(null, key, { mode: 'setup', newSalt: salt, newVerifier: verifier });
++      // seguridad se cifra ahora con la clave nueva. La contraseña recordada
++      // entra en la MISMA mutación, no en un commit posterior.
++      const res = rekeyAllUserFiles(null, key, {
++        mode: 'setup', newSalt: salt, newVerifier: verifier,
++        remembered: { guardar: !!remember, valor: remember ? blobDeContrasena(password) : null },
++      });
+       if (!res.ok) return { error: res.error };
+-      if (remember) rememberPassword(password);
+-      else forgetRememberedPassword();
++      if (res.aplicado === true) return cerrarPorAplicadoSinVerificar(res);
+       finishSecurityWindow();
+       refreshAllMenus();
+       return {};
+@@ -7931,10 +8726,12 @@
+       const newSalt = securitymod.newSaltHex();
+       const newKey = securitymod.deriveKey(password, newSalt);
+       const newVerifier = securitymod.verifierFor(newKey);
+-      const res = rekeyAllUserFiles(oldKey, newKey, { mode: 'change', newSalt, newVerifier });
++      const res = rekeyAllUserFiles(oldKey, newKey, {
++        mode: 'change', newSalt, newVerifier,
++        remembered: { guardar: !!remember, valor: remember ? blobDeContrasena(password) : null },
++      });
+       if (!res.ok) return { error: res.error };
+-      if (remember) rememberPassword(password);
+-      else forgetRememberedPassword();
++      if (res.aplicado === true) return cerrarPorAplicadoSinVerificar(res);
+       finishSecurityWindow();
+       return {};
+     }
+@@ -7946,9 +8743,14 @@
+       if (securitymod.verifierFor(oldKey) !== verifier) {
+         return { error: 'La contraseña actual no es correcta.' };
+       }
+-      const res = rekeyAllUserFiles(oldKey, null, { mode: 'disable', newSalt: null, newVerifier: null });
++      // Al desactivar, `security_remembered` se borra dentro de la misma
++      // mutación (ver sentenciasDeSeguridad).
++      const res = rekeyAllUserFiles(oldKey, null, {
++        mode: 'disable', newSalt: null, newVerifier: null,
++        remembered: { guardar: false, valor: null },
++      });
+       if (!res.ok) return { error: res.error };
+-      forgetRememberedPassword();
++      if (res.aplicado === true) return cerrarPorAplicadoSinVerificar(res);
+       finishSecurityWindow();
+       refreshAllMenus();
+       return {};

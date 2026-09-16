@@ -1,0 +1,369 @@
+﻿  main.js bajo prueba:  C:\Codigo Fuente PS\panorama-app-codigo-fuente_1\main.js
+RUTAS DE PRUEBA
+  raiz:                C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque3-PRUEBAS
+  ubicacion real det.: (no configurada)
+  por defecto:         C:\Users\admin.jlopezr\AppData\Roaming\panorama-app
+  OK    los bloques reales de main.js se extraen sin reescribirse
+
+=== U. LA MUTACION ES UNA SOLA ===
+  OK    U-1) el setup termina bien
+  OK    U-2) TODA la Seguridad cabe en UN SOLO commit A3.3
+  OK       salt, verifier y enabled quedan a la vez
+  OK       la contrasena recordada va en la MISMA mutacion
+  OK       las 3 marcas encrypted pasan a 1
+  OK       DESCIFRADO REAL de backup + prep + eval
+  OK       el staging se retira
+
+=== G. MATRIZ DE FALLOS INYECTADOS ===
+  OK    G1-primer) la operacion se rechaza
+  OK       la carpeta de datos queda IDENTICA
+  OK       los metadatos de Seguridad no cambian
+  OK       DESCIFRADO REAL con la contrasena VIEJA sigue funcionando
+  OK       no queda staging
+  OK    G2-intermedio) la operacion se rechaza
+  OK       la carpeta de datos queda IDENTICA
+  OK       los metadatos de Seguridad no cambian
+  OK       DESCIFRADO REAL con la contrasena VIEJA sigue funcionando
+  OK       no queda staging
+  OK    G3) se rechaza antes de tocar ningun original
+  OK       la carpeta de datos queda IDENTICA
+  OK       DESCIFRADO REAL con la vieja sigue bien
+  OK    G4-tras-primer-swap) la operacion se rechaza
+  OK       los metadatos de Seguridad NO cambian
+  OK       DESCIFRADO REAL con la VIEJA: los 3 archivos vuelven a su sitio
+  OK       ningun archivo queda con la clave nueva
+  OK    G5-tras-ultimo-swap) la operacion se rechaza
+  OK       los metadatos de Seguridad NO cambian
+  OK       DESCIFRADO REAL con la VIEJA: los 3 archivos vuelven a su sitio
+  OK       ningun archivo queda con la clave nueva
+  OK    G6-PRE) la operacion se rechaza
+  OK       el .sqlite3 NO cambio
+  OK       los metadatos siguen siendo los VIEJOS
+  OK       NO existe "salt nueva + verifier viejo"
+  OK       DESCIFRADO REAL con la VIEJA sigue funcionando
+  OK    G9) otro equipo avanza la BD antes de consolidar -> se rechaza
+  OK       el mensaje explica que fue otro equipo
+  OK       la Seguridad de la version del otro equipo NO se pisa
+  OK       DESCIFRADO REAL con la VIEJA: todo vuelve a su sitio
+  OK    G11) disco no verificable -> se rechaza
+  OK       el .sqlite3 sigue siendo el mismo
+  OK       los metadatos no cambian
+  OK       DESCIFRADO REAL con la VIEJA
+
+=== MP. MULTI-PC: LOS ARCHIVOS SE DEMUESTRAN POR HASH ===
+  OK    MP2) el otro equipo reescribio un archivo antes del swap
+  OK       la operacion se rechaza
+  OK       el mensaje habla de otro equipo
+  OK       V2 NO se pisa: sigue byte a byte en disco
+  OK       y sigue siendo descifrable con la contrasena vieja
+  OK       backup y prep vuelven a su sitio
+  OK    MP3) el otro equipo reescribio tras el swap y avanzo la BD
+  OK       la operacion se rechaza
+  OK       el rollback NO sustituye V3 por el .old
+  OK       se avisa de que la vuelta atras no se completo
+  OK       el staging se CONSERVA (el .old es la unica copia del original)
+  OK       y dentro hay al menos un .old
+  OK    MP4) [preparacion] el rollback limpio; se reconstruye el estado a mano
+  OK    MP4) la recuperacion ve un TERCER hash y falla en cerrado
+  OK       se identifica como tercer hash
+  OK       NINGUN rename destructivo: la carpeta queda byte a byte igual
+  OK       el archivo del otro equipo sigue intacto
+  OK       el staging y el journal se conservan
+  OK       los metadatos de Seguridad no cambian
+  OK    MP1) la recuperacion NO consolida sobre la version del otro equipo
+  OK       se identifica como caso C
+  OK       CERO escritura de metadatos: salt sigue siendo la de B
+  OK       verifier sigue siendo el de B
+  OK       el .sqlite3 es identico byte a byte
+  OK       el .gen es identico byte a byte
+  OK       la carpeta entera queda igual (ni un rename)
+  OK       el staging se conserva
+
+=== W. PROPIEDAD DEL JOURNAL (otro equipo) ===
+  OK    W1) journal de otro equipo en fase "prepare" -> falla en cerrado
+  OK       [prepare] recuento y sha256 de TODO identicos
+  OK       [prepare] metadatos sin tocar
+  OK       [prepare] el staging sigue ahi
+  OK    W1) journal de otro equipo en fase "swap" -> falla en cerrado
+  OK       [swap] recuento y sha256 de TODO identicos
+  OK       [swap] metadatos sin tocar
+  OK       [swap] el staging sigue ahi
+  OK    W1) journal de otro equipo en fase "cleanup" -> falla en cerrado
+  OK       [cleanup] recuento y sha256 de TODO identicos
+  OK       [cleanup] metadatos sin tocar
+  OK       [cleanup] el staging sigue ahi
+  OK    W1) ni siquiera se limpia un cleanup ajeno
+  OK       DESCIFRADO REAL con la vieja sigue bien
+
+=== J. POLITICA DE JOURNAL CORRUPTO / DESCONOCIDO / AUSENTE / v1 ===
+  OK    J1) journal corrupto -> falla en cerrado
+  OK       CERO borrados: la carpeta queda byte a byte igual
+  OK       el .old sigue ahi
+  OK       DESCIFRADO REAL de los datos del usuario intacto
+  OK    J2) version desconocida -> falla en cerrado
+  OK       CERO borrados
+  OK    J2b) staging SIN journal -> falla en cerrado (ya no se asume limpieza)
+  OK       CERO borrados
+  OK    J3) [preparacion] el setup se aplica
+  OK    J3) cleanup POST-confirmacion demostrable -> SI se limpia
+  OK       el staging desaparece
+  OK       los metadatos de Seguridad NO se vuelven a escribir
+  OK       DESCIFRADO REAL con la clave nueva
+  OK    V1A) v1 sin ningun .old -> se retira solo la carpeta de trabajo
+  OK       el staging desaparece
+  OK       los datos del usuario no se tocan
+  OK       DESCIFRADO REAL intacto
+  OK    V1B) v1 con al menos un .old -> falla en cerrado
+  OK       CERO borrados, CERO renames
+  OK       el .old sigue intacto
+
+=== R. RECUPERACION CORRECTA (caso A) E IDEMPOTENCIA ===
+  OK    RA) la recuperacion termina el cambio
+  OK       salt y verifier quedan consolidados
+  OK       security_enabled = 1
+  OK       la contrasena recordada queda BORRADA (nadie se la dio)
+  OK       las 3 marcas encrypted quedan a 1
+  OK       DESCIFRADO REAL con la clave NUEVA: backup + prep + eval
+  OK       ninguno sigue con la clave vieja
+  OK       el staging se retira
+  OK       integrity_check ok
+  OK       una segunda recuperacion no encuentra nada
+  OK       y los metadatos no cambian
+
+=== K. CLAVE EN MEMORIA TRAS UNA ADOPCION ===
+  OK    K-1) la clave valida contra ESTA base de datos
+  OK    K-2) tras adoptar, la clave en memoria se INVALIDA
+  OK       y queda marcada la revalidacion pendiente
+  OK       la clave vieja ya no valida contra la BD adoptada
+  OK       no se escribio ninguna contrasena recordada
+  OK       los archivos del usuario no se tocaron
+
+=== D. DESCIFRADO REAL vs looksEncrypted ===
+  OK    D-1) la clave correcta descifra de verdad
+  OK    D-2) una clave equivocada NO pasa el descifrado real
+  OK       (y sin embargo looksEncrypted diria que si es un sobre cifrado)
+
+=== E. EXCLUSIVA DURANTE EL REKEY ===
+  OK    E-1) se intento escribir algo ajeno en mitad del rekey
+  OK    E-2) el cambio de tema queda fuera ("ocupado")
+  OK    E-3) el vacuum tambien queda fuera
+  OK    E-4) y el rekey termina bien pese a los intentos
+  OK       el tema NO se guardo
+
+=== BAR. LA BARRERA LLEGA AL CONSUMIDOR REAL ===
+  OK    BAR-1) [previo] con la clave valida, el consumidor real SI guarda
+  OK       ese guardado quedo CIFRADO de verdad
+  OK       tras adoptar: clave invalidada y revalidacion pendiente
+  OK       la barrera esta activa
+electron.exe : No se pudo escribir la preparación de reunión en disco: Error: La base de datos ha cambiado desde otro 
+equipo y la contraseña de esta sesión todavía no se ha validado contra ella. Cierra Panorama del Servicio y vuelve a 
+abrirlo para introducir la contraseña correcta; no se ha guardado nada.
+En línea: 1 Carácter: 557
++ ... cb6384c\scratchpad\bloque3'; & $e "$s\test-seguridad.js" 2>&1 | Out-F ...
++                                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (No se pudo escr... guardado nada.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+    at encryptIfNeeded (eval at construirMain (C:\Users\ADMIN~1.JLO\AppData\Local\Temp\claude\C--Codigo-Fuente-PS\e55d4
+471-ea3f-4279-b758-0366ccb6384c\scratchpad\bloque3\test-seguridad.js:199:13), <anonymous>:903:22)
+    at Object.guardarPrep (eval at construirMain (C:\Users\ADMIN~1.JLO\AppData\Local\Temp\claude\C--Codigo-Fuente-PS\e5
+5d4471-ea3f-4279-b758-0366ccb6384c\scratchpad\bloque3\test-seguridad.js:199:13), <anonymous>:961:25)
+    at C:\Users\ADMIN~1.JLO\AppData\Local\Temp\claude\C--Codigo-Fuente-PS\e55d4471-ea3f-4279-b758-0366ccb6384c\scratchp
+ad\bloque3\test-seguridad.js:1119:18 {
+  bloqueoSeguridad: 'revalidacion'
+}
+  OK    BAR-1) meeting:savePrep NO guarda
+No se pudo escribir la evaluación de candidatos en disco: Error: La base de datos ha cambiado desde otro equipo y la 
+contraseña de esta sesión todavía no se ha validado contra ella. Cierra Panorama del Servicio y vuelve a abrirlo para 
+introducir la contraseña correcta; no se ha guardado nada.
+    at encryptIfNeeded (eval at construirMain (C:\Users\ADMIN~1.JLO\AppData\Local\Temp\claude\C--Codigo-Fuente-PS\e55d4
+471-ea3f-4279-b758-0366ccb6384c\scratchpad\bloque3\test-seguridad.js:199:13), <anonymous>:903:22)
+    at Object.guardarEval (eval at construirMain (C:\Users\ADMIN~1.JLO\AppData\Local\Temp\claude\C--Codigo-Fuente-PS\e5
+5d4471-ea3f-4279-b758-0366ccb6384c\scratchpad\bloque3\test-seguridad.js:199:13), <anonymous>:1014:25)
+    at C:\Users\ADMIN~1.JLO\AppData\Local\Temp\claude\C--Codigo-Fuente-PS\e55d4471-ea3f-4279-b758-0366ccb6384c\scratchp
+ad\bloque3\test-seguridad.js:1121:18 {
+  bloqueoSeguridad: 'revalidacion'
+}
+  OK       candidateEval:save NO guarda
+No se pudo actualizar el archivo de la preparación de reunión en disco: Error: La base de datos ha cambiado desde otro 
+equipo y la contraseña de esta sesión todavía no se ha validado contra ella. Cierra Panorama del Servicio y vuelve a 
+abrirlo para introducir la contraseña correcta; no se ha guardado nada.
+    at encryptIfNeeded (eval at construirMain (C:\Users\ADMIN~1.JLO\AppData\Local\Temp\claude\C--Codigo-Fuente-PS\e55d4
+471-ea3f-4279-b758-0366ccb6384c\scratchpad\bloque3\test-seguridad.js:199:13), <anonymous>:903:22)
+    at Object.actualizarPrep (eval at construirMain (C:\Users\ADMIN~1.JLO\AppData\Local\Temp\claude\C--Codigo-Fuente-PS
+\e55d4471-ea3f-4279-b758-0366ccb6384c\scratchpad\bloque3\test-seguridad.js:199:13), <anonymous>:989:25)
+    at C:\Users\ADMIN~1.JLO\AppData\Local\Temp\claude\C--Codigo-Fuente-PS\e55d4471-ea3f-4279-b758-0366ccb6384c\scratchp
+ad\bloque3\test-seguridad.js:1124:18 {
+  bloqueoSeguridad: 'revalidacion'
+}
+  OK       meeting:updatePrep NO guarda
+  OK       NINGUN archivo nuevo ni modificado
+  OK       NINGUNA fila nueva en la base de datos
+  OK       el commit de la base de datos no avanza
+  OK       el contenido NO aparece en claro en ninguna parte de la carpeta
+  OK    BAR-2) [previo] sin Seguridad, el consumidor real guarda EN CLARO
+  OK       y no hay barrera
+  OK    BAR-2) la BD adoptada exige cifrado y esta sesion no tiene clave -> barrera activa
+No se pudo escribir la preparación de reunión en disco: Error: La base de datos ha cambiado desde otro equipo y la 
+contraseña de esta sesión todavía no se ha validado contra ella. Cierra Panorama del Servicio y vuelve a abrirlo para 
+introducir la contraseña correcta; no se ha guardado nada.
+    at encryptIfNeeded (eval at construirMain (C:\Users\ADMIN~1.JLO\AppData\Local\Temp\claude\C--Codigo-Fuente-PS\e55d4
+471-ea3f-4279-b758-0366ccb6384c\scratchpad\bloque3\test-seguridad.js:199:13), <anonymous>:903:22)
+    at Object.guardarPrep (eval at construirMain (C:\Users\ADMIN~1.JLO\AppData\Local\Temp\claude\C--Codigo-Fuente-PS\e5
+5d4471-ea3f-4279-b758-0366ccb6384c\scratchpad\bloque3\test-seguridad.js:199:13), <anonymous>:961:25)
+    at C:\Users\ADMIN~1.JLO\AppData\Local\Temp\claude\C--Codigo-Fuente-PS\e55d4471-ea3f-4279-b758-0366ccb6384c\scratchp
+ad\bloque3\test-seguridad.js:1176:18 {
+  bloqueoSeguridad: 'revalidacion'
+}
+  OK       meeting:savePrep NO guarda
+No se pudo escribir la evaluación de candidatos en disco: Error: La base de datos ha cambiado desde otro equipo y la 
+contraseña de esta sesión todavía no se ha validado contra ella. Cierra Panorama del Servicio y vuelve a abrirlo para 
+introducir la contraseña correcta; no se ha guardado nada.
+    at encryptIfNeeded (eval at construirMain (C:\Users\ADMIN~1.JLO\AppData\Local\Temp\claude\C--Codigo-Fuente-PS\e55d4
+471-ea3f-4279-b758-0366ccb6384c\scratchpad\bloque3\test-seguridad.js:199:13), <anonymous>:903:22)
+    at Object.guardarEval (eval at construirMain (C:\Users\ADMIN~1.JLO\AppData\Local\Temp\claude\C--Codigo-Fuente-PS\e5
+5d4471-ea3f-4279-b758-0366ccb6384c\scratchpad\bloque3\test-seguridad.js:199:13), <anonymous>:1014:25)
+    at C:\Users\ADMIN~1.JLO\AppData\Local\Temp\claude\C--Codigo-Fuente-PS\e55d4471-ea3f-4279-b758-0366ccb6384c\scratchp
+ad\bloque3\test-seguridad.js:1178:18 {
+  bloqueoSeguridad: 'revalidacion'
+}
+  OK       candidateEval:save NO guarda
+  OK       NINGUN archivo nuevo ni fila nueva
+  OK       el contenido NO quedo en claro en ninguna parte
+  OK       la migracion de backups antiguos tambien se aplaza
+  OK       ni empezar un cambio de Seguridad
+
+=== CORTE. INTERRUPCION EXACTA ENTRE LOS DOS RENAMES DEL PRIMER ITEM ===
+  OK    CORTE) el primer original esta en 0.old y su sitio esta vacio
+  OK       0.new sigue preparado
+  OK       NINGUN item esta completamente intercambiado
+  OK       estadoItemPorHash lo clasifica como swap-a-medias
+  OK    CORTE) la recuperacion NO trata esto como "no se toco nada"
+  OK       la recuperacion termina el cambio
+  OK       el archivo del primer item VUELVE A EXISTIR
+  OK       DESCIFRADO REAL con la clave NUEVA: backup + prep + eval
+  OK       SIN PERDIDA DE DATOS: los tres textos originales estan enteros
+  OK       la base de datos queda consolidada
+  OK       las 3 marcas encrypted a 1
+  OK       el staging se retira SOLO al final
+  OK    CORTE-reinicio) ya no queda nada pendiente
+  OK       los metadatos siguen igual
+  OK       y el contenido sigue descifrandose con la clave nueva
+
+=== RB. ROLLBACK: IDENTIDAD DEL .old Y DESTINO ILEGIBLE ===
+  OK    RB-1) se llego al rollback
+  OK       la operacion se rechaza
+  OK       NO se restaura un .old cuya identidad no coincide
+  OK       se avisa de que la vuelta atras no se completo
+  OK       el mensaje nombra la identidad del original
+  OK       el staging se CONSERVA entero
+  OK       los otros dos archivos SI vuelven con la clave vieja
+  OK    RB-1) la sesion queda marcada como inconsistente
+  OK       la barrera lo refleja
+No se pudo escribir la preparación de reunión en disco: Error: Un cambio de Seguridad se deshizo a medias y hay 
+archivos cuyo estado no se ha podido comprobar. Panorama del Servicio no va a escribir nada más en esta sesión para no 
+empeorarlo.
+
+la copia apartada de 
+"C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque3-PRUEBAS\c29-RB1-old-alterado\backups\1\b1.json" no son sus bytes 
+originales: no se restaura nada y se conserva todo
+
+Cierra la aplicación y revisa el registro (app.log) antes de seguir trabajando.
+    at encryptIfNeeded (eval at construirMain (C:\Users\ADMIN~1.JLO\AppData\Local\Temp\claude\C--Codigo-Fuente-PS\e55d4
+471-ea3f-4279-b758-0366ccb6384c\scratchpad\bloque3\test-seguridad.js:199:13), <anonymous>:903:22)
+    at Object.guardarPrep (eval at construirMain (C:\Users\ADMIN~1.JLO\AppData\Local\Temp\claude\C--Codigo-Fuente-PS\e5
+5d4471-ea3f-4279-b758-0366ccb6384c\scratchpad\bloque3\test-seguridad.js:199:13), <anonymous>:961:25)
+    at C:\Users\ADMIN~1.JLO\AppData\Local\Temp\claude\C--Codigo-Fuente-PS\e55d4471-ea3f-4279-b758-0366ccb6384c\scratchp
+ad\bloque3\test-seguridad.js:1323:20 {
+  bloqueoSeguridad: 'rollback-incompleto'
+}
+  OK       el consumidor real DEJA de guardar
+  OK       y no se escribe ni un archivo ni una fila
+  OK       y no se puede empezar otro cambio de Seguridad
+  OK    RB-2) [nota] este caso se comprueba con el hook de lectura instalado abajo
+  OK    RB-2) se llego al rollback con el destino ilegible
+  OK       la operacion se rechaza
+  OK       un destino ILEGIBLE no se trata como ausente ni se sobrescribe
+  OK       su original se conserva en la carpeta de trabajo
+  OK       el staging se conserva
+  OK       la sesion queda bloqueada para escritura
+No se pudo escribir la evaluación de candidatos en disco: Error: Un cambio de Seguridad se deshizo a medias y hay 
+archivos cuyo estado no se ha podido comprobar. Panorama del Servicio no va a escribir nada más en esta sesión para no 
+empeorarlo.
+
+no se pudo leer 
+"C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque3-PRUEBAS\c31-RB2b-destino-ilegible\backups\1\b1.json" (EIO): no 
+se toca, y su original se conserva en la carpeta de trabajo
+
+Cierra la aplicación y revisa el registro (app.log) antes de seguir trabajando.
+    at encryptIfNeeded (eval at construirMain (C:\Users\ADMIN~1.JLO\AppData\Local\Temp\claude\C--Codigo-Fuente-PS\e55d4
+471-ea3f-4279-b758-0366ccb6384c\scratchpad\bloque3\test-seguridad.js:199:13), <anonymous>:903:22)
+    at Object.guardarEval (eval at construirMain (C:\Users\ADMIN~1.JLO\AppData\Local\Temp\claude\C--Codigo-Fuente-PS\e5
+5d4471-ea3f-4279-b758-0366ccb6384c\scratchpad\bloque3\test-seguridad.js:199:13), <anonymous>:1014:25)
+    at C:\Users\ADMIN~1.JLO\AppData\Local\Temp\claude\C--Codigo-Fuente-PS\e55d4471-ea3f-4279-b758-0366ccb6384c\scratchp
+ad\bloque3\test-seguridad.js:1379:18 {
+  bloqueoSeguridad: 'rollback-incompleto'
+}
+  OK       el consumidor real deja de guardar
+  OK       y no se escribe nada
+
+=== POST. CONFIRMADO PERO NO VERIFICADO (aplicado:true) ===
+  OK    POST1) el resultado es EXPLICITO: ok + aplicado + limpiezaPendiente
+  OK       trae un aviso para el usuario
+  OK       NO hay rollback: los archivos quedan con la clave NUEVA
+  OK       el staging se CONSERVA
+  OK       el journal queda marcado como cleanup
+  OK       con el commit que SI confirmo
+  OK       db.js queda en desincronizada (la sesion no puede seguir escribiendo)
+  OK       la meta NUEVA esta completa en el archivo de disco
+  OK       y las 3 marcas encrypted tambien
+  OK       el commit del journal es el del archivo
+  OK    POST1-reinicio) se reconoce que ya estaba aplicado
+  OK       el staging se limpia
+  OK       los metadatos NO se vuelven a escribir
+  OK       DESCIFRADO REAL con la clave nueva tras reiniciar
+  OK       sin perdida de datos: los 3 textos originales estan enteros
+  OK    POST2) sigue siendo aplicado:true
+  OK       se avisa de que el cleanup no quedo anotado
+  OK       TAMPOCO hay rollback: los archivos siguen con la clave nueva
+  OK       el staging se conserva
+  OK       el journal se quedo en fase "swap"
+  OK    POST2-reinicio) el caso B lo demuestra igualmente por contenido
+  OK       los metadatos NO se reescriben
+  OK       el staging se limpia
+
+=== ORD. ORDEN DE ARRANQUE Y FAIL-CLOSED (sobre el main.js real) ===
+  OK    ORD-1) la recuperacion del rekey va ANTES del vacuum
+  OK    ORD-2) el vacuum del arranque ya NO precede a la recuperacion
+  OK    ORD-3) el fail-closed va antes del vacuum
+  OK    ORD-4) el fail-closed va antes del login
+  OK    ORD-5) ... y antes de la migracion y del launcher
+  OK    ORD-6) el fail-closed cierra la app
+  OK    ORD-7) ... con PS-2004
+  OK    ORD-8) ... y con un return que corta el arranque
+  OK    ORD-9) el texto del journal ajeno es el acordado
+  OK    ORD-10) el aplicado:true de Seguridad cierra la app
+  OK    ORD-12) y ese camino NO deshace los archivos
+  OK    ORD-11) el callback de adopcion se registra antes de abrir la BD
+
+=== C. COSTE MEDIDO DE LOS HASHES POR ARCHIVO ===
+  (carpeta artificial, N=40 por tamano)
+       64 KB  ->  hash+lectura 0.472 ms   (solo lectura 0.169 ms)
+  OK    el hash de un archivo de 64 KB tarda menos de 50 ms
+      512 KB  ->  hash+lectura 1.258 ms   (solo lectura 0.551 ms)
+  OK    el hash de un archivo de 512 KB tarda menos de 50 ms
+     2048 KB  ->  hash+lectura 4.515 ms   (solo lectura 1.710 ms)
+  OK    el hash de un archivo de 2048 KB tarda menos de 50 ms
+    -> el swap anade UNA de estas lecturas por archivo; con 200 backups de 512 KB
+       el sobrecoste total esta en el orden de decimas de segundo.
+
+=== PRODUCCION NO TOCADA ===
+  OK    la huella de produccion es IDENTICA antes y despues
+    C:\Users\admin.jlopezr\AppData\Roaming\panorama-app\panorama.sqlite3
+      antes:   f71f4140e7fd68504cbf65c1d930bc4a244554d7bfb013a70557a30ccf74f501 (57344 B)
+      despues: f71f4140e7fd68504cbf65c1d930bc4a244554d7bfb013a70557a30ccf74f501 (57344 B)
+
+==================================================================
+  BLOQUE 3 / CAPA D — Seguridad sobre A3.3: 223 OK, 0 FALLOS
+==================================================================
+  carpetas de prueba borradas: true

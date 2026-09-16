@@ -1,0 +1,780 @@
+--- main.js (ANTES del bloque 2)
++++ main.js (DESPUES del bloque 2)
+@@ -409,8 +409,48 @@
+       'LOCAL: el resto de la aplicación sigue bien, y lo que había en esa ventana está guardado, así que ' +
+       'recargarla la deja como estaba. Si la misma ventana se cae varias veces seguidas, la app deja de ' +
+       'ofrecer recargarla y conviene cerrar y volver a abrir.',
+   },
++  'PS-1016': {
++    titulo: 'No se pudo abrir la base de datos (y no se creó ninguna nueva)',
++    explicacion:
++      'Al arrancar, la base de datos no estaba donde debería, no se pudo leer, o no se pudo comprobar ' +
++      'que el archivo del disco sea realmente el tuyo — y esta instalación NO tenía autorización para ' +
++      'crear una nueva en esa carpeta. La app se cierra a propósito en vez de empezar desde cero: así ' +
++      'nunca aparece una base de datos vacía encima de la real. Si la carpeta de datos está en Google ' +
++      'Drive/OneDrive, lo más habitual es que todavía no haya terminado de sincronizar — espera y vuelve ' +
++      'a abrir. No se ha modificado ni borrado nada.',
++  },
++  'PS-1017': {
++    titulo: 'No se pudo dejar constancia del intento de crear la base de datos',
++    explicacion:
++      'La app iba a crear su base de datos por primera vez en esa carpeta, pero antes de escribir el ' +
++      'primer byte no pudo guardar (y releer) en la configuración local de Windows la constancia de ese ' +
++      'intento — o no pudo guardar la identidad de este equipo, que es lo que permite reconocer luego una ' +
++      'creación interrumpida como propia. Sin esa constancia, un corte de luz a mitad dejaría el permiso ' +
++      'de "primera creación" vivo para siempre, y la app podría acabar creando una base de datos vacía ' +
++      'más adelante. Por eso NO se ha creado ni escrito nada: revisa los permisos de la carpeta de ' +
++      'configuración que indica el propio aviso.',
++  },
++  'PS-1018': {
++    titulo: 'La base de datos está bien, pero no se pudo cerrar el registro local',
++    explicacion:
++      'La base de datos se abrió (o se creó) correctamente y está INTACTA — no se ha perdido nada — pero ' +
++      'no se pudo anotar en la configuración local de Windows que esa carpeta ya tiene datos. La app se ' +
++      'cierra a propósito en vez de seguir: si continuara con la ruta "sin constar", el permiso de ' +
++      'primera creación seguiría siendo renovable y un arranque posterior podría crear una base de datos ' +
++      'vacía. Comprueba los permisos de la carpeta de configuración y vuelve a abrir; se reintenta solo.',
++  },
++  'PS-1019': {
++    titulo: 'Se encontró tu base de datos pero no se pudo registrar esa carpeta',
++    explicacion:
++      'Es el caso de actualizar desde una versión anterior, o de apuntar un PC nuevo a una carpeta ' +
++      'compartida que ya tiene datos: la app SÍ ve tu base de datos, pero no pudo dejar constancia de ' +
++      'ello en la configuración local antes de abrirla. NO se ha abierto ni modificado la base de datos. ' +
++      'Se para aquí a propósito: sin esa marca previa, si más adelante el archivo no apareciera (unidad ' +
++      'de red caída, sincronización a medias), la app podría interpretar esa carpeta como "nunca usada" ' +
++      'y crear una vacía. Revisa los permisos de la carpeta de configuración y vuelve a abrir.',
++  },
+   'PS-2001': {
+     titulo: 'Datos del proyecto no encontrados al abrirlo',
+     explicacion:
+       'El proyecto tiene copias de seguridad guardadas, pero al abrirlo no se encontró el estado ' +
+@@ -757,8 +797,429 @@
+ // que no aparece en la carpeta personalizada.
+ const defaultUserDataDir = app.getPath('userData');
+ applyCustomUserDataDirIfConfigured();
+ 
++// ------------------------------------------------------------------
++// A3.3 BLOQUE 2 — REGISTRO LOCAL DE UBICACIONES YA INICIALIZADAS
++//
++// Sin esto, "carpeta por defecto vacía" volvería a significar "PC nuevo" en
++// cada arranque, y la desaparición de una base de datos que SÍ existió se
++// convertiría automáticamente en permiso para crear una vacía encima.
++//
++// El registro vive en la carpeta de configuración LOCAL —nunca en la carpeta
++// de datos, que puede estar en Drive— porque su función es precisamente
++// recordar algo que la carpeta de datos ya no puede demostrar por sí sola.
++//
++// Formato (%APPDATA%\panorama-app-config\ubicaciones-inicializadas.json):
++//   { "v":1, "ubicaciones": {
++//       "<ruta en minúsculas>": {
++//         "inicializada": true,
++//         "primer_commit_id": "<commit visto la primera vez>",
++//         "installation_id": "<quién la vio>",
++//         "at": "<ISO>" } } }
++//
++// La propiedad que garantiza: una ubicación puede autorizar UNA creación
++// mientras nunca se haya registrado; en cuanto se registra, su desaparición
++// futura ya NO vuelve a ser "primera vez".
++// ------------------------------------------------------------------
++function rutaRegistroUbicaciones() {
++  return path.join(app.getPath('appData'), 'panorama-app-config', 'ubicaciones-inicializadas.json');
++}
++function claveUbicacion(dir) {
++  try { return path.resolve(String(dir)).toLowerCase(); } catch (e) { return String(dir).toLowerCase(); }
++}
++
++// Estados explícitos: un archivo ilegible NO es "no hay nada registrado".
++function leerRegistroUbicaciones() {
++  let txt;
++  try {
++    txt = fs.readFileSync(rutaRegistroUbicaciones(), 'utf8');
++  } catch (e) {
++    if (e && e.code === 'ENOENT') return { ok: true, ubicaciones: {} };
++    return { ok: false, motivo: `no se pudo leer el registro de ubicaciones (${(e && e.code) || e})` };
++  }
++  try {
++    const j = JSON.parse(txt);
++    if (!j || j.v !== 1 || !j.ubicaciones || typeof j.ubicaciones !== 'object') {
++      return { ok: false, motivo: 'el registro de ubicaciones tiene un formato no reconocido' };
++    }
++    return { ok: true, ubicaciones: j.ubicaciones };
++  } catch (e) {
++    return { ok: false, motivo: 'el registro de ubicaciones no es JSON válido' };
++  }
++}
++
++// Misma disciplina que db.js: lista CERRADA de códigos que significan de
++// verdad "este sistema de archivos no implementa fsync". Un EIO no es eso.
++const FSYNC_NO_SOPORTADO_REG = new Set(['EINVAL', 'ENOSYS', 'ENOTSUP', 'EOPNOTSUPP']);
++
++// Escritura atómica (tmp + fsync + rename) y verificada releyendo: esto es
++// evidencia de seguridad, no una preferencia.
++function guardarRegistroUbicaciones(ubicaciones) {
++  const ruta = rutaRegistroUbicaciones();
++  const tmp = `${ruta}.tmp-${process.pid}-${Date.now()}`;
++  try {
++    fs.mkdirSync(path.dirname(ruta), { recursive: true });
++    const fd = fs.openSync(tmp, 'w');
++    try {
++      const buf = Buffer.from(JSON.stringify({ v: 1, ubicaciones }), 'utf8');
++      let escritos = 0;
++      while (escritos < buf.length) {
++        const n = fs.writeSync(fd, buf, escritos, buf.length - escritos, escritos);
++        if (!(n > 0)) throw new Error('writeSync sin progreso');
++        escritos += n;
++      }
++      try {
++        fs.fsyncSync(fd);
++      } catch (e) {
++        if (!FSYNC_NO_SOPORTADO_REG.has(e && e.code)) {
++          throw new Error(`fsync falló (${(e && e.code) || '?'}): ${e && e.message}`);
++        }
++        // solo aquí se acepta: el sistema de archivos no lo implementa
++      }
++    } finally {
++      fs.closeSync(fd);
++    }
++    fs.renameSync(tmp, ruta);
++  } catch (e) {
++    try { fs.unlinkSync(tmp); } catch (e2) {}
++    return { ok: false, motivo: String((e && e.message) || e) };
++  }
++  const r = leerRegistroUbicaciones();
++  if (!r.ok) return { ok: false, motivo: `tras escribir no se pudo releer: ${r.motivo}` };
++  return { ok: true, ubicaciones: r.ubicaciones };
++}
++
++// ------------------------------------------------------------------
++// MÁQUINA DE ESTADOS DE LA UBICACIÓN
++//
++//   (sin registro)  --autorizar creación-->  'inicializando'  --getDb ok-->  'inicializada'
++//
++// El paso a 'inicializando' ocurre ANTES de escribir el primer byte en la
++// carpeta de datos y se verifica releyendo. Esa es la propiedad que cierra el
++// hueco: en cuanto se emite una autorización de primera creación, la ruta deja
++// de parecer "nunca usada", pase lo que pase después.
++//
++// Se acepta el formato antiguo `{inicializada:true}` como 'inicializada'.
++// ------------------------------------------------------------------
++function estadoUbicacion(dir) {
++  const r = leerRegistroUbicaciones();
++  if (!r.ok) return { estado: null, corrupto: true, motivo: r.motivo };
++  const u = r.ubicaciones[claveUbicacion(dir)];
++  if (!u) return { estado: null, corrupto: false, registro: null };
++  if (u.estado === 'inicializando') return { estado: 'inicializando', corrupto: false, registro: u };
++  // 'detectada-existente' es el camino OPUESTO a 'inicializando': significa
++  // "ya demostré que esta ruta tenía una base de datos, pero todavía no
++  // terminé de abrirla/adoptarla". Nunca autoriza a crear nada.
++  if (u.estado === 'detectada-existente') return { estado: 'detectada-existente', corrupto: false, registro: u };
++  if (u.estado === 'inicializada' || u.inicializada === true) {
++    return { estado: 'inicializada', corrupto: false, registro: u };
++  }
++  // Entrada presente pero con un estado que no se reconoce: no se interpreta.
++  return { estado: null, corrupto: true, motivo: 'entrada de ubicación con estado no reconocido', registro: u };
++}
++
++// Compatibilidad con el nombre anterior (lo usa la suite del bloque 2).
++function ubicacionYaInicializada(dir) {
++  const e = estadoUbicacion(dir);
++  return { inicializada: e.estado === 'inicializada', corrupto: e.corrupto, motivo: e.motivo, registro: e.registro };
++}
++
++function escribirEntradaUbicacion(dir, entrada) {
++  const r = leerRegistroUbicaciones();
++  if (!r.ok) return { ok: false, motivo: r.motivo };
++  const ubicaciones = Object.assign({}, r.ubicaciones);
++  ubicaciones[claveUbicacion(dir)] = entrada;
++  const g = guardarRegistroUbicaciones(ubicaciones);
++  if (!g.ok) return g;
++  // VERIFICACIÓN: releer y comprobar que la entrada quedó como se pretendía.
++  const v = estadoUbicacion(dir);
++  if (v.corrupto || !v.registro || v.registro.estado !== entrada.estado) {
++    return { ok: false, motivo: 'la entrada no se pudo verificar tras escribirla' };
++  }
++  return { ok: true, entrada: v.registro };
++}
++
++// Paso 1: ANTES de conceder la creación. Reutiliza el intento si ya existía,
++// para no emitir nunca una "primera creación" nueva sobre una ruta pendiente.
++function marcarUbicacionInicializando(dir) {
++  const e = estadoUbicacion(dir);
++  if (e.corrupto) return { ok: false, motivo: e.motivo };
++  if (e.estado === 'inicializando' && e.registro && e.registro.intento) {
++    return { ok: true, intento: e.registro.intento, reutilizado: true };
++  }
++  const intento = crypto.randomBytes(8).toString('hex');
++  const res = escribirEntradaUbicacion(dir, {
++    estado: 'inicializando',
++    intento,
++    installation_id: (() => { try { return dbmod.getInstallationId(); } catch (e2) { return null; } })(),
++    at: new Date().toISOString(),
++  });
++  if (!res.ok) {
++    appLog(`A3.3 — NO se pudo dejar constancia de "inicializando" en ${dir}: ${res.motivo}`);
++    return res;
++  }
++  appLog(`A3.3 — ubicación marcada como INICIALIZANDO (intento ${intento}): ${dir}`);
++  return { ok: true, intento };
++}
++
++// Paso 1 del camino de ACTUALIZACIÓN: se ha comprobado que la ruta YA tiene
++// una base de datos, y todavía no se ha abierto. Se persiste antes de entrar
++// en la ventana peligrosa, por el mismo motivo que 'inicializando': si el
++// proceso cae aquí y la base de datos desaparece después, esta ruta no puede
++// volver a parecer "nunca vista".
++//
++// NO genera nonce, NO registra intención de creación, NO autoriza crear.
++function marcarUbicacionDetectadaExistente(dir) {
++  const e = estadoUbicacion(dir);
++  if (e.corrupto) return { ok: false, motivo: e.motivo };
++  if (e.estado === 'detectada-existente' || e.estado === 'inicializada') {
++    return { ok: true, yaEstaba: true };
++  }
++  const res = escribirEntradaUbicacion(dir, {
++    estado: 'detectada-existente',
++    installation_id: (() => { try { return dbmod.getInstallationId(); } catch (e2) { return null; } })(),
++    at: new Date().toISOString(),
++  });
++  if (!res.ok) {
++    appLog(`A3.3 — NO se pudo dejar constancia de "detectada-existente" en ${dir}: ${res.motivo}`);
++    return res;
++  }
++  appLog(`A3.3 — ubicación marcada como DETECTADA-EXISTENTE (hay base de datos, aún sin abrir): ${dir}`);
++  return { ok: true };
++}
++
++// Paso 2: tras confirmar la base de datos. Transición atómica y verificada.
++function marcarUbicacionInicializada(dir, commitId) {
++  const e = estadoUbicacion(dir);
++  if (e.corrupto) {
++    appLog(`A3.3 — no se pudo leer el registro para marcar ${dir}: ${e.motivo}`);
++    return { ok: false, motivo: e.motivo };
++  }
++  if (e.estado === 'inicializada') return { ok: true, yaEstaba: true };
++  const res = escribirEntradaUbicacion(dir, {
++    estado: 'inicializada',
++    primer_commit_id: commitId || (e.registro && e.registro.primer_commit_id) || null,
++    installation_id: (() => { try { return dbmod.getInstallationId(); } catch (e2) { return null; } })(),
++    at: new Date().toISOString(),
++  });
++  if (!res.ok) {
++    appLog(`A3.3 — no se pudo registrar la ubicación como inicializada (${dir}): ${res.motivo}`);
++    return res;
++  }
++  appLog(`A3.3 — ubicación registrada como inicializada: ${dir}`);
++  return { ok: true };
++}
++
++// ------------------------------------------------------------------
++// A3.3 BLOQUE 2 — POLÍTICA DE UBICACIÓN
++//
++// Regla de fondo: una carpeta PERSONALIZADA nunca se clasifica como 'local'.
++// Que `fs.stat` funcione o que tenga letra de unidad no demuestra que no esté
++// sincronizada con otro equipo. Ante duda, 'desconocida', que recibe la misma
++// política conservadora que 'compartida'.
++//
++//   carpeta por defecto de %APPDATA% ........................... local
++//   personalizada con indicios de nube/red, o marcada shared ... compartida
++//   personalizada sin poder demostrar su naturaleza ............ desconocida
++// ------------------------------------------------------------------
++const INDICIOS_DE_NUBE = [
++  'google drive', 'googledrive', 'mi unidad', 'my drive',
++  'onedrive', 'dropbox', 'iclouddrive', 'nextcloud', 'pcloud',
++];
++function rutaConIndiciosDeNube(ruta) {
++  const r = String(ruta || '').toLowerCase().replace(/\\/g, '/');
++  if (r.startsWith('//')) return { si: true, motivo: 'ruta UNC (recurso de red)' };
++  for (const ind of INDICIOS_DE_NUBE) {
++    if (r.includes('/' + ind + '/') || r.includes('/' + ind)) {
++      return { si: true, motivo: `la ruta contiene "${ind}"` };
++    }
++  }
++  return { si: false };
++}
++
++function clasificarPoliticaUbicacion() {
++  // Si no hay personalizada configurada, o la hubo pero no se pudo usar y se
++  // hizo fallback, la carpeta real de esta sesión es la de %APPDATA%: es la
++  // carpeta por usuario de Windows, estructuralmente privada de este equipo.
++  if (!isUsingCustomDataLocationNow()) {
++    return { politica: 'local', motivo: 'carpeta de datos por defecto de %APPDATA% (por usuario de Windows)' };
++  }
++  const ruta = app.getPath('userData');
++  const ind = rutaConIndiciosDeNube(ruta);
++  if (ind.si) return { politica: 'compartida', motivo: ind.motivo };
++  if (customUserDataDirShared === true) {
++    return { politica: 'compartida', motivo: 'location.json la marca como compartida' };
++  }
++  // Personalizada sin indicios y sin marca fiable: NO se da por local.
++  return {
++    politica: 'desconocida',
++    motivo: 'carpeta personalizada cuya naturaleza no se puede demostrar (sin indicios de nube y sin shared:true)',
++  };
++}
++
++// ------------------------------------------------------------------
++// A3.3 BLOQUE 2 — DECISIÓN DE `crearSiAusente`
++//
++// main.js AUTORIZA; db.js VERIFICA. Las dos capas son necesarias y ninguna
++// basta por sí sola.
++//
++// Solo hay DOS caminos que autorizan, y ambos exigen que la ubicación NO
++// conste como ya inicializada:
++//
++//   1. carpeta por defecto que nunca se registró  -> primera ejecución genuina
++//   2. carpeta personalizada donde el usuario eligió EXPRESAMENTE
++//      "empezar aquí desde cero" en el diálogo PS-1009
++//
++// Todo lo demás —incluida una carpeta por defecto que ya tuvo base de datos y
++// hoy no la tiene— NO autoriza. Una desaparición no es una primera vez.
++// ------------------------------------------------------------------
++let usuarioAutorizaEmpezarDesdeCero = false;   // lo pone el diálogo PS-1009
++
++// ¿Hay restos de base de datos en la carpeta de datos? (solo nombres, sin
++// interpretarlos: db.js es quien decide si son explicables.)
++function restosEnCarpetaDeDatos(dir) {
++  try {
++    return fs.readdirSync(dir).filter((f) => f === 'panorama.sqlite3' || f.startsWith('panorama.sqlite3.'));
++  } catch (e) { return null; }   // null = no se pudo listar
++}
++
++function decidirCrearSiAusente() {
++  const dir = app.getPath('userData');
++  const est = estadoUbicacion(dir);
++
++  if (est.corrupto) {
++    return { crear: false, motivo: `el registro local de ubicaciones no se puede leer (${est.motivo}); no se autoriza crear nada` };
++  }
++
++  // (D) Ya tuvo base de datos: su ausencia es una desaparición, no una
++  // primera vez. Nunca se autoriza.
++  if (est.estado === 'inicializada') {
++    return {
++      crear: false,
++      motivo: 'esta ubicación YA tuvo una base de datos según el registro local: si ahora no aparece, ' +
++        'es una desaparición, no una primera vez',
++      yaInicializada: true,
++    };
++  }
++
++  // ------------------------------------------------------------------
++  // EL ESTADO DEL ARCHIVO MANDA SOBRE CUALQUIER RAZONAMIENTO DEL REGISTRO.
++  //
++  //     "sin registro local"  NO significa  "sin datos previos".
++  //
++  // Al actualizar desde una versión anterior de Panorama, el registro local no
++  // existe —esa versión no lo escribía— pero la base de datos sí, con datos
++  // reales. Tratar eso como "primera ejecución" no sería solo un error de
++  // etiqueta: el wiring escribiría `inicializando` y una intención de primera
++  // creación en db.js, fabricando evidencia falsa de una creación pendiente
++  // que nunca existió. Si después esa base de datos desapareciera, esas dos
++  // marcas parecerían autorizar crear una vacía.
++  //
++  // Solo `sin registro + base de datos DEMOSTRABLEMENTE ausente` puede iniciar
++  // una primera creación.
++  // ------------------------------------------------------------------
++  const archivo = estadoDeArchivoEnRuta(path.join(dir, 'panorama.sqlite3'));
++  if (archivo.estado === 'visible') {
++    return {
++      crear: false,
++      bdVisible: true,
++      // Si la ruta todavía no consta de ninguna forma, hay que dejar
++      // constancia de que AQUÍ HAY UNA BASE DE DATOS **antes** de abrirla.
++      // Es lo que impide que una caída entre detectarla y registrarla deje la
++      // ruta pareciendo "nunca vista".
++      necesitaRegistrarExistente: !est.estado,
++      motivo: 'ya hay una base de datos en esta ubicación: no es una primera creación, se abre la existente',
++    };
++  }
++  if (archivo.estado === 'no-accesible') {
++    return {
++      crear: false,
++      noAccesible: true,
++      motivo: `no se puede comprobar si hay una base de datos aquí (${archivo.codigo}): no se crea nada`,
++    };
++  }
++  // A partir de aquí, la ausencia del archivo está DEMOSTRADA (ENOENT).
++
++  // Este equipo YA vio una base de datos en esta ruta y no llegó a terminar de
++  // abrirla. Que ahora no esté es una DESAPARICIÓN, nunca una primera vez.
++  if (est.estado === 'detectada-existente') {
++    return {
++      crear: false,
++      existenteDesaparecida: true,
++      motivo: 'este equipo ya comprobó que esta ubicación tenía una base de datos: su ausencia ahora ' +
++        'es una desaparición, no una primera ejecución',
++    };
++  }
++
++  // Hay una inicialización PENDIENTE de este equipo.
++  //
++  // OJO: una entrada 'inicializando' por sí sola NO demuestra que estemos
++  // todavía ANTES de la primera creación. También puede significar:
++  //   "la base de datos se creó correctamente, pero no conseguí actualizar el
++  //    registro después" — y en ese caso la creación YA TERMINÓ.
++  //
++  // Lo que distingue los dos casos es la intención de db.js: db.js la registra
++  // antes de escribir el primer byte y LA RETIRA al confirmar la creación. Si
++  // ya no está, la creación terminó y no hay nada que reanudar.
++  //
++  // Y tiene que estar VINCULADA: mismo nonce que el que main.js persistió. Con
++  // nonces independientes, "el mismo intento" no sería comprobable.
++  if (est.estado === 'inicializando') {
++    const intentoMain = est.registro && est.registro.intento;
++    let intencionDb = null;
++    try { intencionDb = dbmod.intencionDeCreacionPara(dir); } catch (e) { intencionDb = null; }
++
++    if (!intencionDb || intencionDb.corrupto) {
++      return { crear: false, motivo: 'hay una inicialización pendiente y la evidencia de db.js no se puede leer' };
++    }
++    if (!intencionDb.vigente) {
++      // (D) El caso peligroso: db.js ya no tiene nada pendiente. O la creación
++      // terminó, o nunca llegó a empezar de forma demostrable. En ninguno de
++      // los dos se puede crear una base de datos nueva.
++      return {
++        crear: false,
++        sinIntencionDb: true,
++        motivo: 'hay una inicialización pendiente en el registro local, pero db.js NO tiene ninguna ' +
++          'intención de creación viva: la creación anterior pudo haber terminado. No se crea nada.',
++      };
++    }
++    if (!intentoMain || intencionDb.vigente.nonce !== intentoMain) {
++      return {
++        crear: false,
++        noVinculada: true,
++        motivo: `la intención de db.js (${intencionDb.vigente.nonce}) no corresponde al intento ` +
++          `registrado por la aplicación (${intentoMain || 'ninguno'}): no se reanuda algo que no se puede vincular`,
++      };
++    }
++    // (B/C) Las dos evidencias existen y están vinculadas: se reanuda EXACTAMENTE
++    // ese intento, nunca uno nuevo.
++    return {
++      crear: true,
++      reanudando: true,
++      intento: intentoMain,
++      motivo: `se reanuda la inicialización pendiente ${intentoMain}, vinculada con la intención de db.js`,
++    };
++  }
++
++  // (sin registro) Primera vez de verdad: no consta la ubicación Y se ha
++  // comprobado que la base de datos no está.
++  if (!isUsingCustomDataLocationNow()) {
++    return {
++      crear: true,
++      motivo: 'carpeta por defecto sin registro local y con la base de datos demostrablemente ausente ' +
++        '(primera ejecución)',
++    };
++  }
++  if (usuarioAutorizaEmpezarDesdeCero) {
++    return { crear: true, motivo: 'el usuario eligió expresamente "empezar aquí desde cero" (PS-1009)' };
++  }
++  return {
++    crear: false,
++    motivo: 'carpeta personalizada sin base de datos y sin que el usuario haya elegido empezar desde cero',
++  };
++}
++
+ const BACKUP_KEEP = 15;
+ let launcherWin = null;
+ const projectWindows = new Map(); // id -> BrowserWindow
+ const meetingPrepWindows = new Map(); // project id -> BrowserWindow ("Preparación de Reunión")
+@@ -5163,8 +5624,22 @@
+   }
+   yaEnFalloFatal = true;
+   procesoComprometido = true;
+   cerrandoApp = true;
++
++  // A3.3 BLOQUE 2 — el fail-stop llega hasta db.js.
++  //
++  // Va LO PRIMERO, antes de cualquier otra cosa que pudiera escribir: con el
++  // latch puesto no pasa ninguna escritura, ni las internas alcanzadas desde
++  // una lectura, ni vacuum(), que era el hueco conocido (main.js llama a
++  // dbmod.vacuum() sin comprobar procesoComprometido). El motivo
++  // 'comprometido' es irreversible: no se puede levantar ni sustituir.
++  try {
++    dbmod.bloquearEscrituras('comprometido');
++  } catch (e) {
++    /* si ni eso se puede, quedan las guardas de procesoComprometido de main.js */
++  }
++
+   appLog(`ERROR ${codigo} — FALLO FATAL (${origen}): ${detalle}`);
+ 
+   // Única escritura que se permite: soltar el bloqueo multi-PC. app.exit() NO
+   // emite 'before-quit', así que releaseMultiPcLockIfOwned() no correría — y
+@@ -5636,25 +6111,68 @@
+ //
+ // Esto protege un escalón más grave que el de la 0.1.52 (que solo protegía al Directorio de Talento
+ // una vez que la propia base de datos ya estaba bien): aquí se protege el .sqlite3 en sí, para
+ // TODOS los proyectos, ANTES de que getDb() llegue a tocarlo.
++// A3.3 BLOQUE 2 — estados explícitos en vez de un booleano.
++//
++// `fs.existsSync()` devuelve `false` ante CUALQUIER error, así que confunde
++// "aquí no hay base de datos" con "ahora mismo no puedo mirar". Esa confusión
++// es exactamente la que no puede terminar en un `crearSiAusente:true`.
++//
++//   'visible'       -> el archivo está y se puede abrir
++//   'no-visible'    -> ENOENT comprobado: de verdad no está
++//   'no-accesible'  -> existe o no, pero no se puede determinar (EIO, EACCES,
++//                      EBUSY, EPERM, unidad a medio montar...)
++function estadoDeArchivoEnRuta(p) {
++  let fd = null;
++  try {
++    fd = fs.openSync(p, 'r');
++    return { estado: 'visible' };
++  } catch (e) {
++    const cod = (e && e.code) || '';
++    if (cod === 'ENOENT') return { estado: 'no-visible', codigo: cod };
++    return { estado: 'no-accesible', codigo: cod, motivo: String((e && e.message) || e) };
++  } finally {
++    if (fd !== null) { try { fs.closeSync(fd); } catch (e) {} }
++  }
++}
++
+ async function checkCustomLocationDatabaseSanity() {
+   if (!customUserDataDirTarget || customUserDataDirFailure) return; // solo aplica con carpeta personalizada ya accesible
+   const dbPath = path.join(app.getPath('userData'), 'panorama.sqlite3');
+-  if (fs.existsSync(dbPath)) return; // lo normal — ya está ahí
++  const inicial = estadoDeArchivoEnRuta(dbPath);
++  if (inicial.estado === 'visible') return; // lo normal — ya está ahí
+ 
+   // Espera silenciosa primero (mismo margen que ya se usa para el montaje de la carpeta): un
+   // archivo de este tamaño suele terminar de bajar en segundos una vez la carpeta ya está montada,
+   // así que no hace falta molestar al usuario si solo falta un poco.
+   const deadline = Date.now() + USERDATA_POST_READY_RETRY_MS;
++  let ultimo = inicial;
+   while (Date.now() < deadline) {
+     await delayMs(USERDATA_POST_READY_RETRY_INTERVAL_MS);
+-    if (fs.existsSync(dbPath)) {
++    ultimo = estadoDeArchivoEnRuta(dbPath);
++    if (ultimo.estado === 'visible') {
+       appLog(`Base de datos de la carpeta personalizada apareció tras esperar: ${dbPath}`);
+       return;
+     }
+   }
+ 
++  // A3.3: si lo que ocurre es que NO SE PUEDE MIRAR (Drive caído, permisos,
++  // unidad a medio montar), no se ofrece "empezar desde cero": eso convertiría
++  // una indisponibilidad en una creación. Se cae a la carpeta por defecto por
++  // esta sesión, que es lo que ya hace la app cuando la carpeta no responde, y
++  // NO se autoriza ninguna creación en la personalizada.
++  if (ultimo.estado === 'no-accesible') {
++    appLog(`A3.3 — la base de datos de la carpeta personalizada no se puede comprobar (${ultimo.codigo}): ` +
++      'no se ofrece empezar desde cero. Se usa la carpeta por defecto por esta sesión.');
++    app.setPath('userData', defaultUserDataDir);
++    customUserDataDirFailure = {
++      attempted: customUserDataDirTarget,
++      error: `No se pudo comprobar panorama.sqlite3 ahí (${ultimo.codigo}: ${ultimo.motivo})`,
++    };
++    return;
++  }
++
+   // Sigue sin aparecer tras ~20s: puede ser Drive yendo lento, o de verdad la primera vez que se
+   // usa esta carpeta a propósito. No se decide sola — se para aquí hasta que el usuario elija.
+   for (;;) {
+     const choice = dialog.showMessageBoxSync(undefined, {
+@@ -5674,8 +6192,14 @@
+       cancelId: 0,
+       noLink: true,
+     });
+     if (choice === 1) {
++      // A3.3 BLOQUE 2: esta elección es la ÚNICA que autoriza crear en una
++      // carpeta personalizada. main.js autoriza; db.js sigue verificando
++      // aparte que la ubicación sea segura (carpeta sin restos ajenos,
++      // identidad estable, intención local registrada...). Las dos capas
++      // tienen que decir que sí.
++      usuarioAutorizaEmpezarDesdeCero = true;
+       appLog(`El usuario confirmó empezar desde cero en la carpeta personalizada (no se encontró panorama.sqlite3): ${dbPath}`);
+       return;
+     }
+     if (choice === 2) {
+@@ -5694,9 +6218,9 @@
+     const deadline2 = Date.now() + USERDATA_POST_READY_RETRY_MS;
+     let appeared = false;
+     while (Date.now() < deadline2) {
+       await delayMs(USERDATA_POST_READY_RETRY_INTERVAL_MS);
+-      if (fs.existsSync(dbPath)) { appeared = true; break; }
++      if (estadoDeArchivoEnRuta(dbPath).estado === 'visible') { appeared = true; break; }
+     }
+     if (appeared) {
+       appLog(`Base de datos de la carpeta personalizada apareció tras reintento manual: ${dbPath}`);
+       return;
+@@ -5950,9 +6474,177 @@
+     // — no se toca la base de datos ni se abre ninguna ventana.
+     closeSplashWindow(() => app.quit());
+     return;
+   }
+-  await dbmod.getDb();
++  // ------------------------------------------------------------------
++  // A3.3 BLOQUE 2 — cableado de política y autorización de creación.
++  //
++  // Las dos cosas van ANTES de getDb(): la política decide cómo detecta
++  // A3.3 en cada escritura, y la autorización decide si getDb() puede crear
++  // una base de datos cuando no hay ninguna.
++  // ------------------------------------------------------------------
++  const clasif = clasificarPoliticaUbicacion();
++  dbmod.setPoliticaUbicacion(clasif.politica);
++  appLog(`A3.3 — política de ubicación: ${clasif.politica} (${clasif.motivo})`);
++
++  const permiso = decidirCrearSiAusente();
++  appLog(`A3.3 — autorización de creación: ${permiso.crear ? 'SÍ' : 'NO'} (${permiso.motivo})`);
++
++  // Si se va a conceder una primera creación, la ruta tiene que dejar de
++  // parecer "nunca usada" ANTES de que se escriba el primer byte. Si esa
++  // constancia no se puede dejar y releer, NO se concede: se prefiere no
++  // arrancar a crear una base de datos cuyo permiso siguiera siendo renovable.
++  if (permiso.crear) {
++    // La identidad tiene que ser estable ANTES de escribir ninguna marca: con
++    // un installation-id de sesión, las marcas que dejemos ahora dejarían de
++    // ser nuestras al siguiente arranque y no servirían para recuperar.
++    let identidadOk = false;
++    try { identidadOk = dbmod.identidadPersistida() === true; } catch (e) { identidadOk = false; }
++    if (!identidadOk) {
++      appLog('ERROR PS-1017 — no se pudo guardar la identidad de este equipo; no se inicializa nada.');
++      dialog.showMessageBoxSync(undefined, {
++        type: 'error',
++        title: 'No se puede inicializar la base de datos',
++        message: 'Panorama del Servicio no ha podido guardar la identidad de este equipo, y sin ella una ' +
++          'inicialización interrumpida no se podría recuperar.',
++        detail: `Configuración local: ${path.dirname(rutaRegistroUbicaciones())}\n\n` +
++          'NO se ha creado ni escrito nada.' + errorCodeSuffix('PS-1017'),
++        buttons: ['Cerrar'],
++        noLink: true,
++      });
++      closeSplashWindow(() => app.quit());
++      return;
++    }
++
++    const marcaPrevia = marcarUbicacionInicializando(app.getPath('userData'));
++    if (marcaPrevia.ok) {
++      // VÍNCULO ENTRE LAS DOS CAPAS: db.js registra su intención con EL MISMO
++      // identificador que acaba de persistir main.js. Así "el mismo intento"
++      // es comprobable en los datos, no una afirmación del comentario. Si no
++      // se puede dejar, no se crea nada.
++      let vinculo = null;
++      try {
++        vinculo = dbmod.registrarIntencionDeCreacionPara(app.getPath('userData'), marcaPrevia.intento);
++      } catch (e) {
++        vinculo = { ok: false, motivo: String((e && e.message) || e) };
++      }
++      if (!vinculo.ok || vinculo.nonce !== marcaPrevia.intento) {
++        marcaPrevia.ok = false;
++        marcaPrevia.motivo = vinculo && vinculo.ok
++          ? `la intención de db.js quedó con otro identificador (${vinculo.nonce}) distinto del registrado (${marcaPrevia.intento})`
++          : `no se pudo vincular la intención de db.js: ${vinculo && vinculo.motivo}`;
++      } else {
++        appLog(`A3.3 — intento de creación ${marcaPrevia.intento} vinculado entre el registro local y db.js`);
++      }
++    }
++    if (!marcaPrevia.ok) {
++      appLog(`ERROR PS-1017 — no se pudo dejar constancia local del intento de creación: ${marcaPrevia.motivo}`);
++      dialog.showMessageBoxSync(undefined, {
++        type: 'error',
++        title: 'No se puede inicializar la base de datos',
++        message: 'Panorama del Servicio iba a crear su base de datos por primera vez, pero no ha podido ' +
++          'dejar constancia de ello en la configuración local.',
++        detail:
++          `Carpeta de datos: ${app.getPath('userData')}\n` +
++          `Configuración local: ${path.dirname(rutaRegistroUbicaciones())}\n\n${marcaPrevia.motivo}\n\n` +
++          'NO se ha creado ni escrito nada. Sin esa constancia, un corte a mitad podría hacer que la ' +
++          'aplicación volviera a crear una base de datos vacía más adelante.' +
++          errorCodeSuffix('PS-1017'),
++        buttons: ['Cerrar'],
++        noLink: true,
++      });
++      closeSplashWindow(() => app.quit());
++      return;
++    }
++  }
++
++  // Camino de ACTUALIZACIÓN: hay una base de datos y esta ruta todavía no
++  // consta. Se deja constancia ANTES de abrirla, por la misma razón que en la
++  // primera creación: si el proceso cae entre detectarla y registrarla, y la
++  // base de datos desaparece después, la ruta no puede volver a parecer
++  // "nunca vista". No genera nonce ni intención de creación.
++  if (!permiso.crear && permiso.necesitaRegistrarExistente) {
++    const marcaExistente = marcarUbicacionDetectadaExistente(app.getPath('userData'));
++    if (!marcaExistente.ok) {
++      appLog(`ERROR PS-1019 — no se pudo registrar que esta ubicación ya tiene base de datos: ${marcaExistente.motivo}`);
++      dialog.showMessageBoxSync(undefined, {
++        type: 'error',
++        title: 'No se puede abrir de forma segura',
++        message: 'Panorama del Servicio ha encontrado tu base de datos, pero no ha podido dejar constancia ' +
++          'de ello en la configuración local.',
++        detail:
++          `Carpeta de datos: ${app.getPath('userData')}\n` +
++          `Configuración local: ${path.dirname(rutaRegistroUbicaciones())}\n\n${marcaExistente.motivo}\n\n` +
++          'NO se ha abierto ni modificado la base de datos. Se cierra a propósito: sin esa constancia, si ' +
++          'más adelante la base de datos no apareciera, la aplicación podría llegar a crear una vacía.' +
++          errorCodeSuffix('PS-1019'),
++        buttons: ['Cerrar'],
++        noLink: true,
++      });
++      closeSplashWindow(() => app.quit());
++      return;
++    }
++  }
++
++  try {
++    await dbmod.getDb({ crearSiAusente: permiso.crear });
++  } catch (e) {
++    // A3.3 puede negarse a abrir por motivos que NO son un fallo de la app:
++    // la base de datos no está donde debería, no se puede verificar, o no hay
++    // autorización para crear una nueva. Se explica y se sale sin tocar nada.
++    const detalle = (e && e.message) ? e.message : String(e);
++    appLog(`ERROR PS-1016 — no se pudo abrir la base de datos: ${detalle}`);
++    dialog.showMessageBoxSync(undefined, {
++      type: 'error',
++      title: 'No se puede abrir la base de datos',
++      message: 'Panorama del Servicio no ha podido abrir su base de datos y NO ha creado ninguna nueva.',
++      detail:
++        `Carpeta: ${app.getPath('userData')}\n\n${detalle}\n\n` +
++        'No se ha modificado ni borrado nada. Si la carpeta de datos está en Google Drive/OneDrive, ' +
++        'espera a que termine de sincronizar y vuelve a abrir la aplicación.' +
++        errorCodeSuffix('PS-1016'),
++      buttons: ['Cerrar'],
++      noLink: true,
++    });
++    closeSplashWindow(() => app.quit());
++    return;
++  }
++
++  // La base de datos está abierta y confirmada: se cierra la transición a
++  // 'inicializada'. A partir de ahí, que desaparezca ya no volverá a
++  // interpretarse como "primera vez".
++  //
++  // Si esta transición NO se puede dejar durable, la base de datos ya está
++  // creada y confirmada —no se deshace nada— pero la sesión NO continúa: de
++  // lo contrario la aplicación trabajaría con una ruta que localmente sigue
++  // sin constar, y el permiso de primera creación seguiría siendo renovable.
++  let marcaFinal;
++  try {
++    marcaFinal = marcarUbicacionInicializada(app.getPath('userData'), dbmod.getCommitActual());
++  } catch (e) {
++    marcaFinal = { ok: false, motivo: String((e && e.message) || e) };
++  }
++  if (!marcaFinal.ok) {
++    appLog(`ERROR PS-1018 — la base de datos está bien, pero no se pudo completar el registro local: ${marcaFinal.motivo}`);
++    dialog.showMessageBoxSync(undefined, {
++      type: 'error',
++      title: 'No se puede continuar de forma segura',
++      message: 'Tu base de datos está intacta y NO se ha perdido nada, pero Panorama del Servicio no ha ' +
++        'podido dejar constancia en la configuración local de que esta carpeta ya tiene datos.',
++      detail:
++        `Carpeta de datos: ${app.getPath('userData')}\n` +
++        `Configuración local: ${path.dirname(rutaRegistroUbicaciones())}\n\n${marcaFinal.motivo}\n\n` +
++        'La aplicación se cierra a propósito: seguir sin esa constancia podría hacer que, más adelante, ' +
++        'creara una base de datos vacía encima de la tuya. Comprueba los permisos de esa carpeta de ' +
++        'configuración y vuelve a abrir.' +
++        errorCodeSuffix('PS-1018'),
++      buttons: ['Cerrar'],
++      noLink: true,
++    });
++    closeSplashWindow(() => app.quit());
++    return;
++  }
++
+   maybeRunPeriodicVacuum();
+   // A1: si un re-cifrado de la Seguridad quedó interrumpido de verdad (corte
+   // de luz, cierre forzado del proceso a mitad), se resuelve AQUÍ — después
+   // de abrir la base de datos y ANTES del login, porque la sal y el

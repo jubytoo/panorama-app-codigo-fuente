@@ -1,0 +1,8 @@
+[2026-09-13T12:22:23.650Z] pid=23740 mode=helper requestSingleInstanceLock -> true
+[2026-09-13T12:22:23.681Z] pid=23740 mode=helper whenReady OK (esta instancia tiene el cerrojo)
+[2026-09-13T12:22:23.694Z] pid=23740 mode=helper ayudante de parche lanzado; esta instancia sale en 300ms  [patron de relaunchApp() del helper]
+[2026-09-13T12:22:23.776Z] HELPER esperando a que muera el pid 23740 (sondeo cada 100ms, mas agresivo que los 500ms reales)
+[2026-09-13T12:22:24.104Z] HELPER pid 23740 ya muerto -> relanzando INMEDIATAMENTE (peor caso para el cerrojo)
+[2026-09-13T12:22:24.282Z] pid=25056 mode=helper2 requestSingleInstanceLock -> true
+[2026-09-13T12:22:24.317Z] pid=25056 mode=helper2 whenReady OK (esta instancia tiene el cerrojo)
+[2026-09-13T12:22:24.321Z] pid=25056 mode=helper2 RELANZADA POR EL AYUDANTE Y HA OBTENIDO EL CERROJO

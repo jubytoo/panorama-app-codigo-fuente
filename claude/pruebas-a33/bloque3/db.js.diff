@@ -1,0 +1,282 @@
+--- db.js (antes)
++++ db.js (despues)
+@@ -134,6 +134,78 @@
+ }
+ 
+ function estadoLatch() { return escrituraBloqueada; }
++
++// --- A3.3/Bloque 3: EXCLUSIVA DE OPERACIÓN ----------------------------------
++// NO es un latch y no tiene nada que ver con ellos: no describe un fallo, no
++// sobrevive al proceso, no aparece en estadoLatch() y no se levanta con
++// levantarLatch(). Es un cerrojo en memoria para que una operación larga que
++// mezcla archivos y base de datos (el re-cifrado de Seguridad) no se
++// entrelace con ninguna otra escritura de ESTE proceso entre su preparación,
++// sus renames y su consolidación.
++//
++// Lo que NO cubre, a propósito: los archivos de una carpeta compartida frente
++// a OTRO PC. Eso se demuestra con los hashes por item del journal v2, no con
++// un cerrojo local — un cerrojo de este proceso no puede decir nada de otro.
++//
++// Un latch irreversible gana siempre: si salta durante la exclusiva, la
++// consolidación falla igual y quien la tomara tendrá que deshacer sus archivos.
++let exclusiva = null;                 // { token, etiqueta, desde }
++
++function tomarExclusiva(etiqueta) {
++  if (exclusiva) {
++    throw new ErrorDb('ocupado', `ya hay una operación exclusiva en curso ('${exclusiva.etiqueta}')`,
++      { operacion: exclusiva.etiqueta });
++  }
++  exclusiva = {
++    token: crypto.randomBytes(16).toString('hex'),
++    etiqueta: String(etiqueta || 'sin-etiqueta'),
++    desde: Date.now(),
++  };
++  logA33(`exclusiva tomada: '${exclusiva.etiqueta}'`);
++  return { token: exclusiva.token, etiqueta: exclusiva.etiqueta };
++}
++
++// Idempotente para el token correcto; un token ajeno NO la suelta.
++function soltarExclusiva(token) {
++  if (!exclusiva) return { ok: true, yaLibre: true };
++  if (!token || token !== exclusiva.token) {
++    return { ok: false, error: 'ese token no es el de la exclusiva en curso' };
++  }
++  logA33(`exclusiva soltada: '${exclusiva.etiqueta}'`);
++  exclusiva = null;
++  return { ok: true };
++}
++
++function estadoExclusiva() {
++  return exclusiva ? { etiqueta: exclusiva.etiqueta, desde: exclusiva.desde } : null;
++}
++
++// --- A3.3/Bloque 3: aviso de cambio de la imagen en memoria -----------------
++// Se dispara EXACTAMENTE cuando cambia el commit de la imagen en memoria, sea
++// cual sea el camino. Quien escucha (main.js) revalida con él la clave de
++// Seguridad: una BD adoptada de otro equipo puede traer otra sal y otro
++// verificador, y seguir cifrando con la clave anterior dejaría cada archivo
++// nuevo ilegible.
++//
++// `motivo` distingue lo que escribimos nosotros ('commit-propio') de una
++// adopción de verdad. El que escucha ignora 'commit-propio'.
++let _alCambiarImagen = null;
++function alCambiarImagenEnMemoria(fn) {
++  _alCambiarImagen = (typeof fn === 'function') ? fn : null;
++  return !!_alCambiarImagen;
++}
++// Se llama SIEMPRE tras un camino que pueda sustituir la imagen; si el commit
++// no cambió, no avisa. Así el contrato es comprobable: "avisa cuando cambia".
++function notificarImagen(de, motivo) {
++  if (de === cMem) return false;
++  logA33(`imagen en memoria: ${de || '(ninguna)'} -> ${cMem || '(ninguna)'} (${motivo})`);
++  if (_alCambiarImagen) {
++    try { _alCambiarImagen({ de: de || null, a: cMem || null, motivo }); }
++    catch (e) { logA33('el aviso de cambio de imagen lanzó: ' + String((e && e.message) || e)); }
++  }
++  return true;
++}
++
+ function setPoliticaUbicacion(p) {
+   if (['local', 'compartida', 'desconocida'].includes(p)) {
+     politica = p;
+@@ -755,12 +827,16 @@
+ 
+ function restaurarUltimaImagenConfirmada() {
+   if (!ultimaImagenConfirmada) throw new Error('no hay imagen confirmada que restaurar');
++  const deCommit = cMem;
+   try { db.close(); } catch (e) {}
+   db = new SQLjs.Database(Buffer.from(ultimaImagenConfirmada));  // copia fresca
+   const m = leerMetaMemoria();
+   cMem = m.C; pMem = m.P; hMem = m.H; gMem = m.gen;
+   fMio = sha256(ultimaImagenConfirmada);
+   dirty = false;
++  // Se sustituye el objeto de sql.js, pero el commit vuelve a ser el MISMO que
++  // ya había (cMem solo avanza tras confirmar): no es una adopción y no avisa.
++  notificarImagen(deCommit, 'restauracion');
+ }
+ 
+ // Solo descendencia estricta y solo con dirty === false. NO es la resolución de
+@@ -773,12 +849,16 @@
+     throw new ErrorDb('io', `no se pudo releer la base de datos (${d.motivo})`,
+       { noVerificable: true, estadoDisco: d.estado });
+   }
++  const deCommit = cMem;
+   try { db.close(); } catch (e) {}
+   db = new SQLjs.Database(d.bytes);
+   ultimaImagenConfirmada = Buffer.from(d.bytes);
+   cMem = d.C; pMem = d.P; hMem = d.H; gMem = d.gen; fMio = d.F;
+   try { const s = fs.statSync(dbFilePath); sMio = { mtimeMs: s.mtimeMs, size: s.size }; } catch (e) {}
+   dirty = false;
++  // ADOPCIÓN REAL de otra versión: este es el camino que puede traer la BD de
++  // otro equipo, con otra sal y otro verificador.
++  notificarImagen(deCommit, 'recarga');
+   return true;
+ }
+ 
+@@ -939,6 +1019,10 @@
+       logA33('se detecta una adopción A3.3 interrumpida: la BD legada sigue siendo válida');
+     }
+   }
++  // Carga inicial: la imagen pasa de "ninguna" a una concreta. Con una BD
++  // legada (sin db_commit_id) cMem sigue siendo null aquí y el aviso llega
++  // luego, en el bootstrap.
++  notificarImagen(null, 'apertura');
+ 
+   // ==========================================================================
+   // PRIMERA APERTURA — TODO bajo la MISMA frontera PRE/POST-confirmación.
+@@ -1108,9 +1192,11 @@
+     escribirAtomico(dbFilePath, buf, { writer: wYo, commit: c, intento: intentoDeCreacion });
+ 
+     confirmado = true;               // <<<< PUNTO DE CONFIRMACIÓN
++    const deBootstrap = cMem;
+     cMem = c; pMem = null; hMem = [c]; gMem = 1;
+     ultimaImagenConfirmada = buf;
+     fMio = sha256(buf);
++    notificarImagen(deBootstrap, 'bootstrap');
+ 
+     // El marcador ya cumplió su función. Se retira para que el estado ESTABLE
+     // del commit raíz sea un testigo normal. Si esto falla o el proceso muere
+@@ -1200,6 +1286,7 @@
+       //    la imagen que había en disco al abrir.
+       if (dirty && imagenOriginalEnDisco) {
+         try {
++          const deReversion = cMem;
+           try { db.close(); } catch (e2) {}
+           db = new SQLjs.Database(Buffer.from(imagenOriginalEnDisco));
+           const m = leerMetaMemoria();
+@@ -1207,6 +1294,7 @@
+           ultimaImagenConfirmada = Buffer.from(imagenOriginalEnDisco);
+           fMio = sha256(imagenOriginalEnDisco);
+           dirty = false;
++          notificarImagen(deReversion, 'reversion-bootstrap');
+         } catch (e2) {
+           bloquearEscrituras('desincronizada');
+           throw new ErrorDb('io',
+@@ -1379,6 +1467,7 @@
+   // ================ POST-CONFIRMACIÓN: JAMÁS restaurar ====================
+   try {
+     const s = fs.statSync(dbFilePath);
++    const deCommit = cMem;
+     ultimaImagenConfirmada = buf;
+     pMem = cMem;
+     cMem = o._cNuevo;
+@@ -1387,6 +1476,7 @@
+     fMio = sha256(buf);
+     sMio = { mtimeMs: s.mtimeMs, size: s.size };
+     dirty = false;
++    notificarImagen(deCommit, 'commit-propio');
+   } catch (e) {
+     const rehecho = rehacerBookkeepingDesdeDisco(o._cNuevo, buf);
+     if (rehecho.ok) {
+@@ -1394,9 +1484,12 @@
+       return lastId;
+     }
+     bloquearEscrituras('desincronizada');
++    // `commit` viaja en el error: quien consolidó necesita saber QUÉ commit
++    // quedó confirmado para poder dejar constancia de ello fuera de la base de
++    // datos (el journal del re-cifrado) sin volver a escribir en ella.
+     throw new ErrorDb('io-tras-confirmar',
+       `el cambio SÍ se guardó, pero no se ha podido verificar: ${e.message}. NO repitas la operación.`,
+-      { aplicado: true, reclasificado: rehecho.reclasificado || null });
++      { aplicado: true, commit: o._cNuevo, reclasificado: rehecho.reclasificado || null });
+   }
+   return lastId;
+ }
+@@ -1414,10 +1507,14 @@
+     return { ok: false, reclasificado: decision };
+   }
+   if (d.F !== sha256(bufEscrito)) return { ok: false, reclasificado: { tipo: 'conflicto', caso: 8 } };
++  const deCommit = cMem;
+   ultimaImagenConfirmada = bufEscrito;
+   cMem = d.C; pMem = d.P; hMem = d.H; gMem = d.gen; fMio = d.F;
+   try { const s = fs.statSync(dbFilePath); sMio = { mtimeMs: s.mtimeMs, size: s.size }; } catch (e) {}
+   dirty = false;
++  // Es NUESTRO commit: los ids coinciden (comprobado arriba) y los bytes
++  // también. No es una adopción ajena.
++  notificarImagen(deCommit, 'commit-propio');
+   return { ok: true };
+ }
+ 
+@@ -1451,13 +1548,44 @@
+ // A3.3 — varias sentencias, UNA sola imagen, UN commit, UNA persistencia.
+ // El mecanismo entra ya en este bloque; sus consumidores (deleteProjectById,
+ // la consolidación de meta del rekey) NO se cablean hasta el bloque siguiente.
+-function escribirMultiple(sentencias) {
++function escribirMultiple(sentencias, opts) {
++  const o = opts || {};
++  const base = o.exigirCommitBase || null;
++
++  // --- 1. latch --------------------------------------------------------------
+   if (escrituraBloqueada) {
+     throw new ErrorDb('bloqueado', `escrituras bloqueadas: ${escrituraBloqueada}`, { latch: escrituraBloqueada });
+   }
+ 
++  // --- 2. exclusiva de operación --------------------------------------------
++  // Mientras dura, SOLO escribe quien la tomó. Todo lo demás de este proceso
++  // (tema, geometría de ventanas, vacuum, guardados, borrados) se queda fuera.
++  if (exclusiva && o.token !== exclusiva.token) {
++    throw new ErrorDb('ocupado',
++      `hay una operación exclusiva en curso ('${exclusiva.etiqueta}'): esta escritura no puede entrar ahora`,
++      { operacion: exclusiva.etiqueta });
++  }
++
++  // --- 3. la base tiene que seguir siendo la que la operación declaró --------
++  // Con `exigirCommitBase`, "el disco avanzó" NUNCA es motivo para reintentar:
++  // es motivo para rechazar. Una operación que empezó sobre X no consolida
++  // sobre Y, ni aunque Y sea descendiente legítimo de X.
++  if (base && cMem !== base) {
++    throw new ErrorDb('base-cambiada',
++      `la base de datos ya no está en el commit sobre el que empezó la operación`,
++      { aplicado: false, base, actual: cMem });
++  }
++
+   let posible = comprobarEscrituraPosible();
+ 
++  // --- 5. descendencia lineal: con base exigida NO se adopta -----------------
++  if (base && !posible.ok && posible.decision && posible.decision.tipo === 'recarga') {
++    logA33('descendencia lineal detectada con base exigida: se RECHAZA en vez de adoptar');
++    throw new ErrorDb('base-cambiada',
++      'otro equipo publicó una versión nueva mientras duraba la operación',
++      { aplicado: false, base, actual: cMem, decision: 'recarga' });
++  }
++
+   // Descendencia lineal estricta: NO es conflicto. Se adopta y se reclasifica.
+   if (!posible.ok && posible.decision && posible.decision.tipo === 'recarga') {
+     logA33('recarga silenciosa por descendencia lineal: ' + posible.decision.motivo);
+@@ -1501,6 +1629,13 @@
+   const preservarTestigo = !!(posible.decision
+     && posible.decision.tipo === 'reparar-gen' && posible.decision.caso === 2);
+ 
++  // --- 7. invariante: nada del paso 4 debe haber movido la imagen -----------
++  if (base && cMem !== base) {
++    throw new ErrorDb('base-cambiada',
++      'la base cambió durante la comprobación previa a confirmar',
++      { aplicado: false, base, actual: cMem, invariante: true });
++  }
++
+   return aplicarYConfirmar(sentencias, { preservarTestigo });
+ }
+ 
+@@ -1545,6 +1680,13 @@
+   setPoliticaUbicacion,
+   setInstallationId,
+   pareceUbicacionNueva,
++  // --- Bloque 3: primitivas para operaciones archivo+BD (Seguridad/A1) ------
++  // `tomarExclusiva`/`soltarExclusiva` NO son latches: ver el comentario junto
++  // a su definición. `alCambiarImagenEnMemoria` avisa de toda adopción.
++  tomarExclusiva,
++  soltarExclusiva,
++  estadoExclusiva,
++  alCambiarImagenEnMemoria,
+   // --- Bloque 2: lo único que main.js necesita leer de A3.3 -----------------
+   // Se exponen como API pública (no con prefijo `_`) porque las usa el
+   // registro local de ubicaciones inicializadas, que es código de producción.
+@@ -1600,6 +1742,8 @@
+   _resetParaPruebas: () => {
+     _fallarEn = null;
+     _ganchoPrueba = null;
++    _alCambiarImagen = null;
++    exclusiva = null;
+     try { if (db) db.close(); } catch (e) {}
+     db = null; dbFilePath = null; genFilePath = null; dirty = false;
+     cMem = null; pMem = null; hMem = []; gMem = 0; fMio = null; sMio = null;

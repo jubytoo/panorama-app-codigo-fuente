@@ -1,0 +1,20 @@
+﻿'use strict';
+const fs=require('fs'),path=require('path');
+const PROJ='C:\\Codigo Fuente PS\\panorama-app-codigo-fuente_1';
+const initSqlJs=require(path.join(PROJ,'node_modules','sql.js'));
+const UD=process.argv[2];
+initSqlJs({wasmBinary:fs.readFileSync(path.join(PROJ,'node_modules','sql.js','dist','sql-wasm.wasm'))}).then(SQL=>{
+  const d=new SQL.Database(fs.readFileSync(path.join(UD,'panorama.sqlite3')));
+  const n=d.exec("SELECT COUNT(*) FROM projects WHERE name LIKE 'LEGADO-%'")[0].values[0][0];
+  const c=d.exec("SELECT value FROM app_meta WHERE key='db_commit_id'")[0].values[0][0];
+  const t=d.exec("SELECT value FROM app_meta WHERE key='app_theme'")[0].values[0][0];
+  const g=JSON.parse(fs.readFileSync(path.join(UD,'panorama.sqlite3.gen'),'utf8'));
+  console.log('--- adopcion de la BD legada en la app REAL ---');
+  console.log('  proyectos legados conservados : '+n+' de 3');
+  console.log('  app_theme conservado          : '+t);
+  console.log('  recibio db_commit_id          : '+String(c).slice(0,16)+'...');
+  console.log('  .gen coherente con la BD      : '+(g.commit_id===c));
+  console.log('  el .gen es RAIZ (parent nulo) : '+(g.parent_commit_id===null));
+  console.log('  integrity_check               : '+d.exec('PRAGMA integrity_check')[0].values[0][0]);
+  d.close();
+});

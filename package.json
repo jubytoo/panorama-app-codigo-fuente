@@ -1,0 +1,86 @@
+{
+  "name": "panorama-app",
+  "version": "2.0.55",
+  "description": "Prototipo: Panorama del Servicio como aplicación de escritorio (Electron + SQLite), multi-proyecto.",
+  "main": "main.js",
+  "author": "",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win nsis",
+    "dist:linux": "electron-builder --linux AppImage"
+  },
+  "devDependencies": {
+    "electron": "^30.5.1",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.panorama.servicio.desktop",
+    "productName": "Panorama del Servicio",
+    "publish": null,
+    "directories": {
+      "output": "dist_build"
+    },
+    "files": [
+      "main.js",
+      "db.js",
+      "security.js",
+      "preload.js",
+      "preload-launcher.js",
+      "preload-security.js",
+      "preload-password-prompt.js",
+      "preload-backup-picker.js",
+      "launcher/**/*",
+      "security-window/**/*",
+      "backup-picker/**/*",
+      "dashboard/**/*",
+      "directorio/**/*",
+      "preparacion-reunion/**/*",
+      "evaluacion-candidatos/**/*",
+      "vendor/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "claude/Restaurar-backup.bat",
+        "to": "Restaurar-backup.bat"
+      },
+      {
+        "from": "drive-sync-guard/DriveSyncGuard.ps1",
+        "to": "drive-sync-guard/DriveSyncGuard.ps1"
+      },
+      {
+        "from": "drive-sync-guard/LaunchHidden.vbs",
+        "to": "drive-sync-guard/LaunchHidden.vbs"
+      }
+    ],
+    "icon": "assets/icon.png",
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": false,
+      "createStartMenuShortcut": true,
+      "include": "build/installer.nsh",
+      "artifactName": "PanoramaDelServicio-Instalador-${version}.${ext}"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "icon": "assets/icon.png"
+    }
+  },
+  "dependencies": {
+    "sql.js": "^1.14.2"
+  }
+}

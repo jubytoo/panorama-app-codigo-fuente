@@ -1,0 +1,102 @@
+ENSAYO AISLADO A3.3 — coste y compatibilidad de fsync / stat / hash
+fecha: 2026-09-13T22:32:29.563Z
+runtime: node 20.16.0 (Electron 30.5.1) arm64 — el mismo que usa la aplicacion
+equipo: Snapdragon(R) X 10-core X1P64100 @ 3.40 GHz x10
+
+ADVERTENCIA: este ensayo mide COSTE y COMPATIBILIDAD.
+NO demuestra durabilidad ante un corte de alimentacion. Eso no es
+comprobable por software desde el propio proceso.
+
+==============================================================================
+UBICACION: DISCO LOCAL (NVMe, %TEMP%)
+  ruta: C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_bench-a33-local
+  iteraciones: 1000
+==============================================================================
+
+COMPATIBILIDAD fsync: SI, soportado
+SINCRONIZAR EL DIRECTORIO: NO -> EPERM
+
+--- tamano de base de datos: 76 KB ---
+  operacion                  n     media   p50     p95     p99      max    
+  -------------------------  ----  ------  ------  ------  -------  -------
+  stat del .sqlite3          1000  0.0824  0.0705  0.1439  0.2242   0.7853 
+  leer .gen (~250 B)         1000  0.1565  0.1202  0.218   0.6186   11.3386
+  sha256 en memoria (76 KB)  1000  0.0524  0.0443  0.0818  0.1083   2.6289 
+  leer .sqlite3 + sha256     1000  4.5087  4.1847  7.0881  8.9409   11.3636
+  escribir .gen SIN fsync    1000  0.7986  0.7274  1.2514  1.4542   8.6606 
+  escribir .gen CON fsync    1000  5.9367  5.0467  11.176  15.6334  30.388 
+  escribir BD SIN fsync      1000  0.7338  0.6792  1.1833  1.4438   4.1079 
+  escribir BD CON fsync      1000  4.2035  3.2662  9.2577  11.8132  26.0496
+  CICLO run() SIN fsync      1000  1.653   1.5337  2.5793  3.4169   6.2949 
+  CICLO run() CON fsync      1000  11.087  9.8582  17.443  22.2044  33.3282
+  >> SOBRECOSTE del fsync por escritura: 9.434 ms de media, 14.864 ms en p95
+
+--- tamano de base de datos: 256 KB ---
+  operacion                   n     media    p50      p95      p99      max    
+  --------------------------  ----  -------  -------  -------  -------  -------
+  stat del .sqlite3           1000  0.1036   0.0931   0.182    0.2761   0.5935 
+  leer .gen (~250 B)          1000  0.2085   0.1587   0.2996   1.1809   10.226 
+  sha256 en memoria (256 KB)  1000  0.2019   0.1865   0.3444   0.4648   2.0814 
+  leer .sqlite3 + sha256      1000  5.5305   5.1077   9.237    12.2068  14.3921
+  escribir .gen SIN fsync     1000  0.9563   0.8987   1.4902   1.9116   3.1235 
+  escribir .gen CON fsync     1000  7.0672   5.3956   12.5905  18.609   21.989 
+  escribir BD SIN fsync       1000  0.9982   0.9141   1.538    1.8945   26.1332
+  escribir BD CON fsync       1000  7.5917   8.0052   12.4887  15.3357  40.9857
+  CICLO run() SIN fsync       1000  2.1949   2.0619   3.5097   4.4216   5.8503 
+  CICLO run() CON fsync       1000  16.0941  15.9458  23.1789  26.8937  67.5569
+  >> SOBRECOSTE del fsync por escritura: 13.899 ms de media, 19.669 ms en p95
+
+--- tamano de base de datos: 1024 KB ---
+  operacion                    n     media    p50      p95      p99      max    
+  ---------------------------  ----  -------  -------  -------  -------  -------
+  stat del .sqlite3            1000  0.1473   0.1214   0.2677   0.4158   8.0532 
+  leer .gen (~250 B)           1000  0.2628   0.2001   0.4165   0.8322   8.743  
+  sha256 en memoria (1024 KB)  1000  1.0642   0.882    2.0682   2.7083   6.5568 
+  leer .sqlite3 + sha256       1000  6.8373   6.0836   12.1601  14.7738  19.4958
+  escribir .gen SIN fsync      1000  1.2382   1.1083   2.0897   2.603    5.0472 
+  escribir .gen CON fsync      1000  7.0778   5.8519   12.6381  17.0223  33.7343
+  escribir BD SIN fsync        1000  1.8833   1.6822   3.199    4.6176   9.5429 
+  escribir BD CON fsync        1000  13.6558  12.5305  21.0428  28.3253  48.8543
+  CICLO run() SIN fsync        1000  4.5271   3.8279   8.9561   12.0555  18.9143
+  CICLO run() CON fsync        1000  22.8981  22.2813  32.3891  40.5488  63.7455
+  >> SOBRECOSTE del fsync por escritura: 18.371 ms de media, 23.433 ms en p95
+
+==============================================================================
+UBICACION: GOOGLE DRIVE (G:, sistema de archivos en modo usuario)
+  ruta: G:\Mi unidad\_bench-a33-tmp
+  iteraciones: 200
+==============================================================================
+
+COMPATIBILIDAD fsync: SI, soportado
+SINCRONIZAR EL DIRECTORIO: NO -> EPERM
+
+--- tamano de base de datos: 76 KB ---
+  operacion                  n    media    p50      p95       p99       max     
+  -------------------------  ---  -------  -------  --------  --------  --------
+  stat del .sqlite3          200  0.4841   0.3042   1.0058    3.8738    5.2189  
+  leer .gen (~250 B)         200  3.784    3.1124   7.5074    11.0848   14.6069 
+  sha256 en memoria (76 KB)  200  0.164    0.1094   0.2135    2.638     3.3394  
+  leer .sqlite3 + sha256     200  17.732   16.7478  26.5914   37.0157   49.4065 
+  escribir .gen SIN fsync    200  23.0644  19.5808  52.7753   71.6359   82.6921 
+  escribir .gen CON fsync    200  24.0418  20.7763  50.6578   79.7474   85.8519 
+  escribir BD SIN fsync      200  25.4941  20.984   54.5011   74.5155   94.5329 
+  escribir BD CON fsync      200  26.2296  21.6014  54.0477   77.0683   166.571 
+  CICLO run() SIN fsync      200  52.2892  47.1455  98.7298   124.0705  142.9219
+  CICLO run() CON fsync      200  53.0766  48.293   103.0545  110.5148  117.1104
+  >> SOBRECOSTE del fsync por escritura: 0.787 ms de media, 4.325 ms en p95
+
+==============================================================================
+RESUMEN DE COMPATIBILIDAD
+==============================================================================
+  DISCO LOCAL (NVMe, %TEMP%)
+     fsync del archivo:     SOPORTADO
+     fsync del directorio:  NO -> EPERM
+  GOOGLE DRIVE (G:, sistema de archivos en modo usuario)
+     fsync del archivo:     SOPORTADO
+     fsync del directorio:  NO -> EPERM
+
+  fallos de fsync durante la medicion: 0
+
+LIMPIEZA
+  borrado: C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_bench-a33-local  -> existe todavia: false
+  borrado: G:\Mi unidad\_bench-a33-tmp  -> existe todavia: false

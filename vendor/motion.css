@@ -1,0 +1,128 @@
+/* v2.0.29 — FASE 3: transiciones y movimiento en toda la app.
+   Hoja compartida por las 7 ventanas (mismo patrón que vendor/theme.js y
+   vendor/fonts/fonts.css: una sola fuente, cargada por <link> en cada
+   plantilla). No define colores ni tamaños — solo transiciones/animaciones
+   aditivas, para no pelear con el CSS propio de cada ventana.
+
+   Qué hace:
+   1) Entrada suave (fundido + escala) al pintarse cada ventana la primera
+      vez -- antes aparecían de golpe, sin transición ninguna.
+   2) Micro-interacción de hover en botones (.btn) y tarjetas (.card,
+      usadas en el launcher y en Evaluación de Candidatos) -- antes los
+      estados :hover ya existentes (color, filter...) cambiaban de golpe,
+      sin `transition`.
+   3) Los colores del tema (--bg/--surface/--ink/--cyan/...) ahora hacen
+      fundido al cambiar el tema global (Fase 2) en vez de saltar de golpe.
+   4) Una animación de entrada reutilizable (app-tab-in) para vistas/
+      pestañas que aparecen dentro de una misma ventana (los 3 tabs de
+      Evaluación de Candidatos, el toggle Directorio/Partes mensuales de
+      Directorio de Talento) -- antes aparecían con display:none->block
+      instantáneo.
+
+   Respeta prefers-reduced-motion: si el sistema lo pide, se anulan todas
+   las animaciones/transiciones de este archivo (y de hecho de toda la
+   ventana, vía el bloque universal de abajo) sin necesidad de que cada
+   ventana lo compruebe por su cuenta. */
+
+/* v2.0.32: se quitó de aquí la animación de entrada declarativa
+   (`body { animation: app-window-in .16s ease-out both; }`) porque nunca se
+   veía en la práctica (arrancaba y terminaba mientras la ventana seguía
+   oculta con show:false). Se sustituyó por vendor/entrance.js, un sistema
+   de entrada/salida animada enganchado a document.visibilitychange.
+
+   v2.0.34: vendor/entrance.js se ELIMINA por completo. En pruebas reales
+   sobre Windows (no reproducibles en el sandbox Xvfb+CDP de aquí) se vio
+   que esa animación se renderizaba mal -- un parpadeo negro y la ventana
+   apareciendo "desde abajo" en vez de un fundido, y el usuario lo reportó
+   como "horroroso". No hay ninguna animación de entrada/salida de ventana
+   en su lugar: las ventanas vuelven a mostrarse/ocultarse al instante,
+   como antes de la v2.0.32. */
+
+@keyframes app-tab-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes app-feedback-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+/* Clase de ayuda para mensajes de aviso/error puntuales (io-feedback,
+   status...) que quieran una entrada animada en vez de aparecer de golpe.
+   Se añade/quita por JS en el momento de mostrar el mensaje -- ver
+   dashboard/directorio (showIOFeedback). */
+.motion-flash {
+  animation: app-feedback-in .22s ease-out;
+}
+
+/* Botones: en las 7 ventanas ya existía algún cambio en :hover (color,
+   filter, border-color...) pero sin `transition`, así que saltaba de
+   golpe. Se añade la transición y un ligero levantamiento -- sin pisar
+   ninguna propiedad que ya se estuviera animando (transform no se usaba
+   en :hover en ninguna ventana; sí en :active en un par de sitios, que se
+   deja intacto porque va después en la cascada de cada plantilla).
+   OJO: `transition` es una propiedad shorthand -- si dos reglas con la
+   MISMA especificidad la declaran por separado sobre el mismo selector, la
+   que va después en el archivo gana ENTERA, no se combinan. Por eso todo
+   lo que necesita .btn (hover + el fundido de color del tema) va en esta
+   única declaración, no repartido en dos reglas distintas más abajo. */
+.btn {
+  transition: transform .12s ease, box-shadow .12s ease, filter .12s ease,
+    border-color .2s ease, background-color .2s ease, color .2s ease,
+    opacity .12s ease;
+}
+.btn:hover {
+  transform: translateY(-1px);
+}
+.btn:disabled,
+.btn[disabled] {
+  transform: none;
+}
+
+/* Tarjetas clicables (launcher: tarjetas de proyecto: .card; Evaluación de
+   Candidatos: tarjetas de puesto/evaluación: .card). Dashboard/Directorio
+   usan .panel para bloques de contenido grandes y estáticos (no son
+   "tarjetas" clicables individuales), así que .panel se deja fuera a
+   propósito -- levantar un bloque entero de contenido al pasar el ratón
+   por encima quedaría raro, no es ese tipo de elemento. Mismo motivo que
+   arriba: todas las transiciones de .card van juntas en una sola regla. */
+.card {
+  transition: transform .14s ease, box-shadow .14s ease,
+    background-color .2s ease, border-color .2s ease, color .2s ease;
+}
+.card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .14);
+}
+/* El launcher ya usa transform en .card.dragging (arrastrar para
+   reordenar) -- no se toca ese caso, .dragging sigue ganando por ir
+   después en la cascada del propio launcher/index.html. */
+.card.dragging:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+/* Cambio de tema (Fase 2) con fundido en vez de salto de color, para el
+   resto de contenedores que NO tienen ya su propia declaración de
+   `transition` arriba (.btn/.card quedan fuera de esta lista a propósito,
+   por el motivo shorthand explicado arriba -- ya la tienen incluida en la
+   suya). Solo propiedades de color -- sin impacto de layout/rendimiento.
+   Los selectores que no existan en una ventana concreta simplemente no
+   coinciden con nada ahí. */
+body, .panel, header, nav, .modal, .titlebar, .menubar,
+.menu-dropdown, input, select, textarea {
+  transition: background-color .2s ease, border-color .2s ease, color .2s ease;
+}
+
+/* Respeta la preferencia de accesibilidad del sistema operativo: si el
+   usuario pidió reducir el movimiento, se anula TODA animación/transición
+   de la ventana (no solo las de este archivo) -- más robusto que comprobar
+   la preferencia desde cada ventana por separado. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

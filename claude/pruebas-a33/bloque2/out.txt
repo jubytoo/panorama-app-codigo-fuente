@@ -1,0 +1,302 @@
+RUTAS DE PRUEBA
+  raíz:                C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS
+  ubicación real det.: (no configurada)
+  por defecto:         C:\Users\admin.jlopezr\AppData\Roaming\panorama-app
+  OK    los 10 bloques de main.js se extraen sin reescribirse
+
+=== F. POLÍTICA DE UBICACIÓN ===
+  OK    carpeta por defecto -> local
+  OK    [G:\Mi unidad\BD-PanoramaServicio] -> compartida
+  OK    [C:\Users\x\Google Drive\datos] -> compartida
+  OK    [C:\Users\x\OneDrive\Panorama] -> compartida
+  OK    [C:\Users\x\Dropbox\Panorama] -> compartida
+  OK    [\\servidor\recurso\panorama] -> compartida
+  OK    [D:\DatosPanorama] -> desconocida
+  OK    [C:\otra\carpeta] -> desconocida
+  OK    personalizada marcada shared:true -> compartida
+  OK    personalizada con FALLO (fallback a por defecto) -> local
+  OK    NINGUNA personalizada se clasifica como local
+  OK    COMPARTIDA verifica por BYTES: detecta el caso 8
+  OK       ...y la fila externa sobrevive
+
+=== A. INSTALACIÓN NUEVA REAL (ubicación local nunca inicializada) ===
+  OK    A) ubicación nunca registrada -> main AUTORIZA
+  OK       se crea la base de datos
+  OK       queda marcada localmente como inicializada
+  OK       el registro guarda el primer commit
+  OK       el segundo arranque YA NO autoriza por ser nueva
+  OK       ...y aun así abre con normalidad
+
+=== B. DESAPARICIÓN POSTERIOR (obligatoria) ===
+  OK    B) preparación: la ubicación consta como inicializada
+  OK       la carpeta queda COMPLETAMENTE vacía
+  OK       main.js NO autoriza una nueva
+  OK       ...y lo dice por el motivo correcto
+  OK       getDb() no crea nada
+  OK       CERO nueva base de datos
+  OK       la carpeta sigue vacía
+
+=== C. CUSTOM NUEVA (el usuario elige "empezar desde cero") ===
+  OK    C) custom sin elección del usuario -> NO autoriza
+  OK       con "empezar desde cero" -> SÍ autoriza
+  OK       db.js valida y crea
+  OK    C2) main.js autoriza
+  OK       pero db.js VETA (hay restos ajenos)
+  OK       no se creó nada
+
+=== D. CUSTOM PREVIAMENTE USADA ===
+  OK    D) la carpeta parece limpia
+  OK       NO se autoriza creación automática
+  OK       el motivo es que ya estuvo inicializada
+
+=== E. DRIVE NO DISPONIBLE ===
+  OK    E) archivo ausente -> "no-visible"
+  OK       archivo presente -> "visible"
+  OK       EIO -> "no-accesible", NO "no-visible"
+  OK       (existsSync habría dicho false y lo habría confundido)
+  OK    E2) custom sin BD y sin elección -> NO autoriza
+  OK       getDb() no crea y no lo trata como conflicto
+  OK       CERO nueva base de datos
+
+=== G. B2 — FAIL-STOP CONECTADO AL LATCH ===
+  OK    G) preparación: se puede escribir
+  OK       el wiring existe en main.js y llama a bloquearEscrituras
+  OK       el latch quedó en comprometido
+  OK       run() BLOQUEADO
+  OK       escribirMultiple() BLOQUEADO
+  OK       vacuum() BLOQUEADO
+  OK       setMeta vía run() BLOQUEADO
+  OK       el .sqlite3 no cambió
+  OK       levantar el latch se RECHAZA
+  OK       y no se puede sustituir por otro motivo
+
+=== N. MAQUINA DE ESTADOS DURABLE DE LA UBICACION ===
+  OK    N1) sin registro -> autoriza
+  OK       se persiste "inicializando" y se verifica
+  OK       el estado releído es "inicializando"
+  OK       con su nonce de intento
+  OK       transición a "inicializada"
+  OK       estado final "inicializada"
+  OK       con el commit confirmado
+  OK    N2) fallo al guardar "inicializando" -> ok:false
+  OK       NO se llama a la creación (main.js aborta antes)
+  OK       CERO bytes en la carpeta de datos
+  OK    N3) preparación: "inicializando" persistido
+  OK       la transición FALLA
+  OK       NO hay rollback: la SQLite sigue intacta
+  OK       (main.js no continúa: cierra con PS-1018)
+  OK       el reinicio ve "inicializando"
+  OK       ...y NO "sin registro"
+  OK       al reabrir, la transición se completa
+  OK       estado final "inicializada"
+  OK       y ya NUNCA vuelve a autorizar otra BD vacía
+  OK    N4) main persiste "inicializando"
+  OK       db.js registra su intención con EL MISMO nonce
+  OK       la base de datos se crea
+  OK       db.js YA RETIRÓ su intención de creación
+  OK       main sigue en "inicializando"
+  OK       la carpeta queda COMPLETAMENTE vacía
+  OK       decidirCrearSiAusente().crear === FALSE
+  OK       ...y el motivo es que db.js no tiene intención viva
+  OK       NO aparece ninguna panorama.sqlite3 nueva
+  OK       la carpeta sigue vacía
+  OK       getDb() no crea nada aunque se le insista
+  OK       el estado sigue siendo "inicializando"
+  OK       con EL MISMO nonce, sin generar uno nuevo
+  OK    N5) corte en el rename del registro: la operación falla
+  OK       el JSON anterior sigue válido
+  OK       ...con el mismo SHA-256
+  OK       la ubicación A no se perdió
+  OK       y B no quedó a medias
+  OK       no quedan temporales del registro
+  OK    N6) fsync EIO -> la operación FALLA
+  OK       NO se considera persistida
+  OK       el mensaje menciona fsync
+  OK    N7) fsync EINVAL -> se acepta como "no soportado"
+  OK       y el estado sí queda registrado
+  OK    N7) fsync ENOSYS -> se acepta como "no soportado"
+  OK       y el estado sí queda registrado
+  OK    N7) fsync ENOTSUP -> se acepta como "no soportado"
+  OK       y el estado sí queda registrado
+  OK    N7) fsync EOPNOTSUPP -> se acepta como "no soportado"
+  OK       y el estado sí queda registrado
+  OK    N8) estado "inicializando" con SQLite válida
+  OK       se convierte a "inicializada"
+  OK       guardando el commit confirmado
+  OK    N9) la intención de db.js queda vinculada al nonce de main.js
+  OK       hay restos de db.js
+  OK       db.js conserva su intención vigente
+  OK       se REANUDA el mismo intento
+  OK       ...y los dos nonces COINCIDEN de verdad
+  OK       y la creación se completa
+  OK    N10) restos no demostrables -> NO se reanuda a ciegas
+  OK       el motivo es que db.js no tiene intención viva
+  OK       y no se crea nada
+  OK       el resto ajeno sigue intacto
+  OK    el formato antiguo {inicializada:true} se lee como "inicializada"
+  OK       y sigue bloqueando la creación
+
+=== P. VINCULACION REAL ENTRE EL INTENTO DE main.js Y EL DE db.js ===
+  OK    P1) los dos nonces COINCIDEN en los datos
+  OK       se permite reanudar
+  OK       con ese mismo intento
+  OK       y la creación se completa
+  OK    P2) nonce de db.js distinto -> NO se reanuda
+  OK       se identifica como no vinculada
+  OK       y no se crea nada
+  OK    P3) intención de OTRO writer -> NO se reanuda
+  OK       y no se crea nada
+  OK    P4) sin intención de db.js -> NO se reanuda
+  OK       se identifica como "db.js no tiene intención viva"
+  OK       y no se crea nada
+  OK    P5) tras confirmar, db.js retiró su intención
+  OK       carpeta vacía tras creación confirmada -> NO crear
+  OK       y no aparece ninguna BD nueva
+  OK    el wiring de main.js registra la intención de db.js con SU nonce
+  OK       y aborta si el identificador no coincide
+
+=== Q. ACTUALIZACION DESDE VERSION ANTERIOR vs PRIMERA CREACION ===
+  OK    Q1) preparación: no hay registro local
+  OK       ...y la BD legada es visible
+  OK       decidirCrearSiAusente().crear === FALSE
+  OK       ...porque la BD es visible, no por el registro
+  OK       NO se escribió estado "inicializando"
+  OK       NO se creó intención de primera creación en db.js
+  OK       getDb() abre y adopta la existente
+  OK       los 4 proyectos valiosos sobreviven
+  OK       app_meta se conserva
+  OK       después queda "inicializada" directamente
+  OK       ...sin haber pasado nunca por "inicializando"
+  OK    Q2) sin registro local pero con BD A3.3
+  OK       crear === FALSE
+  OK       CERO intención de creación
+  OK       abre normalmente
+  OK       conserva el commit original
+  OK       y su fila
+  OK    Q3) custom compartida, sin registro local, con BD existente
+  OK       NO se trata como ubicación nueva
+  OK       CERO intención de primera creación
+  OK       se abre y adopta
+  OK       los 3 proyectos sobreviven
+  OK       el archivo cambió porque se adoptó (esperado)
+  OK       después queda registrada como inicializada
+  OK    Q4) no hubo permiso de crear
+  OK       ...y pide registrar que la ubicación ya tiene base de datos
+  OK       se persiste "detectada-existente"
+  OK       ...y se relee como tal
+  OK       SIN nonce de creación
+  OK       y SIN intención de creación en db.js
+  OK       la BD sigue intacta
+  OK       la carpeta queda vacía
+  OK       decidirCrearSiAusente().crear === FALSE
+  OK       ...identificado como desaparición de una BD ya observada
+  OK       NO aparece ninguna panorama.sqlite3 nueva
+  OK       el estado sigue recordando que esa ruta tuvo una BD
+  OK    Q5) la BD es demostrablemente NO visible
+  OK       sigue autorizando la creación
+  OK       y el motivo menciona la ausencia demostrada
+  OK       el nonce compartido se mantiene
+  OK       y se crea
+  OK    Q6) lectura EIO -> NO crear
+  OK       se identifica como no accesible
+  OK       CERO marcas de inicialización
+  OK       la BD sigue en su sitio
+  OK    Q7) custom legada sin PS-1009: NO crear
+  OK       se abre/adopta igualmente
+  OK       con sus 5 proyectos
+  OK       sin haber necesitado "empezar desde cero"
+
+=== R. DETECTADA-EXISTENTE: la ventana entre ver la BD y registrarla ===
+  OK    R1) la decisión pide registrar la existente
+  OK       decidirCrearSiAusente() NO escribió nada por sí sola
+  OK       la marca se persiste y se verifica
+  OK       NO se creó ninguna intención de creación
+  OK    R2) la marca falla
+  OK       el wiring cierra con PS-1019 sin abrir la BD
+  OK       el SHA de la BD sigue intacto
+  OK       no hay .gen (no se abrió)
+  OK    R3) con la BD visible, sigue sin autorizar crear
+  OK       y ya no pide re-registrar (la marca existe)
+  OK       se abre y adopta
+  OK       con sus 3 proyectos
+  OK       transición a "inicializada"
+  OK       con el commit confirmado
+  OK    R4) BD desaparecida tras haberla visto -> NO crear
+  OK       identificado como desaparición
+  OK       no se crea nada
+  OK       el estado se conserva
+  OK    R5) EIO tras la marca -> NO crear
+  OK       la BD sigue en su sitio
+  OK       el estado se conserva
+  OK    R6) la adopción falla
+  OK       la BD legada sigue intacta
+  OK       el estado NO vuelve a "sin registro"
+  OK       y sigue sin autorizar crear
+  OK    R7) transición a inicializada
+  OK       con el commit confirmado
+  OK       los 4 proyectos sobreviven
+  OK       y nunca hubo intención de creación
+  OK    R8) política compartida
+  OK       NO crear, y pide registrar la existente
+  OK       marca persistida
+  OK       tras desaparecer en G:, NO se crea nada
+  OK       y no aparece ninguna BD
+  OK    el wiring persiste "detectada-existente" ANTES de getDb
+  OK       y NO registra intención de creación en ese camino
+
+=== PRODUCCIÓN NO TOCADA ===
+  antes:   {"existe":true,"sha":"f71f4140e7fd68504cbf65c1d930bc4a244554d7bfb013a70557a30ccf74f501","size":57344,"mtimeMs":178790455
+  después: {"existe":true,"sha":"f71f4140e7fd68504cbf65c1d930bc4a244554d7bfb013a70557a30ccf74f501","size":57344,"mtimeMs":178790455
+  OK    %APPDATA%\panorama-app sin cambios
+  OK    todas las rutas usadas bajo la marca de pruebas
+
+  RUTAS USADAS (44):
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c1-politica-compartida-bytes
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c2-A-nueva
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c3-B-desaparicion
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c4-C-custom-nueva
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c5-C2-db-veta
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c6-D-custom-usada
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c7-E-drive-caido
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c8-E2-no-verificable
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c9-G-b2
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c10-N1-creacion
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c11-N2-fallo-inicializando
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c12-N3-falla-transicion
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c13-N4-hueco
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c14-N5-uno
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c15-N5-dos
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c16-N6-fsync-eio
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c17-N7-EINVAL
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c18-N7-ENOSYS
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c19-N7-ENOTSUP
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c20-N7-EOPNOTSUPP
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c21-N8-recuperacion
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c22-N9-reanudar
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c23-N10-fail-closed
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c24-N-compat-formato-viejo
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c25-P1-vinculadas
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c26-P2-otro-nonce
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c27-P3-otro-writer
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c28-P4-sin-intencion
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c29-P5-tras-confirmar
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c30-Q1-legada-default
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c31-Q2-a33-sin-registro
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c32-Q3-custom-existente
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c33-Q4-crash-antes
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c34-Q5-nueva-genuina
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c35-Q6-eio
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c36-Q7-custom-legada
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c37-R1-marca-previa
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c38-R2-fallo-marca
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c39-R3-reinicio-visible
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c40-R4-desaparece
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c41-R5-eio
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c42-R6-adopcion-falla
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c43-R7-feliz
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque2-PRUEBAS\c44-R8-custom-primer-despliegue
+
+==================================================================
+  BLOQUE 2 — wiring de main.js: 221 OK, 0 FALLOS
+==================================================================
+  carpetas de prueba borradas: true

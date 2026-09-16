@@ -1,0 +1,93 @@
+# ---------------------------------------------------------------------------
+# P12 - corroboracion en ELECTRON REAL de los NaN del rail del dashboard, en
+# sandbox artificial. NO arregla nada: reproduce y mide.
+# Sin caracteres acentuados: PowerShell 5.1 lee este archivo como ANSI.
+#
+# OJO: NO poner $ErrorActionPreference='Stop'. El 2>&1 de un .exe convierte
+# cada linea de stderr en ErrorRecord y mataria el script.
+# ---------------------------------------------------------------------------
+$ErrorActionPreference = 'Continue'
+$P    = 'C:\Codigo Fuente PS\panorama-app-codigo-fuente_1'
+$B    = "$P\claude\pruebas-a33"
+$wrap = "$B\real-run\p12.js"
+$ep   = "$P\node_modules\electron\dist\electron.exe"
+$BDVIVA = 'G:\Mi unidad\BD-PanoramaServicio\panorama.sqlite3'
+
+# --- guardianes ------------------------------------------------------------
+# plantilla_dashboard.html entra en la lista: es el archivo del defecto, y esta
+# ronda es SOLO diagnostico. Tiene que salir intacto.
+$bdAntes = (Get-FileHash $BDVIVA -Algorithm SHA256).Hash
+$gAntes  = (Get-ChildItem 'G:\Mi unidad\BD-PanoramaServicio' -Force | Measure-Object).Count
+$prodFiles = @('main.js','preload.js','preload-launcher.js','launcher\index.html','launcher\renderer.js','dashboard\plantilla_dashboard.html','db.js','security.js')
+$prodAntes = @{}
+foreach ($f in $prodFiles) { $prodAntes[$f] = (Get-FileHash (Join-Path $P $f) -Algorithm SHA256).Hash }
+Write-Output "BD VIVA antes: $($bdAntes.Substring(0,16))    archivos en la carpeta: $gAntes"
+Write-Output "plantilla_dashboard.html antes: $($prodAntes['dashboard\plantilla_dashboard.html'].Substring(0,16))"
+Write-Output ""
+
+# El sandbox NO puede vivir bajo "C:\Codigo Fuente PS\...": Start-Process parte
+# -ArgumentList por espacios. Se usa %TEMP% (ruta 8.3, sin espacios).
+$S = Join-Path $env:TEMP '_a33-p12-real'
+if ($S -notlike '*_a33-p12-real*') { throw "sandbox inesperado: $S" }
+if ($S -match ' ') { throw "el sandbox no puede tener espacios: $S" }
+if ($S -like '*BD-PanoramaServicio*') { throw "sandbox dentro de la BD viva: $S" }
+
+if (Test-Path $S) { Remove-Item -LiteralPath $S -Recurse -Force -ErrorAction SilentlyContinue }
+New-Item -ItemType Directory -Force -Path "$S\Roaming","$S\Local" | Out-Null
+
+$mainAlt = $null
+$mainTmp = Join-Path $P '__main-revertido-PRUEBAS.js'
+if (Test-Path $mainTmp) { Remove-Item -LiteralPath $mainTmp -Force }
+if ($env:P12_MAIN) {
+  if (-not (Test-Path $env:P12_MAIN)) { throw "P12_MAIN no existe: $($env:P12_MAIN)" }
+  Copy-Item -LiteralPath $env:P12_MAIN -Destination $mainTmp -Force
+  $mainAlt = $mainTmp
+  Write-Output "MAIN ALTERNATIVO: $($env:P12_MAIN)"
+}
+
+[Environment]::SetEnvironmentVariable('LOCALAPPDATA', "$S\Local", 'Process')
+[Environment]::SetEnvironmentVariable('APPDATA', "$S\Roaming", 'Process')
+[Environment]::SetEnvironmentVariable('ELECTRON_RUN_AS_NODE', $null, 'Process')
+$argv = @("`"$wrap`"", "`"--sandbox=$S`"")
+if ($mainAlt) { $argv += "`"--main=$mainAlt`"" }
+
+Write-Output "==================== DASHBOARD REAL ===================="
+# $proc, NO $p: PowerShell no distingue mayusculas en los nombres de variable y
+# un $p en el ambito raiz pisaria $P, la ruta del proyecto.
+$proc = Start-Process -FilePath $ep -ArgumentList $argv -PassThru -WindowStyle Minimized
+$t0 = Get-Date
+while (-not $proc.HasExited -and ((Get-Date) - $t0).TotalSeconds -lt 240) { Start-Sleep -Milliseconds 500 }
+if (-not $proc.HasExited) { $proc.Kill(); Start-Sleep -Milliseconds 800; Write-Output "  TIMEOUT" }
+else { Write-Output "  exit: $($proc.ExitCode)" }
+
+$l = "$S\test.log"
+if (Test-Path $l) { Get-Content $l | ForEach-Object { $_ -replace '^\[[^\]]+\] ', '  ' } }
+else { Write-Output "  (sin test.log)" }
+
+$totOK = 0; $totFALLO = 0
+if (Test-Path $l) {
+  $t = Get-Content $l
+  $totOK    = ($t | Where-Object { $_ -cmatch '^\[[^\]]+\] OK    ' } | Measure-Object).Count
+  $totFALLO = ($t | Where-Object { $_ -cmatch '^\[[^\]]+\] FALLO ' } | Measure-Object).Count
+}
+Write-Output ""
+Write-Output "======================================================================"
+Write-Output "  P12 ELECTRON REAL: $totOK OK / $totFALLO FALLOS"
+Write-Output "======================================================================"
+
+# --- guardianes de salida --------------------------------------------------
+if (Test-Path $S) { Remove-Item -LiteralPath $S -Recurse -Force -ErrorAction SilentlyContinue }
+if (Test-Path $mainTmp) { Remove-Item -LiteralPath $mainTmp -Force -ErrorAction SilentlyContinue }
+$bdDespues = (Get-FileHash $BDVIVA -Algorithm SHA256).Hash
+$gDespues  = (Get-ChildItem 'G:\Mi unidad\BD-PanoramaServicio' -Force | Measure-Object).Count
+Write-Output ""
+Write-Output "BD VIVA despues: $($bdDespues.Substring(0,16))   archivos: $gDespues"
+Write-Output "BD VIVA IDENTICA: $($bdAntes -eq $bdDespues)"
+Write-Output "Carpeta de la BD viva SIN archivos nuevos: $($gAntes -eq $gDespues)"
+$prodOk = $true
+foreach ($f in $prodFiles) {
+  $h = (Get-FileHash (Join-Path $P $f) -Algorithm SHA256).Hash
+  if ($h -ne $prodAntes[$f]) { $prodOk = $false; Write-Output "  CAMBIO EN PRODUCCION: $f" }
+}
+Write-Output "Archivos productivos intactos durante las pruebas: $prodOk"
+Write-Output "sandbox borrado: $(-not (Test-Path $S))"

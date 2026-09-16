@@ -1,0 +1,429 @@
+
+=== 1. CLASIFICACIÓN — función pura (§6.1.a / §6.1.b) ===
+  OK    A1a mismo commit + mismos bytes -> seguir
+  OK    A1a con mtime distinto pero mismos bytes -> NO es conflicto
+  OK        ...y pide refrescar S_mio
+  OK    A1b mismo commit + BYTES DISTINTOS -> conflicto caso 8
+  OK    A2 NO se alcanza con C_disk === C_mem (H_disk se contiene a sí mismo)
+  OK    A2 descendencia estricta -> recarga silenciosa
+  OK    A2 con dirty=true -> NO recarga silenciosa, va a conflicto
+  OK    A3 vamos por delante del disco -> aviso, no conflicto
+  OK    A4 BIFURCACIÓN N+1/N+1 -> conflicto caso 3
+  OK    A5 ES ALCANZABLE (era el bug de la rev. 2)
+  OK    B0 disco divergido -> NO reparación silenciosa
+  OK        ...y sale conflicto
+  OK        ...y se anota el .gen adelantado
+  OK    B0 disco descendiente -> recarga silenciosa legítima
+  OK    B1 mi escritura interrumpida (4 condiciones) -> reparar
+  OK        romper W_file -> no repara
+  OK        romper P_file -> no repara
+  OK        romper C_disk === C_mem -> no repara
+  OK        romper F_disk === F_mio -> no repara
+  OK    B2 intención de otro equipo en vuelo -> espera
+  OK    .gen ausente en compartida -> degradado, nunca conflicto
+  OK    .gen ausente en local -> se repara, no bloquea
+  OK    LOCAL: atajo por stat cuando nada cambió -> seguir sin leer bytes
+  OK    LOCAL: stat distinto -> obliga a leer, NUNCA concluye conflicto solo
+  OK    COMPARTIDA: no hay atajo, siempre exige los bytes
+  OK    LÍMITE LOCAL: stat idéntico + bytes distintos -> el atajo NO lo ve
+  OK        ...y en COMPARTIDA la misma entrada da caso 8
+
+=== 2. ESCRITURA ATÓMICA — bucle, fsync y confirmación (§4.b) ===
+  OK    escribe y renombra
+  OK    no deja temporales
+  OK    escritura parcial: el bucle completa los bytes
+  OK        ...y hicieron falta varias llamadas
+  OK    writeSync sin progreso -> lanza
+  OK        ...NO se hizo rename: el archivo original intacto
+  OK        ...el temporal se conserva como .tmp-fallido
+  OK    fsync EIO -> es un FALLO, lanza
+  OK        ...NO se hizo rename
+  OK    fsync EINVAL -> NO soportado: la escritura se completa
+  OK        ...y se marca la garantía como rebajada
+  OK    fsync ocurre ANTES del rename
+
+=== 3. BLOQUEO IRREVERSIBLE (§3 / §14.a) ===
+  OK    se puede levantar un conflicto
+  OK    se puede levantar un degradado
+  OK    levantar "comprometido" se RECHAZA
+  OK        ...sigue bloqueado
+  OK    un motivo fatal NO se sustituye por "conflicto"
+  OK    un motivo fatal NO se sustituye por otro fatal
+  OK    y levantarlo sigue rechazado
+  OK    ninguna escritura pasa con el latch fatal
+  OK    "desincronizada" también es irreversible
+  OK    "bd-ilegible" también es irreversible
+
+=== 4. FLUJO NORMAL con imágenes SQLite reales ===
+  OK    arranque: hay commit y F_mio
+  OK    arranque: dirty = false
+  OK    30 escrituras: 31 commits distintos
+  OK    generación monótona
+  OK    historial acotado a 20
+  OK    dirty = false tras confirmar
+  OK    el .gen y la BD llevan el MISMO commit
+  OK    el commit en memoria coincide con el del disco
+  OK    F_mio coincide con el hash real del archivo
+  OK    ultimaImagenConfirmada coincide byte a byte con el disco
+  OK    las 30 filas están en disco
+  OK    preparación: ref y snapshot son objetos distintos con los mismos bytes
+  OK    INMUTABILIDAD: el Buffer que guardábamos NO fue mutado por sql.js
+  OK        ...la imagen confirmada actual es OTRO objeto
+  OK        ...y con bytes distintos
+  OK        ...y el antiguo conserva exactamente sus bytes originales
+
+=== 5. FALLO ANTES DEL RENAME — caso (a) de §2.d ===
+  OK    el llamante recibe ErrorDb io
+  OK    aplicado = false
+  OK    el .sqlite3 en disco NO cambió
+  OK    la memoria vuelve al commit confirmado
+  OK    dirty vuelve a false
+  OK    la fila FANTASMA no existe en memoria
+  OK    una escritura posterior NO arrastra el fantasma a disco
+  OK        ...y sí lleva las filas buenas
+  OK    reintentar tras el fallo funciona (idempotente)
+  OK    caso (c): lanza
+  OK    caso (c): latch = desincronizada
+  OK    caso (c): dirty sigue en true
+  OK    caso (c): el latch es irreversible
+  OK    caso (c): ninguna escritura posterior pasa
+
+=== 6. FALLO DESPUÉS DEL RENAME — caso (b) de §2.d ===
+  OK    caso (b): el bookkeeping se rehace releyendo el archivo
+  OK    caso (b): la operación está en disco
+  OK    caso (b): la memoria NO se restauró (la fila sigue)
+  OK    caso (b): dirty vuelve a false tras rehacer
+  OK    caso (b) con disco pisado: lanza en vez de adoptar
+  OK        ...con aplicado = true
+  OK        ...y SE RECLASIFICA antes de adoptar nada
+  OK        ...la reclasificación dice conflicto
+  OK        ...y el latch queda en desincronizada
+
+=== 7. DOS "PCs": bifurcación real con archivos reales ===
+  OK    los dos parten del mismo commit
+  OK    DESCENDENCIA: B no conflictúa, adopta en silencio y escribe encima
+  OK        ...y su commit desciende del de A
+  OK        ...conservando la fila de A
+  OK    bifurcación: los dos parten del mismo padre
+  OK    bifurcación: dos commits distintos con el MISMO padre
+  OK    A detecta la BIFURCACIÓN antes de escribir
+  OK        ...caso 3, aunque las dos generaciones sean iguales
+  OK        ...A queda con el latch de conflicto
+  OK        ...y el disco sigue siendo el de B, sin pisar
+  OK        ...la fila nueva de A no llegó a disco
+  OK    CASO 8 real: se detecta aunque commit_id y mtime no cambien
+  OK        ...y la fila de la versión antigua SIGUE en disco (no se pisó)
+        [peor caso alcanzado: true  size 20480/20480  mtimeMs 1789342956443.448/1789342956443.448]
+  OK    LOCAL, peor caso (mismo tamaño y mismo mtime): el atajo NO lo detecta
+  OK        ...y la fila externa SE PIERDE sin dejar evidencia — LÍMITE CONOCIDO
+
+=== 8. BD ILEGIBLE al arrancar (§4.b paso 3) ===
+  OK    ceros: abrir() lanza en vez de seguir
+  OK        ...latch bd-ilegible
+  OK        ...el archivo sigue existiendo
+  OK        ...mismo tamaño (20480 B)
+  OK        ...mismo SHA-256
+  OK        ...mismos bytes exactos
+  OK        ...NO se creó una base de datos vacía encima
+  OK        ...el .gen tampoco se tocó
+  OK        ...no aparecieron temporales nuevos
+  OK        ...ninguna escritura pasa
+  OK        ...y sigue sin tocarse tras el intento de escritura
+  OK    truncado: abrir() lanza en vez de seguir
+  OK        ...latch bd-ilegible
+  OK        ...el archivo sigue existiendo
+  OK        ...mismo tamaño (6826 B)
+  OK        ...mismo SHA-256
+  OK        ...mismos bytes exactos
+  OK        ...NO se creó una base de datos vacía encima
+  OK        ...el .gen tampoco se tocó
+  OK        ...no aparecieron temporales nuevos
+  OK        ...ninguna escritura pasa
+  OK        ...y sigue sin tocarse tras el intento de escritura
+  OK    basura: abrir() lanza en vez de seguir
+  OK        ...latch bd-ilegible
+  OK        ...el archivo sigue existiendo
+  OK        ...mismo tamaño (20480 B)
+  OK        ...mismo SHA-256
+  OK        ...mismos bytes exactos
+  OK        ...NO se creó una base de datos vacía encima
+  OK        ...el .gen tampoco se tocó
+  OK        ...no aparecieron temporales nuevos
+  OK        ...ninguna escritura pasa
+  OK        ...y sigue sin tocarse tras el intento de escritura
+  OK    BD válida SIN db_commit_id (habiendo .gen) -> ilegible, no "instalación nueva"
+
+=== 9. FRONTERA PRE-CONFIRMACIÓN — todos los fallos anteriores al rename ===
+  OK    [sql (db.run del usuario)] lanza
+  OK       aplicado = false
+  OK       el .sqlite3 en disco NO cambió
+  OK       dirty = false
+  OK       la memoria volvió al commit confirmado
+  OK       app_meta en memoria intacto (sin UPSERT a medias)
+  OK       la fila fantasma no está en memoria
+  OK       sin latch (es un error de operación, no fatal)
+  OK       la escritura posterior NO arrastra nada parcial
+  OK       la generación avanzó exactamente 1 desde la última buena
+  OK    [last_insert_rowid()] lanza
+  OK       aplicado = false
+  OK       el .sqlite3 en disco NO cambió
+  OK       dirty = false
+  OK       la memoria volvió al commit confirmado
+  OK       app_meta en memoria intacto (sin UPSERT a medias)
+  OK       la fila fantasma no está en memoria
+  OK       sin latch (es un error de operación, no fatal)
+  OK       la escritura posterior NO arrastra nada parcial
+  OK       la generación avanzó exactamente 1 desde la última buena
+  OK    [UPSERT 1 — db_commit_id] lanza
+  OK       aplicado = false
+  OK       el .sqlite3 en disco NO cambió
+  OK       dirty = false
+  OK       la memoria volvió al commit confirmado
+  OK       app_meta en memoria intacto (sin UPSERT a medias)
+  OK       la fila fantasma no está en memoria
+  OK       sin latch (es un error de operación, no fatal)
+  OK       la escritura posterior NO arrastra nada parcial
+  OK       la generación avanzó exactamente 1 desde la última buena
+  OK    [UPSERT 2 — db_parent_commit_id] lanza
+  OK       aplicado = false
+  OK       el .sqlite3 en disco NO cambió
+  OK       dirty = false
+  OK       la memoria volvió al commit confirmado
+  OK       app_meta en memoria intacto (sin UPSERT a medias)
+  OK       la fila fantasma no está en memoria
+  OK       sin latch (es un error de operación, no fatal)
+  OK       la escritura posterior NO arrastra nada parcial
+  OK       la generación avanzó exactamente 1 desde la última buena
+  OK    [UPSERT 3 — db_commit_history] lanza
+  OK       aplicado = false
+  OK       el .sqlite3 en disco NO cambió
+  OK       dirty = false
+  OK       la memoria volvió al commit confirmado
+  OK       app_meta en memoria intacto (sin UPSERT a medias)
+  OK       la fila fantasma no está en memoria
+  OK       sin latch (es un error de operación, no fatal)
+  OK       la escritura posterior NO arrastra nada parcial
+  OK       la generación avanzó exactamente 1 desde la última buena
+  OK    [UPSERT 4 — db_generation] lanza
+  OK       aplicado = false
+  OK       el .sqlite3 en disco NO cambió
+  OK       dirty = false
+  OK       la memoria volvió al commit confirmado
+  OK       app_meta en memoria intacto (sin UPSERT a medias)
+  OK       la fila fantasma no está en memoria
+  OK       sin latch (es un error de operación, no fatal)
+  OK       la escritura posterior NO arrastra nada parcial
+  OK       la generación avanzó exactamente 1 desde la última buena
+  OK    [escritura del .gen] lanza
+  OK       aplicado = false
+  OK       el .sqlite3 en disco NO cambió
+  OK       dirty = false
+  OK       la memoria volvió al commit confirmado
+  OK       app_meta en memoria intacto (sin UPSERT a medias)
+  OK       la fila fantasma no está en memoria
+  OK       sin latch (es un error de operación, no fatal)
+  OK       la escritura posterior NO arrastra nada parcial
+  OK       la generación avanzó exactamente 1 desde la última buena
+  OK    [persistencia del .sqlite3] lanza
+  OK       aplicado = false
+  OK       el .sqlite3 en disco NO cambió
+  OK       dirty = false
+  OK       la memoria volvió al commit confirmado
+  OK       app_meta en memoria intacto (sin UPSERT a medias)
+  OK       la fila fantasma no está en memoria
+  OK       sin latch (es un error de operación, no fatal)
+  OK       la escritura posterior NO arrastra nada parcial
+  OK       la generación avanzó exactamente 1 desde la última buena
+  OK    SQL inválido REAL: lanza
+  OK       aplicado = false
+  OK       dirty = false
+  OK       disco intacto
+  OK       commit sin cambiar
+  OK    violación de constraint REAL: lanza
+  OK       aplicado = false
+  OK       dirty = false
+  OK       disco intacto
+  OK       tras dos SQL fallidos, la escritura buena deja solo lo correcto
+  OK    fallo en meta3 + restauración fallida -> latch desincronizada
+  OK       aplicado = false (no llegó al rename)
+  OK       el latch es irreversible
+
+=== 10. reparar-gen — comportamiento DEFINIDO (decisión B con testigo) ===
+  OK    preparación: .gen adelantado (Y) con parent X y writer = yo
+  OK    preparación: la BD sigue en X
+  OK    preparación: la memoria volvió a X
+  OK    clasifica reparar-gen, caso 2
+  OK    Z.parent_commit_id === X (NO Y): se encadena desde lo que hay en disco
+  OK    Z NO desciende de Y: Y no aparece en el historial
+  OK    el .gen final lleva Z
+  OK    el .gen y la BD vuelven a ser coherentes
+  OK    NO queda una rama falsa: Y nunca existió como estado de la BD
+  OK    el testigo interrumpido SE CONSERVA
+  OK        ...y contiene exactamente Y
+  OK        ...con su parent X y su writer
+  OK    nada se pierde: la fila "base" sigue y "interrumpida" nunca existió
+  OK    los bytes de X ya no están en el archivo activo (fue sustituido, no corrompido)
+  OK    una escritura normal posterior NO genera más testigos
+
+=== 11. UNA SOLA PERSISTENCIA para varias sentencias (patrón de borrado) ===
+  OK    dos DELETE = UNA sola generación
+  OK       ...y en disco no queda ni el proyecto ni sus backups
+  OK       el .gen coincide con la BD
+  OK    fallo antes del rename: lanza con aplicado=false
+  OK       el disco NO cambió
+  OK       EL PROYECTO SIGUE COMPLETO en memoria: filas de projects
+  OK       ...y sus backups también (nada de estado parcial)
+  OK       dirty = false
+  OK    CONTRASTE con dos run(): queda ESTADO PARCIAL en disco
+  OK       ...que es exactamente lo que escribirMultiple() evita
+
+=== 12. NOMBRES TEMPORALES GLOBALMENTE ÚNICOS entre PCs ===
+  OK    los dos núcleos comparten el process.pid
+  OK    se capturaron temporales de A y de B
+  OK    NINGÚN nombre temporal coincide entre las dos instalaciones
+  OK    todos los temporales son distintos entre sí (incluso dentro del mismo writer)
+  OK    el nombre NO contiene el PID
+  OK    el nombre lleva el writer de A
+  OK    el nombre lleva el writer de B
+  OK    siguen empezando por ".tmp-" (la limpieza por prefijo sigue valiendo)
+  OK    50 escrituras del MISMO writer producen 50 nombres distintos
+
+=== 13. NO PODER LEER != CONFLICTO ===
+  OK    [EIO/compartida] lanza
+  OK       NO se etiqueta como conflicto
+  OK       es un error de E/S no verificable
+  OK       NO se inventa un caso de bifurcación
+  OK       el SQL del usuario NO se ejecutó
+  OK       la memoria NO se tocó
+  OK       el disco NO se tocó
+  OK       COMPARTIDA -> latch 'degradado' (conservador, levantable)
+  OK       ...y NO es 'conflicto'
+  OK       al volver el acceso, el latch se puede levantar
+  OK       ...y la escritura siguiente funciona y clasifica bien
+  OK       ...sin conflicto falso
+  OK    [EIO/local] lanza
+  OK       NO se etiqueta como conflicto
+  OK       es un error de E/S no verificable
+  OK       NO se inventa un caso de bifurcación
+  OK       el SQL del usuario NO se ejecutó
+  OK       la memoria NO se tocó
+  OK       el disco NO se tocó
+  OK       LOCAL -> NO se latchea: es un error transitorio reintentable
+  OK       ...y el reintento inmediato funciona
+  OK    [EBUSY/compartida] lanza
+  OK       NO se etiqueta como conflicto
+  OK       es un error de E/S no verificable
+  OK       NO se inventa un caso de bifurcación
+  OK       el SQL del usuario NO se ejecutó
+  OK       la memoria NO se tocó
+  OK       el disco NO se tocó
+  OK       COMPARTIDA -> latch 'degradado' (conservador, levantable)
+  OK       ...y NO es 'conflicto'
+  OK       al volver el acceso, el latch se puede levantar
+  OK       ...y la escritura siguiente funciona y clasifica bien
+  OK       ...sin conflicto falso
+  OK    [EBUSY/local] lanza
+  OK       NO se etiqueta como conflicto
+  OK       es un error de E/S no verificable
+  OK       NO se inventa un caso de bifurcación
+  OK       el SQL del usuario NO se ejecutó
+  OK       la memoria NO se tocó
+  OK       el disco NO se tocó
+  OK       LOCAL -> NO se latchea: es un error transitorio reintentable
+  OK       ...y el reintento inmediato funciona
+  OK    [EACCES/compartida] lanza
+  OK       NO se etiqueta como conflicto
+  OK       es un error de E/S no verificable
+  OK       NO se inventa un caso de bifurcación
+  OK       el SQL del usuario NO se ejecutó
+  OK       la memoria NO se tocó
+  OK       el disco NO se tocó
+  OK       COMPARTIDA -> latch 'degradado' (conservador, levantable)
+  OK       ...y NO es 'conflicto'
+  OK       al volver el acceso, el latch se puede levantar
+  OK       ...y la escritura siguiente funciona y clasifica bien
+  OK       ...sin conflicto falso
+  OK    [EACCES/local] lanza
+  OK       NO se etiqueta como conflicto
+  OK       es un error de E/S no verificable
+  OK       NO se inventa un caso de bifurcación
+  OK       el SQL del usuario NO se ejecutó
+  OK       la memoria NO se tocó
+  OK       el disco NO se tocó
+  OK       LOCAL -> NO se latchea: es un error transitorio reintentable
+  OK       ...y el reintento inmediato funciona
+  OK    archivo borrado -> estado "ausente", no "ilegible"
+  OK       ...y tampoco se trata como conflicto
+  OK    estado "valida"
+  OK    estado "no-disponible" con EIO
+  OK    estado "ausente" con ENOENT
+  OK    estado "ilegible" con el archivo a ceros
+  OK    arranque con EIO: lanza error de E/S, NO "ilegible"
+  OK       ...NO se latchea bd-ilegible
+  OK       ...y el archivo bueno sigue intacto
+
+=== 14. "AUSENTE" NO AUTORIZA A CREAR — abrir() sin bypass de existsSync ===
+  OK    [compartida] BD invisible: abrir() NO crea nada, lanza
+  OK       estadoDisco = 'ausente' (hecho observado)
+  OK       NO se creó una BD nueva: mismo SHA-256
+  OK       los bytes originales están intactos
+  OK       el .gen NO se tocó
+  OK       no aparecieron temporales
+  OK       COMPARTIDA/DESCONOCIDA -> fail-closed ('degradado')
+  OK       al recuperar el acceso, abre la BD ORIGINAL
+  OK       ...sin generación espuria
+  OK       ...y la fila valiosa sigue
+  OK    [desconocida] BD invisible: abrir() NO crea nada, lanza
+  OK       estadoDisco = 'ausente' (hecho observado)
+  OK       NO se creó una BD nueva: mismo SHA-256
+  OK       los bytes originales están intactos
+  OK       el .gen NO se tocó
+  OK       no aparecieron temporales
+  OK       COMPARTIDA/DESCONOCIDA -> fail-closed ('degradado')
+  OK       al recuperar el acceso, abre la BD ORIGINAL
+  OK       ...sin generación espuria
+  OK       ...y la fila valiosa sigue
+  OK    [local] BD invisible: abrir() NO crea nada, lanza
+  OK       estadoDisco = 'ausente' (hecho observado)
+  OK       NO se creó una BD nueva: mismo SHA-256
+  OK       los bytes originales están intactos
+  OK       el .gen NO se tocó
+  OK       no aparecieron temporales
+  OK       al recuperar el acceso, abre la BD ORIGINAL
+  OK       ...sin generación espuria
+  OK       ...y la fila valiosa sigue
+  OK    ENOENT real en COMPARTIDA configurada: NO se inicializa
+  OK       no se creó ningún .sqlite3
+  OK       el .gen sigue como estaba, sin reescribir
+  OK       fail-closed
+  OK       con crearSiAusente pero restos en la carpeta: TAMPOCO crea
+  OK       ...y lo dice explícitamente
+  OK       sigue sin haber .sqlite3
+  OK    [compartida] carpeta virgen: pareceUbicacionNueva() = true
+  OK       con autorización explícita SÍ crea la BD
+  OK       ...con su .gen coherente
+  OK       ...generación 1
+  OK       ...y se puede escribir
+  OK    [desconocida] carpeta virgen: pareceUbicacionNueva() = true
+  OK       con autorización explícita SÍ crea la BD
+  OK       ...con su .gen coherente
+  OK       ...generación 1
+  OK       ...y se puede escribir
+  OK    [local] carpeta virgen: pareceUbicacionNueva() = true
+  OK       con autorización explícita SÍ crea la BD
+  OK       ...con su .gen coherente
+  OK       ...generación 1
+  OK       ...y se puede escribir
+  OK    LOCAL, carpeta virgen -> se considera primera inicialización
+  OK       ...pero SIN crearSiAusente tampoco crea (la ausencia no autoriza)
+  OK       ...y el error dice que PODRÍA ser la primera vez
+  OK       ...LOCAL no hace fail-closed (no hay otro PC posible)
+  OK       con la autorización explícita, crea
+  OK    con un .gen huérfano, la carpeta NO se considera virgen
+  OK       ...y ni con autorización explícita se crea encima
+  OK    si no se puede listar la carpeta, NO se da por virgen (fail-closed)
+
+==================================================================
+  NÚCLEO A3.3 — 395 OK, 0 FALLOS
+==================================================================
+  carpetas temporales borradas: true

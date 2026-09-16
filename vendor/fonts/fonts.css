@@ -1,0 +1,93 @@
+/* v2.0.26: Inter y JetBrains Mono, auto-hospedadas localmente (antes se
+   cargaban en cada apertura de ventana desde fonts.googleapis.com/
+   fonts.gstatic.com — una app que guarda todo en local no debería hacer
+   una petición HTTP real a un CDN externo solo para pintar texto; en una
+   red de empresa con proxy/firewall esa petición puede fallar o tardar,
+   y mientras tanto se ve el texto con la fuente equivocada un instante).
+   Mismos pesos que ya se pedían al CDN (Inter 400/500/600/700,
+   JetBrains Mono 400/500/600/700/800), descargados vía el paquete
+   @fontsource/* (licencia SIL Open Font License, libremente
+   redistribuible — ver LICENSE-inter.txt/LICENSE-jetbrains-mono.txt en
+   esta misma carpeta), subset "latin" (cubre los acentos/ñ del español:
+   Latin-1 Supplement, U+0000-00FF). Referenciar este archivo con una
+   ruta relativa (../vendor/fonts/fonts.css) desde cada plantilla, igual
+   que ya se hace con xlsx.full.min.js y el resto de vendor/. */
+
+/* v2.0.36: font-display cambiado de 'swap' a 'block'. Con 'swap' el
+   navegador pinta el primer frame con la fuente de sistema de reserva y
+   sustituye por Inter/JetBrains Mono en cuanto cargan — un reflow visible
+   ("las letras cambian de tamaño") si esa sustitución ocurre después de
+   que la ventana ya se ha mostrado. Reportado como "al abrir un proyecto,
+   microsegundos como que se agranda la información" — no he podido
+   capturarlo con capturas de pantalla en tu Windows real (el fenómeno es
+   más rápido que mi ida y vuelta de red+captura), así que esto es un
+   diagnóstico razonado por código, no algo que haya visto reproducirse y
+   desaparecer con mis propios ojos. Con 'block' el navegador oculta el
+   texto (recuadro invisible) hasta ~400ms como máximo esperando la fuente
+   en vez de pintar con la de reserva — como las fuentes son locales
+   (.woff2 empaquetadas, sin red) cargan casi al instante, así que ese
+   margen no debería notarse, y se evita el swap/reflow visible. */
+
+@font-face{
+  font-family:'Inter';
+  font-style:normal;
+  font-weight:400;
+  font-display:block;
+  src:url('inter-400.woff2') format('woff2');
+}
+@font-face{
+  font-family:'Inter';
+  font-style:normal;
+  font-weight:500;
+  font-display:block;
+  src:url('inter-500.woff2') format('woff2');
+}
+@font-face{
+  font-family:'Inter';
+  font-style:normal;
+  font-weight:600;
+  font-display:block;
+  src:url('inter-600.woff2') format('woff2');
+}
+@font-face{
+  font-family:'Inter';
+  font-style:normal;
+  font-weight:700;
+  font-display:block;
+  src:url('inter-700.woff2') format('woff2');
+}
+@font-face{
+  font-family:'JetBrains Mono';
+  font-style:normal;
+  font-weight:400;
+  font-display:block;
+  src:url('jetbrains-mono-400.woff2') format('woff2');
+}
+@font-face{
+  font-family:'JetBrains Mono';
+  font-style:normal;
+  font-weight:500;
+  font-display:block;
+  src:url('jetbrains-mono-500.woff2') format('woff2');
+}
+@font-face{
+  font-family:'JetBrains Mono';
+  font-style:normal;
+  font-weight:600;
+  font-display:block;
+  src:url('jetbrains-mono-600.woff2') format('woff2');
+}
+@font-face{
+  font-family:'JetBrains Mono';
+  font-style:normal;
+  font-weight:700;
+  font-display:block;
+  src:url('jetbrains-mono-700.woff2') format('woff2');
+}
+@font-face{
+  font-family:'JetBrains Mono';
+  font-style:normal;
+  font-weight:800;
+  font-display:block;
+  src:url('jetbrains-mono-800.woff2') format('woff2');
+}

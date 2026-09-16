@@ -1,0 +1,105 @@
+
+---
+
+## 15. Núcleo aislado — IMPLEMENTADO Y EJECUTADO
+
+Segundo y último trabajo autorizado de esta ronda. **No es `db.js`, no se
+conecta con la aplicación y no sustituye nada.** Vive en
+`scratchpad/nucleo-a33/` y trabaja solo sobre carpetas temporales.
+
+- `nucleo.js` — el núcleo (~470 líneas).
+- `test-nucleo.js` — la suite (~430 líneas).
+- `resultados-nucleo.txt` — la salida completa de la ejecución.
+- Runtime: el Node de nuestro Electron (`node 20.16.0`, Electron 30.5.1, arm64).
+- Imágenes **SQLite reales**, con el `sql.js` del propio proyecto.
+
+### 15.a Qué implementa
+
+| Componente autorizado | Dónde | Estado |
+|---|---|---|
+| Clasificación de estados | `clasificar()`, función **pura** | Completo: A1a/A1b, A2..A5, B0..B3, caso 7 |
+| Escritura del temporal, sincronización y confirmación | `escribirAtomico()` | Completo, con bucle de `writeSync` y lista cerrada de códigos |
+| Restauración de memoria ante fallo anterior al `rename` | `run()` caso (a) | Completo, con el caso (c) encadenado |
+| Bloqueo irreversible por fallo fatal | `bloquearEscrituras()` / `levantarLatch()` | Completo |
+| *(no autorizado)* modos de rekey, adopción de Seguridad, borrados | — | **No implementados a propósito** |
+
+`fsync` en **los dos** archivos, como se pidió (§4.b).
+
+### 15.b Resultado
+
+```
+NÚCLEO A3.3 — 112 OK, 0 FALLOS
+```
+
+Con dos hallazgos que salieron de ejecutar, no de razonar:
+
+**1. Al núcleo le faltaba el camino de la recarga silenciosa.** El primer pase
+dio 3 fallos. Uno era real: la clasificación devolvía `recarga` (caso 1,
+descendencia estricta) y `run()` no tenía rama para eso, así que lo trataba como
+motivo de bloqueo. Resultado: **un conflicto falso ante una descendencia
+perfectamente legítima**. El diseño describía la recarga en §7 como una
+resolución de conflicto y nunca dijo que hiciera falta también en el camino
+normal de `run()`. Corregido en el núcleo (paso 2b de §2) y en este documento.
+
+**2. Dos de mis pruebas estaban mal planteadas** y por eso fallaban:
+
+- La de "bifurcación" no producía una bifurcación: el segundo equipo nunca había
+  escrito, así que era **descendencia lineal**, y lo correcto era exactamente lo
+  que hacía el núcleo. Reescrita para que los dos equipos escriban desde el
+  mismo padre; ahora sí produce dos commits hermanos y sí se detecta el caso 3.
+- La del límite de la carpeta local intentaba forzar el peor caso con
+  `fs.utimesSync`, y **no se puede**: NTFS guarda 100 ns y `utimesSync` recibe
+  milisegundos, así que el `mtime` restaurado difiere en la última cifra
+  (`…834.837` frente a `…834.8374`) y el `stat` acaba detectando el cambio por
+  accidente. El límite se demuestra ahora de forma determinista sobre la función
+  pura, sin depender del sistema de archivos.
+
+### 15.c Lo que queda DEMOSTRADO por ejecución
+
+- **A5 es alcanzable** con el orden corregido (era el bug de la rev. 2).
+- **`C_mem ∈ H_disk` no se cumple trivialmente**: con el mismo commit y bytes
+  distintos sale caso 8, no descendencia.
+- **Un `mtime` distinto con los mismos bytes no es conflicto.**
+- **Las cuatro condiciones de B1**: rota cualquiera de ellas, no se repara.
+- **B0**: con el disco divergido no hay reparación silenciosa, aunque el `.gen`
+  lleve nuestro `writer`.
+- **Bifurcación N+1/N+1 con archivos reales**: se detecta antes de escribir, el
+  disco no se pisa y la fila del segundo equipo no llega a disco.
+- **Caso 8 con archivos reales**: una "versión antigua" que reescribe la base de
+  datos sin tocar `db_commit_id`, y con el `mtime` devuelto a su valor, **se
+  detecta en carpeta compartida** y su fila sobrevive.
+- **`writeSync` parcial** se completa; **`writeSync` que devuelve 0** lanza, no
+  hay `rename`, el archivo original queda intacto y el temporal se conserva
+  como `.tmp-fallido-<fecha>`.
+- **`fsync` con `EIO`** es un fallo: lanza y no hay `rename`. **`fsync` con
+  `EINVAL`** es incompatibilidad: la escritura se completa y se marca la
+  garantía como rebajada.
+- **`fsync` ocurre siempre antes del `rename`.**
+- **Caso (a)**: el disco no cambia, la memoria vuelve al commit confirmado,
+  `dirty` a `false`, la fila fantasma no existe, y **una escritura posterior no
+  la arrastra a disco**.
+- **Caso (b)**: el bookkeeping se rehace releyendo; y si el disco fue pisado
+  entre nuestro `rename` y la relectura, **se reclasifica en vez de adoptar** y
+  el error sale con `aplicado: true`.
+- **Caso (c)**: latch `'desincronizada'`, `dirty` sigue en `true`, irreversible,
+  y ninguna escritura posterior pasa.
+- **El latch fatal es irreversible**: no se levanta, y no se sustituye ni por un
+  motivo no fatal ni por otro fatal.
+- **BD ilegible** (ceros, truncada, basura, y una válida sin `db_commit_id`):
+  `abrir()` lanza, latch `'bd-ilegible'`, **no se crea una base de datos vacía**
+  y ninguna escritura pasa.
+- **`ultimaImagenConfirmada`** coincide byte a byte con el disco y no la muta
+  sql.js al seguir trabajando.
+- Historial acotado a 20, generación monótona, 31 commits distintos en 30
+  escrituras.
+
+### 15.d Lo que este núcleo NO demuestra
+
+- **No prueba nada sobre la aplicación real.** No está conectado.
+- **No prueba durabilidad ante cortes de corriente**: los cortes se simulan
+  manipulando archivos, no cortando la luz.
+- **No cubre** rekey, Seguridad, borrados, resolución de conflicto con interfaz,
+  ni el recorrido IPC main→renderer (§14.g).
+- La recarga silenciosa implementada es **solo** la de descendencia estricta con
+  `dirty === false`. La de §7 (resolución de conflicto) no está.
+- **La huella local de §8.c.1 no está implementada**: es posterior al ensayo.

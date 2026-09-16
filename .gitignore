@@ -1,0 +1,6 @@
+node_modules/
+*.asar
+dist/
+out/
+dist_build/
+dist/

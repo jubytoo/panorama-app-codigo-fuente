@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<title>Restaurar un backup concreto</title>
+<!-- v2.0.29: transiciones y movimiento (Fase 3), ver vendor/motion.css. -->
+<link rel="stylesheet" href="../vendor/motion.css">
+<style>
+  :root{
+    --bg:#0a0e13; --surface:#121821; --surface-2:#171f2a;
+    --border:#232e3a; --ink:#eef2f6; --ink-soft:#93a3b5; --ink-faint:#546578;
+    --amber:#f0a83c; --amber-bg:#2a2010; --cyan:#4fc3d9; --cyan-dim:#2a4a52; --cyan-ink:#06222a;
+    --green:#5fd08a; --green-bg:#0f2419; --red:#e2596b; --red-bg:#2a0a0e;
+    --sans:'Segoe UI', system-ui, sans-serif; --mono:'Consolas', monospace;
+  }
+  *{box-sizing:border-box;}
+  /* v2.0.26: scrollbar propia, ver el mismo comentario en
+     dashboard/plantilla_dashboard.html -- mismos tokens de color. */
+  ::-webkit-scrollbar{ width:10px; height:10px; }
+  ::-webkit-scrollbar-track{ background:var(--surface); }
+  ::-webkit-scrollbar-thumb{ background:var(--border); border-radius:99px; border:2px solid var(--surface); background-clip:padding-box; }
+  ::-webkit-scrollbar-thumb:hover{ background:var(--ink-faint); background-clip:padding-box; }
+  ::-webkit-scrollbar-corner{ background:var(--surface); }
+  body{
+    margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans);
+    height:100vh; display:flex; flex-direction:column; overflow:hidden;
+  }
+  /* v2.0.16 — barra de título propia, sin fila de menú (esta ventana nunca
+     tuvo menú). El padding que antes llevaba <body> pasa a .content, para
+     que la barra pueda ocupar todo el ancho por encima de él. */
+  .titlebar{
+    -webkit-app-region: drag;
+    display:flex; align-items:center; gap:8px;
+    height:32px; padding:0 0 0 10px; flex-shrink:0;
+    background:linear-gradient(to right, #dadada 0%, #dadada 20%, #d1dbed 50%, #dadada 80%, #dadada 100%);
+    color:#2b2b2b; font-family:var(--sans); font-size:12.5px; user-select:none;
+  }
+  .titlebar img{ width:16px; height:16px; -webkit-app-region: no-drag; pointer-events:none; }
+  .titlebar .tb-title{ font-weight:600; }
+  .titlebar .tb-spacer{ flex:1; }
+  .win-controls{ display:flex; height:100%; -webkit-app-region: no-drag; }
+  .win-controls button{
+    width:44px; height:100%; border:none; background:transparent; color:#2b2b2b;
+    cursor:pointer; font-family:var(--sans); font-size:13px; line-height:1;
+  }
+  .win-controls button:hover{ background:rgba(43,43,43,.12); }
+  .win-controls button.close:hover{ background:#e2596b; color:#fff; }
+  .content{ flex:1; min-height:0; display:flex; flex-direction:column; padding:18px 20px; overflow:hidden; }
+  h1{ font-size:15px; margin:0 0 3px; }
+  .sub{ font-size:11.5px; color:var(--ink-soft); margin:0 0 12px; line-height:1.5; }
+  #status{ font-size:11.5px; color:var(--ink-faint); margin-bottom:8px; min-height:14px; }
+  #list{
+    flex:1; overflow-y:auto; border:1px solid var(--border); border-radius:8px;
+    background:var(--surface); padding:6px;
+  }
+  .row{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:9px 10px; border-radius:6px; margin-bottom:4px; background:var(--surface-2);
+  }
+  .row:last-child{ margin-bottom:0; }
+  .row-info{ min-width:0; }
+  .row-date{ font-size:12.5px; font-weight:600; }
+  .row-meta{ font-size:10.5px; color:var(--ink-faint); margin-top:2px; }
+  .lock{ color:var(--amber); }
+  .btn{
+    background:var(--cyan); color:var(--cyan-ink); border:none; border-radius:7px;
+    padding:6px 12px; font-size:11.5px; font-weight:600; cursor:pointer; white-space:nowrap;
+  }
+  .btn:hover{ filter:brightness(1.08); }
+  .btn:disabled{ opacity:0.5; cursor:default; filter:none; }
+  .btn.ghost{ background:transparent; color:var(--ink-soft); border:1px solid var(--border); }
+  .btn.ghost:hover{ color:var(--ink); border-color:var(--ink-faint); }
+  #empty, #loading{ padding:20px 10px; text-align:center; color:var(--ink-faint); font-size:12px; }
+  #error{
+    font-size:11.5px; color:var(--red); background:var(--red-bg); border:1px solid #4a2229;
+    border-radius:7px; padding:9px 10px; margin-top:10px; display:none; line-height:1.5;
+  }
+  .actions{ display:flex; justify-content:flex-end; margin-top:12px; }
+</style>
+</head>
+<body>
+  <div class="titlebar" id="titlebar">
+    <img src="../assets/icon-256.png" alt="" />
+    <span class="tb-title">Restaurar un backup concreto</span>
+    <span class="tb-spacer"></span>
+    <div class="win-controls">
+      <button id="tb-minimize" title="Minimizar">─</button>
+      <button id="tb-maximize" title="Maximizar">▢</button>
+      <button id="tb-close" class="close" title="Cerrar">✕</button>
+    </div>
+  </div>
+  <div class="content">
+    <h1 id="title">Restaurar un backup concreto</h1>
+    <p class="sub" id="subtitle">Elige por fecha cuál de los backups guardados quieres restaurar. Reemplaza los datos actuales — no se puede deshacer desde la propia app.</p>
+    <div id="status"></div>
+    <div id="list"><div id="loading">Cargando backups guardados…</div></div>
+    <div id="error"></div>
+    <div class="actions">
+      <button class="btn ghost" id="btn-close">Cerrar</button>
+    </div>
+  </div>
+  <!-- v2.0.27: tema visual GLOBAL de toda la app, ver vendor/theme.js. -->
+  <script src="../vendor/theme.js"></script>
+  <!-- v2.0.31: modal de confirmación/aviso propio (Fase 5a/5b), ver vendor/modal.js. -->
+  <script src="../vendor/modal.js"></script>
+  <script src="renderer.js"></script>
+  <script>
+    // v2.0.16 — barra de título propia (ver el <style> de arriba).
+    if (window.winControls) {
+      document.getElementById('tb-minimize').addEventListener('click', () => window.winControls.minimize());
+      document.getElementById('tb-maximize').addEventListener('click', () => window.winControls.toggleMaximize());
+      document.getElementById('tb-close').addEventListener('click', () => window.winControls.close());
+      const titlebar = document.getElementById('titlebar');
+      titlebar.addEventListener('dblclick', (e) => {
+        if (e.target.closest('.win-controls')) return;
+        window.winControls.toggleMaximize();
+      });
+      const btnMax = document.getElementById('tb-maximize');
+      function setMaximizedIcon(isMax) {
+        btnMax.textContent = isMax ? '❐' : '▢';
+        btnMax.title = isMax ? 'Restaurar' : 'Maximizar';
+      }
+      window.winControls.isMaximized().then(setMaximizedIcon).catch(() => {});
+      window.winControls.onMaximizedChanged(setMaximizedIcon);
+    }
+    // v2.0.30 — FASE 4: Escape cierra esta ventana (es un diálogo de
+    // selección, no un espacio de trabajo -- mismo criterio que
+    // security-window, que ya usa Escape para cancelar/cerrar).
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && window.winControls) window.winControls.close();
+    });
+  </script>
+</body>
+</html>

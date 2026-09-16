@@ -1,0 +1,1123 @@
+--- main.js (antes)
++++ main.js (despues)
+@@ -540,6 +540,18 @@
+       'rescate del estado anterior en la carpeta de backups del proyecto (archivo "rescate-restauracion-*"). ' +
+       'Revisa el registro de la aplicación (app.log) antes de seguir trabajando en ese proyecto.',
+   },
++  'PS-2006': {
++    titulo: 'Un guardado quedó a medias entre el archivo y la base de datos',
++    explicacion:
++      'Guardar un backup, una preparación de reunión o una evaluación de candidatos son DOS cosas: el ' +
++      'archivo en disco y su registro en la base de datos. No existe forma de hacer las dos a la vez de ' +
++      'manera perfectamente atómica, así que la app deja constancia de cada guardado antes de empezarlo ' +
++      '(carpeta ".panorama-acciones") y, si algo se interrumpe, al volver a abrir decide con pruebas: o ' +
++      'deshace lo que no llegó a registrarse, o reconoce lo que sí se registró y lo da por bueno. Este ' +
++      'aviso significa que uno de esos guardados NO se pudo decidir con certeza — normalmente porque el ' +
++      'archivo cambió desde otro equipo mientras tanto. No se ha borrado ni sobrescrito nada: se conserva ' +
++      'todo el material para poder revisarlo.',
++  },
+   'PS-3001': {
+     titulo: 'No se pudieron copiar los datos a la nueva ubicación',
+     explicacion:
+@@ -3336,6 +3348,38 @@
+ // Escritura durable de JSON, con la misma disciplina que
+ // guardarRegistroUbicaciones(): tmp + writeSync con progreso + fsync + rename.
+ // Un journal a medias es peor que no tenerlo, porque describe mal lo que hay.
++// La misma disciplina, para bytes cualesquiera: la usa el Bloque 4 para
++// preparar el archivo del usuario antes de publicarlo.
++function escribirBufferDurable(ruta, buf) {
++  const tmp = `${ruta}.escribiendo-${process.pid}-${Date.now()}`;
++  try {
++    fs.mkdirSync(path.dirname(ruta), { recursive: true });
++    const fd = fs.openSync(tmp, 'w');
++    try {
++      let escritos = 0;
++      while (escritos < buf.length) {
++        const n = fs.writeSync(fd, buf, escritos, buf.length - escritos, escritos);
++        if (!(n > 0)) throw new Error('writeSync sin progreso');
++        escritos += n;
++      }
++      try {
++        fs.fsyncSync(fd);
++      } catch (e) {
++        if (!FSYNC_NO_SOPORTADO_REG.has(e && e.code)) {
++          throw new Error(`fsync falló (${(e && e.code) || '?'}): ${e && e.message}`);
++        }
++      }
++    } finally {
++      fs.closeSync(fd);
++    }
++    fs.renameSync(tmp, ruta);
++  } catch (e) {
++    try { fs.unlinkSync(tmp); } catch (e2) {}
++    return { ok: false, motivo: String((e && e.message) || e) };
++  }
++  return { ok: true };
++}
++
+ function escribirJsonDurable(ruta, obj) {
+   const tmp = `${ruta}.tmp-${process.pid}-${Date.now()}`;
+   try {
+@@ -4169,6 +4213,620 @@
+ }
+ 
+ 
++// ==================================================================
++// BLOQUE 4 — MINI-TRANSACCIÓN ARCHIVO + BASE DE DATOS
++//
++// El problema: las acciones que guardan contenido del usuario hacen
++//   isEncrypted = !!securityKey  ->  writeFileSync(archivo)  ->  dbmod.run(fila)
++// y entre la primera línea y la última no hay nada que ate las dos mitades.
++// `escribirMultiple()` puede ADOPTAR en silencio la base de datos de otro
++// equipo (descendencia lineal, db.js:854), así que la fila puede acabar en una
++// base de datos cuya sal ya no corresponde al archivo que acabamos de cifrar —
++// y ese archivo no lo abre nadie nunca más.
++//
++// No existe una transacción atómica real entre SQLite y el sistema de
++// archivos. Lo que sí se puede construir es que CADA ventana de corte deje un
++// estado DEMOSTRABLE y decidible al arrancar:
++//
++//   F-1 INVARIANTE  no se inicia nada si hay un journal PROPIO pendiente
++//   F0  CAPTURAR    base_commit_id + cifrado + writer + action_id, JUNTOS
++//   F1  PREPARAR    tmp durable; new_sha256 de los bytes RELEÍDOS
++//   F2  JOURNAL     durable  ---- a partir de aquí se toca el destino ----
++//   F3  PUBLICAR    renames con comprobación por hash
++//   F4  CONFIRMAR   UNA mutación con exigirCommitBase + la marca de la acción
++//   F5  LIMPIAR     borrar .old y journal
++//
++// La pieza de la que depende todo es la MARCA: `app_meta['acciones_<writer>']`
++// se escribe DENTRO de la misma mutación, así que si el proceso muere entre F4
++// y F5 la base de datos misma demuestra que la acción se aplicó y la
++// recuperación sabe que NO debe deshacer el archivo.
++//
++// Por qué por writer y no una lista global: una lista global la desalojan las
++// acciones de CUALQUIER equipo, y entonces la prueba caduca. Por writer, solo
++// nos desalojan nuestras propias acciones posteriores — y el invariante F-1
++// garantiza que no hay ninguna mientras quede un journal propio pendiente.
++// ==================================================================
++// Forma 1 del contrato de acción, para que TODAS las salidas tempranas de las
++// cuatro acciones interactivas la usen. `reintentable` distingue "vuelve a
++// intentarlo dentro de un momento" de "no insistas".
++function accionNoAplicada(error, reintentable) {
++  return { ok: false, aplicado: false, reintentable: !!reintentable, error };
++}
++
++const ACCIONES_DIR_NAME = '.panorama-acciones';
++const ACCIONES_JOURNAL_V = 1;
++const ACCIONES_MARCA_MAX = 8;
++
++function accionesDir() {
++  return path.join(app.getPath('userData'), ACCIONES_DIR_NAME);
++}
++function nuevoActionId() {
++  // 16 bytes, igual que los commit-id de A3.3. No se inventa otra identidad
++  // más débil sin ganar nada.
++  return crypto.randomBytes(16).toString('hex');
++}
++function journalAccionPath(actionId) {
++  return path.join(accionesDir(), `${actionId}.json`);
++}
++function claveMarcaAcciones(writer) {
++  return `acciones_${writer}`;
++}
++
++// --- la marca dentro de la MISMA mutación ---------------------------------
++//
++// TRES estados, no dos. "La clave no existe" y "la clave existe pero no se
++// puede interpretar" son cosas distintas: confundirlas convertía una marca
++// corrupta en "ninguna acción aplicada", y con eso la recuperación deshacía el
++// archivo de una acción que SÍ estaba confirmada — justo lo que la marca
++// existe para impedir.
++function leerMarcaAcciones() {
++  const w = dbmod.getInstallationId();
++  let v = null;
++  try {
++    v = getMeta(claveMarcaAcciones(w));
++  } catch (e) {
++    return { ok: false, noDemostrable: true, motivo: `no se pudo leer la marca (${String((e && e.message) || e)})` };
++  }
++  if (v === null || v === undefined || v === '') return { ok: true, lista: [] };
++  let a = null;
++  try { a = JSON.parse(v); } catch (e) {
++    return { ok: false, noDemostrable: true, motivo: `la marca no es JSON válido (${String((e && e.message) || e)})` };
++  }
++  if (!Array.isArray(a) || !a.every((x) => typeof x === 'string')) {
++    return { ok: false, noDemostrable: true, motivo: 'la marca no es una lista de identificadores' };
++  }
++  return { ok: true, lista: a };
++}
++
++// 'aplicada' | 'no-aplicada' | 'no-demostrable'
++function estadoAccionEnMarca(actionId) {
++  const m = leerMarcaAcciones();
++  if (!m.ok) return { estado: 'no-demostrable', motivo: m.motivo };
++  return { estado: m.lista.indexOf(actionId) >= 0 ? 'aplicada' : 'no-aplicada' };
++}
++function accionYaAplicada(actionId) {
++  return estadoAccionEnMarca(actionId).estado === 'aplicada';
++}
++
++// Se construye JUSTO antes de confirmar, sobre la lista vigente.
++//
++// Si la marca no se puede interpretar se empieza una lista nueva: llegar aquí
++// implica que F-1 ya comprobó que NO hay ningún journal propio pendiente, así
++// que no hay ninguna prueba que preservar. Queda registrado igualmente.
++function sentenciaMarcaAccion(actionId) {
++  const w = dbmod.getInstallationId();
++  const m = leerMarcaAcciones();
++  if (!m.ok) appLog(`Acción — la marca de este equipo no se pudo interpretar (${m.motivo}); se reinicia la lista.`);
++  const previas = m.ok ? m.lista : [];
++  const lista = [actionId].concat(previas.filter((x) => x !== actionId)).slice(0, ACCIONES_MARCA_MAX);
++  return {
++    sql: 'INSERT INTO app_meta(key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
++    params: [claveMarcaAcciones(w), JSON.stringify(lista)],
++  };
++}
++
++// --- lectura y validación de journals -------------------------------------
++// No basta con mirar el nombre del archivo: hay que leerlo y comprobar que
++// declara lo mínimo para poder decidir sobre él.
++const ACCIONES_TIPOS = new Set(['backup', 'meeting-nuevo', 'meeting-editar', 'candidate-eval', 'migracion-legado']);
++const esHex = (s, n) => typeof s === 'string' && s.length === n && /^[0-9a-f]+$/i.test(s);
++const esEnteroNoNegativo = (n) => typeof n === 'number' && Number.isInteger(n) && n >= 0;
++
++// VALIDACIÓN CERRADA. Un journal solo sirve como evidencia si está COMPLETO:
++// `resolverAccionPendiente()` razona con `modo`, `new_sha256` y
++// `original_sha256`, y si llegan como `undefined` las comparaciones por hash
++// dejan de significar nada — el peor caso era un journal propio, JSON válido
++// pero truncado, con el destino ausente: entraba por la rama de resolución y
++// podía acabar borrándose a sí mismo con la evidencia a medias.
++//
++// EVIDENCIA INCOMPLETA NO ES ESTADO AUSENTE. Nada se reconstruye ni se adivina.
++function leerJournalAccion(ruta) {
++  let j = null;
++  try {
++    j = JSON.parse(fs.readFileSync(ruta, 'utf8'));
++  } catch (e) {
++    return { clase: 'ilegible', ruta, motivo: String((e && e.message) || e) };
++  }
++  if (!j || typeof j !== 'object' || Array.isArray(j)) {
++    return { clase: 'desconocido', ruta, motivo: 'el journal no es un objeto' };
++  }
++  if (j.v !== ACCIONES_JOURNAL_V) {
++    return { clase: 'desconocido', ruta, motivo: `versión ${JSON.stringify(j.v)}` };
++  }
++  const falta = [];
++  if (!esHex(j.action_id, 32)) falta.push('action_id no son 32 hex');
++  if (!esHex(j.writer, 32)) falta.push('writer no tiene el formato de un installation-id');
++  if (!ACCIONES_TIPOS.has(j.tipo)) falta.push(`tipo desconocido (${JSON.stringify(j.tipo)})`);
++  if (!esHex(j.base_commit_id, 32)) falta.push('base_commit_id no es un commit válido');
++  if (j.cifrado !== 0 && j.cifrado !== 1) falta.push('cifrado no es 0 ni 1');
++  if (typeof j.destino !== 'string' || !j.destino || !path.isAbsolute(j.destino)) falta.push('destino no es una ruta absoluta');
++  if (j.modo !== 'nuevo' && j.modo !== 'overwrite') falta.push(`modo no es "nuevo" ni "overwrite" (${JSON.stringify(j.modo)})`);
++  if (!esHex(j.new_sha256, 64)) falta.push('new_sha256 no es un SHA-256');
++  if (!esEnteroNoNegativo(j.new_size)) falta.push('new_size no es un entero >= 0');
++  if (j.fase !== 'publicando') falta.push(`fase inesperada (${JSON.stringify(j.fase)})`);
++  if (typeof j.startedAt !== 'string' || !j.startedAt) falta.push('startedAt vacío');
++  // Invariantes entre el modo y los datos del original.
++  if (j.modo === 'nuevo') {
++    if (j.original_sha256 !== null) falta.push('modo "nuevo" con original_sha256');
++    if (j.original_size !== 0) falta.push('modo "nuevo" con original_size distinto de 0');
++  } else if (j.modo === 'overwrite') {
++    if (!esHex(j.original_sha256, 64)) falta.push('modo "overwrite" sin original_sha256 válido');
++    if (!esEnteroNoNegativo(j.original_size)) falta.push('modo "overwrite" sin original_size válido');
++  }
++  if (falta.length) {
++    // `writer` se devuelve aparte SOLO si es identificable, para poder decir
++    // "es nuestro y está incompleto" sin tratarlo como evidencia.
++    return {
++      clase: 'incompleto', ruta, motivo: falta.join('; '),
++      writerDeclarado: esHex(j.writer, 32) ? j.writer : null,
++      destinoDeclarado: (typeof j.destino === 'string' && j.destino) ? j.destino : null,
++    };
++  }
++  return { clase: 'valido', ruta, j };
++}
++
++// ENOENT es lo único que demuestra "no hay ningún journal". Cualquier otro
++// error (EIO, EACCES, la unidad de red caída un instante) significa "NO SE
++// PUEDE SABER", y tratarlo como lista vacía rompía el invariante F-1: se
++// permitiría empezar una acción nueva con otra propia pendiente sin resolver.
++function journalsDeAcciones() {
++  let nombres = [];
++  try {
++    nombres = fs.readdirSync(accionesDir()).filter((f) => /\.json$/i.test(f));
++  } catch (e) {
++    const cod = (e && e.code) || '';
++    if (cod === 'ENOENT') return { ok: true, entradas: [] };
++    return { ok: false, noVerificable: true, codigo: cod, motivo: String((e && e.message) || e) };
++  }
++  return { ok: true, entradas: nombres.map((f) => leerJournalAccion(path.join(accionesDir(), f))) };
++}
++
++// Devuelve los journals propios COMPLETOS y, por separado, los propios que se
++// pueden identificar como nuestros pero NO sirven como evidencia. Los segundos
++// no se resuelven: bloquean.
++function journalsPropiosPendientes() {
++  const r = journalsDeAcciones();
++  if (!r.ok) return r;
++  const yo = dbmod.getInstallationId();
++  return {
++    ok: true,
++    entradas: r.entradas.filter((e) => e.clase === 'valido' && e.j.writer === yo),
++    inservibles: r.entradas.filter((e) => e.clase === 'incompleto' && e.writerDeclarado === yo),
++  };
++}
++
++// ¿Hay un journal de OTRO equipo gobernando ESTE destino?
++//
++// Diferencia deliberada con el Bloque 3: aquí un journal ajeno NO cierra la
++// app. Con la carpeta compartida y un autoguardado cada 15 s, el otro equipo
++// tendrá casi siempre uno en vuelo, y cerrar Panorama por eso la haría
++// inservible. Pero "ignorar siempre" es demasiado permisivo para las acciones
++// que SOBRESCRIBEN: si el otro equipo publicó su versión y cayó antes de
++// confirmar, escribir encima destruye su posibilidad de recuperarse. Se
++// rechaza SOLO esa acción.
++function destinoOcupadoPorOtroEquipo(destino) {
++  const lista = journalsDeAcciones();
++  if (!lista.ok) {
++    // No se puede saber si alguien gobierna este destino: no se toca.
++    return { ocupado: true, indeterminado: true, motivo: lista.motivo };
++  }
++  const yo = dbmod.getInstallationId();
++  const dest = path.resolve(String(destino)).toLowerCase();
++  for (const r of lista.entradas) {
++    if (r.clase === 'valido') {
++      if (r.j.writer === yo) continue;
++      if (path.resolve(r.j.destino).toLowerCase() === dest) {
++        return { ocupado: true, porWriter: r.j.writer, actionId: r.j.action_id };
++      }
++      continue;
++    }
++    // Journal ajeno que no se puede interpretar: no se sabe qué destino
++    // gobierna. No se cierra la app, pero tampoco se toca nada que pudiera
++    // colisionar, y desde luego no se borra ese journal.
++    return { ocupado: true, indeterminado: true, ruta: r.ruta, motivo: r.motivo };
++  }
++  return { ocupado: false };
++}
++
++// --- estado del destino, por BYTES ----------------------------------------
++function estadoDestinoAccion(j) {
++  const h = sha256DeArchivo(j.destino);
++  if (h.ilegible) return { clase: 'ilegible', detalle: `no se pudo leer "${j.destino}" (${h.codigo})` };
++  if (!h.existe) return { clase: 'ausente' };
++  if (h.sha === j.new_sha256) return { clase: 'publicado' };
++  if (j.modo === 'overwrite' && h.sha === j.original_sha256) return { clase: 'original' };
++  return { clase: 'ajeno', detalle: `"${j.destino}" no es ni lo que había ni lo que se preparó` };
++}
++
++// --- resolución de UN journal propio: CASO A / B / C ----------------------
++//
++// Se usa en dos sitios con la MISMA lógica: al arrancar, y en F-1 antes de
++// iniciar cualquier acción nueva.
++function resolverAccionPendiente(j) {
++  const tmp = `${j.destino}.tmp-${j.writer}-${j.action_id}`;
++  const old = `${j.destino}.old-${j.action_id}`;
++  const est = estadoDestinoAccion(j);
++  const enMarca = estadoAccionEnMarca(j.action_id);
++
++  const cerrar = (motivo, detalle, extra) => {
++    appLog(`ERROR PS-2006 — ${motivo}${detalle ? ': ' + detalle : ''}`);
++    return Object.assign({ caso: 'C', ok: false, actionId: j.action_id, motivo, detalle: detalle || null }, extra || {});
++  };
++  // Un residuo solo se retira si se puede demostrar que es EL NUESTRO.
++  //   'retirado'  — no estaba, o era el nuestro y se borró
++  //   'ajeno'     — existe pero no son los bytes que esperábamos
++  //   'no-se-pudo'— es el nuestro pero el borrado falló
++  const retirarResiduo = (ruta, shaEsperado) => {
++    const h = sha256DeArchivo(ruta);
++    if (h.ilegible) return 'ajeno';
++    if (!h.existe) return 'retirado';
++    if (shaEsperado === null || shaEsperado === undefined || h.sha !== shaEsperado) return 'ajeno';
++    try { fs.unlinkSync(ruta); } catch (e) { return 'no-se-pudo'; }
++    return 'retirado';
++  };
++
++  // ---------- La marca no se puede interpretar ----------------------------
++  // No es "no aplicada": es que no lo sabemos. Deshacer aquí podría tirar una
++  // acción confirmada.
++  if (enMarca.estado === 'no-demostrable') {
++    return cerrar('no se puede saber si un guardado pendiente llegó a aplicarse',
++      enMarca.motivo, { clasificacion: 'accion-no-demostrable' });
++  }
++
++  // ---------- CASO B: la mutación SÍ se aplicó ----------------------------
++  if (enMarca.estado === 'aplicada') {
++    // La marca sola NO autoriza a borrar el .old a ciegas: si el destino ya no
++    // es el nuestro y nadie puede demostrar que lo sustituyó una acción
++    // posterior CONFIRMADA, se conserva todo.
++    if (est.clase !== 'publicado') {
++      return cerrar(
++        'una acción ya aplicada tiene el archivo cambiado desde fuera',
++        `${j.destino} (${est.clase}${est.detalle ? ': ' + est.detalle : ''})`,
++        { aplicada: true, clasificacion: 'accion-aplicada-destino-cambiado' });
++    }
++    // Y tampoco se borra el journal si los residuos no son demostrablemente
++    // nuestros: perder la relación entre ese `.old` y su acción es perder la
++    // única explicación de por qué ese archivo está ahí.
++    const rOld = retirarResiduo(old, j.original_sha256);
++    const rTmp = retirarResiduo(tmp, j.new_sha256);
++    if (rOld !== 'retirado' || rTmp !== 'retirado') {
++      return cerrar(
++        'una acción aplicada dejó material que no se puede identificar como suyo',
++        `.old: ${rOld}, .tmp: ${rTmp}`,
++        { aplicada: true, clasificacion: 'residuo-no-demostrable' });
++    }
++    try { fs.unlinkSync(journalAccionPath(j.action_id)); } catch (e) {
++      return cerrar('una acción aplicada quedó con su registro sin poder retirar',
++        String((e && e.message) || e), { aplicada: true, clasificacion: 'residuo-no-demostrable' });
++    }
++    appLog(`Acción ${j.action_id} (${j.tipo}) ya estaba aplicada y su archivo es coherente: limpieza completada.`);
++    return { caso: 'B', ok: true, actionId: j.action_id, limpiado: true };
++  }
++
++  // ---------- CASO C: el destino no es demostrable -----------------------
++  if (est.clase === 'ilegible' || est.clase === 'ajeno') {
++    return cerrar('el destino de una acción pendiente no se corresponde con lo que el registro esperaba',
++      est.detalle, { clasificacion: 'accion-no-demostrable' });
++  }
++
++  // ---------- CASO A: no se aplicó -> vuelta atrás por hash ---------------
++  const borrarSiEsNuestro = (ruta, shaEsperado) => {
++    const h = sha256DeArchivo(ruta);
++    if (h.ilegible) return false;
++    if (!h.existe) return true;
++    if (h.sha !== shaEsperado) return false;
++    try { fs.unlinkSync(ruta); return true; } catch (e) { return false; }
++  };
++  try {
++    if (j.modo === 'nuevo') {
++      if (est.clase === 'publicado') {
++        if (!borrarSiEsNuestro(j.destino, j.new_sha256)) {
++          return cerrar('no se pudo retirar el archivo de una acción que no llegó a confirmarse', j.destino);
++        }
++      }
++      // 'ausente' -> nada que deshacer
++    } else {
++      const hOld = sha256DeArchivo(old);
++      const oldValido = hOld.existe && !hOld.ilegible && hOld.sha === j.original_sha256;
++      // Si el journal dice que NO había archivo previo, deshacer es
++      // simplemente retirar lo que publicamos: no hay original que reponer y
++      // exigir un `.old` sería tratar un primer guardado como si fuera un
++      // reemplazo (el caso real del primer candidateEval de un proyecto).
++      const noHabiaOriginal = j.original_sha256 === null || j.original_sha256 === undefined;
++      if (est.clase === 'publicado') {
++        if (noHabiaOriginal) {
++          if (!borrarSiEsNuestro(j.destino, j.new_sha256)) {
++            return cerrar('no se pudo retirar el archivo de una acción que no llegó a confirmarse', j.destino);
++          }
++        } else {
++          if (!oldValido) {
++            return cerrar(hOld.existe
++              ? 'la copia apartada de una acción pendiente no son los bytes originales'
++              : 'falta la copia del original de una acción pendiente', j.destino);
++          }
++          fs.renameSync(j.destino, tmp);
++          fs.renameSync(old, j.destino);
++        }
++      } else if (est.clase === 'ausente') {
++        // El destino no está: o nunca llegó a publicarse (y no había original),
++        // o se quedó entre los dos renames y su original espera en `.old`.
++        if (noHabiaOriginal) { /* nada que reponer */ }
++        else if (!oldValido) {
++          return cerrar('el destino de una acción pendiente no está y no hay original que reponer', j.destino);
++        } else {
++          fs.renameSync(old, j.destino);
++        }
++      }
++      // 'original' -> nunca se llegó a publicar
++    }
++  } catch (e) {
++    return cerrar('fallo al deshacer una acción pendiente', String((e && e.message) || e));
++  }
++
++  if (!borrarSiEsNuestro(tmp, j.new_sha256)) {
++    return cerrar('la vuelta atrás dejó un archivo preparado que no se puede identificar', tmp,
++      { clasificacion: 'residuo-no-demostrable' });
++  }
++  try { fs.unlinkSync(journalAccionPath(j.action_id)); } catch (e) {
++    return cerrar('la vuelta atrás se completó pero su registro no se pudo retirar',
++      String((e && e.message) || e), { clasificacion: 'residuo-no-demostrable' });
++  }
++  appLog(`Acción ${j.action_id} (${j.tipo}) no llegó a confirmarse: deshecha, el destino queda como estaba.`);
++  return { caso: 'A', ok: true, actionId: j.action_id, deshecha: true };
++}
++
++// Recorre TODOS los journals. Se llama al arrancar (junto a la recuperación
++// del rekey) y desde F-1.
++function recuperarAccionesPendientes() {
++  const r = { resueltas: [], fallosCerrados: [], ajenos: 0, ilegiblesAjenos: 0 };
++  const lista = journalsDeAcciones();
++  if (!lista.ok) {
++    // No se puede leer la carpeta: NO se concluye que no haya nada pendiente.
++    appLog(`ERROR PS-2006 — no se pudo comprobar si hay guardados pendientes: ${lista.motivo}`);
++    r.noVerificable = true;
++    r.motivo = lista.motivo;
++    r.fallosCerrados.push({ caso: 'C', ok: false, motivo: 'no se pudo leer la carpeta de guardados pendientes', detalle: lista.motivo, clasificacion: 'accion-no-demostrable' });
++    return r;
++  }
++  const yo = dbmod.getInstallationId();
++  for (const e of lista.entradas) {
++    if (e.clase !== 'valido') {
++      // Evidencia incompleta: NO se resuelve, NO se borra nada — ni el journal,
++      // ni el tmp, ni el .old, ni el archivo. Si además es demostrablemente
++      // nuestro, se registra como fallo cerrado para que el arranque lo trate
++      // como tal; si ni eso se puede saber, solo se conserva.
++      r.ilegiblesAjenos++;
++      appLog(`Acción — journal no interpretable, se conserva sin tocar: ${path.basename(e.ruta)} (${e.motivo})`);
++      if (e.writerDeclarado && e.writerDeclarado === yo) {
++        r.fallosCerrados.push({
++          caso: 'C', ok: false, motivo: 'el registro de un guardado propio está incompleto',
++          detalle: e.motivo, clasificacion: 'accion-no-demostrable', ruta: e.ruta,
++        });
++      }
++      continue;
++    }
++    if (e.j.writer !== yo) { r.ajenos++; continue; }
++    const res = resolverAccionPendiente(e.j);
++    if (res.ok) r.resueltas.push(res);
++    else r.fallosCerrados.push(res);
++  }
++  if (r.ajenos) appLog(`Acción — ${r.ajenos} journal(es) de otro equipo: se ignoran (no gobiernan nada nuestro).`);
++  return r;
++}
++
++// ==================================================================
++// El helper. `sentencias(ctx)` devuelve las sentencias de BD de ESA acción,
++// ya con el flag de cifrado correcto; el helper le añade la marca.
++// ==================================================================
++function ejecutarAccionDeArchivo(opts) {
++  const o = opts || {};
++  const destino = o.destino;
++  const modo = o.modo === 'overwrite' ? 'overwrite' : 'nuevo';
++  const writer = dbmod.getInstallationId();
++
++  const noAplicado = (error, reintentable, extra) =>
++    Object.assign({ ok: false, aplicado: false, reintentable: !!reintentable, error }, extra || {});
++
++  // ---- F-1: INVARIANTE "journal propio pendiente = ninguna acción nueva" --
++  // Sin esto, una acción confirmada cuyo journal no se pudo borrar podría ser
++  // desalojada de la marca por nuestras 8 acciones siguientes, y la
++  // recuperación deshría un archivo que SÍ estaba confirmado.
++  const propios = journalsPropiosPendientes();
++  if (!propios.ok) {
++    // No se puede ni mirar la carpeta: no se sabe si hay uno pendiente. Empezar
++    // aquí rompería el invariante del que depende la prueba de la marca.
++    return noAplicado(
++      'No se ha podido comprobar si hay un guardado anterior sin terminar. No se inicia ninguno ' +
++      'nuevo hasta poder comprobarlo.\n\nDetalle: ' + propios.motivo,
++      true, { bloqueo: 'accion-no-verificable' });
++  }
++  // Un journal PROPIO estructuralmente inválido no se resuelve ni se borra: no
++  // se sabe qué pasó, así que tampoco se empieza nada nuevo encima.
++  if (propios.inservibles && propios.inservibles.length) {
++    const e0 = propios.inservibles[0];
++    appLog(`ERROR PS-2006 — hay un guardado propio cuyo registro está incompleto: ${path.basename(e0.ruta)} (${e0.motivo})`);
++    return noAplicado(
++      'Hay un guardado anterior de este equipo cuyo registro está incompleto y no se puede saber qué ' +
++      'pasó con él. No se inicia ninguno nuevo: cierra la aplicación y revisa el registro.',
++      false, { bloqueo: 'accion-no-demostrable' });
++  }
++  for (const e of propios.entradas) {
++    const res = resolverAccionPendiente(e.j);
++    if (!res.ok) {
++      return noAplicado(
++        'Hay un guardado anterior de este equipo que no se ha podido resolver con certeza. ' +
++        'No se inicia ninguno nuevo hasta aclararlo: cierra la aplicación y revisa el registro.',
++        false, { bloqueo: 'accion-no-demostrable', actionIdPendiente: res.actionId });
++    }
++  }
++
++  // ---- F0: capturar TODO junto ------------------------------------------
++  const bloq = bloqueoDeSeguridad();
++  if (bloq) return noAplicado(bloq.mensaje, false, { bloqueo: bloq.motivo });
++
++  const ocupado = destinoOcupadoPorOtroEquipo(destino);
++  if (ocupado.ocupado) {
++    return noAplicado(
++      ocupado.indeterminado
++        ? 'Otro equipo dejó un guardado sin terminar que no se puede interpretar. No se toca nada; ' +
++          'inténtalo de nuevo más tarde.'
++        : 'Otro equipo está guardando ahora mismo sobre este mismo archivo. No se ha tocado nada; ' +
++          'inténtalo de nuevo en unos segundos.',
++      true, { bloqueo: 'ocupado-otro-writer' });
++  }
++
++  const base = dbmod.getCommitActual();
++  if (!base) return noAplicado('La base de datos todavía no tiene identidad.', false);
++  const cifrado = !!securityKey;
++  const actionId = nuevoActionId();
++  const tmp = `${destino}.tmp-${writer}-${actionId}`;
++  const old = `${destino}.old-${actionId}`;
++
++  // ---- F1: preparar el tmp, durable -------------------------------------
++  let contenido;
++  try {
++    contenido = encryptIfNeeded(o.contenidoPlano, cifrado);
++  } catch (e) {
++    return noAplicado(String((e && e.message) || e), false, { bloqueo: e && e.bloqueoSeguridad });
++  }
++  let newSha = null, newSize = 0, origSha = null, origSize = 0;
++  // El MODO REAL lo decide el helper mirando el disco, no el caller. Un
++  // `overwrite` sobre un destino que todavía no existe (el primer guardado de
++  // una evaluación de candidatos, por ejemplo) es una creación, y tratarlo
++  // como reemplazo haría que la vuelta atrás buscara un `.old` que nunca
++  // existió.
++  let modoReal = modo;
++  try {
++    fs.mkdirSync(path.dirname(destino), { recursive: true });
++    const g = escribirBufferDurable(tmp, Buffer.from(contenido, 'utf8'));
++    if (!g.ok) throw new Error(g.motivo);
++    // El hash sale de los bytes RELEÍDOS del disco, no del buffer: así detecta
++    // una escritura truncada antes de tocar nada.
++    const h = sha256DeArchivo(tmp);
++    if (!h.existe) throw new Error('el archivo preparado no se pudo releer');
++    newSha = h.sha; newSize = h.size;
++    const ho = sha256DeArchivo(destino);
++    if (ho.ilegible) throw new Error(`no se pudo leer el archivo actual (${ho.codigo})`);
++    if (ho.existe) { origSha = ho.sha; origSize = ho.size; modoReal = 'overwrite'; }
++    else modoReal = 'nuevo';
++  } catch (e) {
++    try { fs.unlinkSync(tmp); } catch (e2) {}
++    return noAplicado('No se pudo preparar el archivo: ' + String((e && e.message) || e), true);
++  }
++
++  // ---- F2: journal durable ANTES de tocar el destino ---------------------
++  const journal = {
++    v: ACCIONES_JOURNAL_V, action_id: actionId, writer,
++    tipo: o.tipo || 'desconocido', base_commit_id: base, cifrado: cifrado ? 1 : 0,
++    destino, modo: modoReal, original_sha256: origSha, original_size: origSize,
++    new_sha256: newSha, new_size: newSize,
++    fase: 'publicando', startedAt: new Date().toISOString(),
++  };
++  {
++    const g = escribirJsonDurable(journalAccionPath(actionId), journal);
++    if (!g.ok) {
++      try { fs.unlinkSync(tmp); } catch (e) {}
++      return noAplicado('No se pudo registrar la operación antes de guardar: ' + g.motivo, true);
++    }
++  }
++
++  // ---- F3: publicar, con comprobación por hash ---------------------------
++  //
++  // OJO con el `catch`: entre los dos renames del overwrite el destino puede
++  // haber quedado APARTADO. Borrar tmp+journal a ciegas aquí dejaba el archivo
++  // del usuario ausente y sin ningún registro con el que reponerlo desde su
++  // `.old`. A partir de F2, cualquier fallo se resuelve por la MISMA lógica que
++  // al arrancar — o se conserva todo.
++  try {
++    const est = estadoDestinoAccion(journal);
++    if (modoReal === 'nuevo') {
++      if (est.clase !== 'ausente') throw new Error('el destino ya existe y debería ser único');
++      fs.renameSync(tmp, destino);
++    } else if (est.clase === 'publicado') {
++      /* ya estaba: idempotencia */
++    } else if (est.clase === 'original') {
++      fs.renameSync(destino, old);
++      fs.renameSync(tmp, destino);
++    } else if (est.clase === 'ausente') {
++      fs.renameSync(tmp, destino);
++    } else {
++      throw new Error(est.detalle || 'el archivo actual no es el que se esperaba');
++    }
++  } catch (e) {
++    const vuelta = resolverAccionPendiente(journal);
++    if (!vuelta.ok) {
++      seguridadEnEstadoInconsistente = vuelta.motivo + (vuelta.detalle ? ': ' + vuelta.detalle : '');
++      return noAplicado(
++        'No se pudo guardar el archivo y la vuelta atrás no se pudo completar. No se ha destruido nada: ' +
++        'cierra la aplicación y revisa el registro antes de seguir.\n\nDetalle: ' + String((e && e.message) || e),
++        false, { bloqueo: 'accion-no-demostrable' });
++    }
++    return noAplicado('No se pudo guardar el archivo: ' + String((e && e.message) || e), true);
++  }
++
++  // ---- F4: UNA mutación, anclada a la base, con la marca dentro ----------
++  const sentencias = (o.sentencias ? o.sentencias({ cifrado, actionId, destino }) : []).slice();
++  sentencias.push(sentenciaMarcaAccion(actionId));
++  try {
++    dbmod.escribirMultiple(sentencias, { exigirCommitBase: base });
++  } catch (e) {
++    if (e && e.aplicado === true) {
++      // POST-confirmación: la fila SÍ está. NO se deshace el archivo — eso
++      // dejaría "fila nueva + archivo viejo", que es el estado prohibido nº 3.
++      try { fs.unlinkSync(old); } catch (e2) {}
++      try { fs.unlinkSync(journalAccionPath(actionId)); } catch (e2) {}
++      appLog(`ERROR PS-2006 — la acción ${actionId} (${journal.tipo}) SÍ se guardó pero no se pudo verificar: ${e.message}`);
++      return {
++        ok: true, aplicado: true, verificado: false, requiereReinicio: true, actionId,
++        aviso: 'El cambio SÍ se ha guardado, pero no se ha podido verificar y esta sesión no puede ' +
++          'continuar de forma segura. Cierra Panorama del Servicio y vuelve a abrirlo. NO repitas la ' +
++          'operación.\n\nDetalle: ' + String(e.message),
++      };
++    }
++    // PRE-confirmación: la base de datos no se tocó. Vuelta atrás por hash.
++    const vuelta = resolverAccionPendiente(journal);
++    const reintentable = !!(e && (e.kind === 'base-cambiada' || e.kind === 'conflicto' ||
++      e.kind === 'ocupado' || e.kind === 'io'));
++    if (!vuelta.ok) {
++      seguridadEnEstadoInconsistente = vuelta.motivo + (vuelta.detalle ? ': ' + vuelta.detalle : '');
++      return noAplicado(
++        'No se guardó, y además la vuelta atrás no se pudo completar. No se ha destruido nada: ' +
++        'cierra la aplicación y revisa el registro antes de seguir.\n\nDetalle: ' + String((e && e.message) || e),
++        false, { bloqueo: 'accion-no-demostrable' });
++    }
++    return noAplicado(
++      e && e.kind === 'base-cambiada'
++        ? 'Otro equipo guardó cambios mientras se guardaba esto. No se ha modificado nada; vuelve a intentarlo.'
++        : 'No se pudo guardar: ' + String((e && e.message) || e),
++      reintentable);
++  }
++
++  // ---- F5: limpiar --------------------------------------------------------
++  try { fs.unlinkSync(old); } catch (e) {}
++  try { fs.unlinkSync(journalAccionPath(actionId)); } catch (e) {}
++  return { ok: true, aplicado: true, verificado: true, actionId };
++}
++
+ // ------------------------------------------------------------------
+ // Migración única de backups "viejos": versiones anteriores de esta app
+ // guardaban el JSON completo de cada backup dentro de la propia base de
+@@ -4200,22 +4858,32 @@
+   );
+   if (rows.length === 0) return;
+   let moved = 0;
++  // Bloque 4: UNA mini-transacción por fila. Y si una queda en estado no
++  // demostrable, la migración se DETIENE — seguir con las siguientes sería
++  // escribir más encima de algo que no se sabe cómo quedó.
+   for (const r of rows) {
++    let dir;
+     try {
+-      const dir = backupsDirForProject({ id: r.pid, name: r.name, backup_dir: r.backup_dir });
+-      const fileName = `backup_legacy_${r.backup_id}_${Date.now()}.json`;
+-      const content = securityKey ? securitymod.encryptString(securityKey, r.payload) : r.payload;
+-      fs.writeFileSync(path.join(dir, fileName), content, 'utf8');
+-      dbmod.run('UPDATE backups SET payload=?, file_path=?, encrypted=? WHERE id=?', [
+-        '',
+-        fileName,
+-        securityKey ? 1 : 0,
+-        r.backup_id,
+-      ]);
+-      moved++;
++      dir = backupsDirForProject({ id: r.pid, name: r.name, backup_dir: r.backup_dir });
+     } catch (e) {
+-      console.warn('No se pudo migrar un backup antiguo a archivo:', e);
++      appLog('Migración de backups antiguos — no se pudo preparar la carpeta: ' + String((e && e.message) || e));
++      break;
+     }
++    const fileName = `backup_legacy_${r.backup_id}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.json`;
++    const res = ejecutarAccionDeArchivo({
++      tipo: 'migracion-legado', destino: path.join(dir, fileName),
++      contenidoPlano: r.payload, modo: 'nuevo',
++      sentencias: ({ cifrado }) => ([{
++        sql: 'UPDATE backups SET payload=?, file_path=?, encrypted=? WHERE id=?',
++        params: ['', fileName, cifrado ? 1 : 0, r.backup_id],
++      }]),
++    });
++    if (res.ok) { moved++; continue; }
++    if (res.bloqueo === 'accion-no-demostrable' || res.reintentable === false) {
++      appLog(`ERROR PS-2006 — migración de backups antiguos DETENIDA en la fila ${r.backup_id}: ${res.error}`);
++      break;
++    }
++    appLog(`Migración de backups antiguos — la fila ${r.backup_id} no se pudo migrar (se reintentará): ${res.error}`);
+   }
+   console.log(`Migración de backups antiguos: ${moved}/${rows.length} movidos a archivo.`);
+   // Con las filas ya vacías de contenido, compacta el archivo .sqlite3 en
+@@ -7338,6 +8006,7 @@
+     appLog('ERROR PS-2004 — ' + rekeyRecovery.motivo + ': ' + rekeyRecovery.detalle);
+   }
+ 
++
+   // FAIL-CLOSED. Si la recuperación tocó o terminó archivos pero no puede
+   // demostrar y confirmar la base de datos que les corresponde, esta sesión no
+   // continúa: ni login, ni launcher, ni migraciones, ni vacuum, ni ninguna
+@@ -7368,6 +8037,37 @@
+     return;
+   }
+ 
++
++  // Bloque 4: los guardados archivo+BD interrumpidos se resuelven en el MISMO
++  // punto y con el mismo criterio. Si alguno queda sin demostrar, tampoco se
++  // ejecuta después una migración que escribiría más encima.
++  let accionesRecovery = null;
++  try {
++    accionesRecovery = recuperarAccionesPendientes();
++  } catch (e) {
++    accionesRecovery = { resueltas: [], fallosCerrados: [{ motivo: 'fallo inesperado al recuperar guardados pendientes', detalle: String((e && e.message) || e) }] };
++    appLog('ERROR PS-2006 — ' + accionesRecovery.fallosCerrados[0].motivo + ': ' + accionesRecovery.fallosCerrados[0].detalle);
++  }
++  if (accionesRecovery && accionesRecovery.fallosCerrados.length) {
++    const f = accionesRecovery.fallosCerrados[0];
++    dialog.showMessageBoxSync(undefined, {
++      type: 'error',
++      title: 'Un guardado anterior quedó sin resolver',
++      message: 'Panorama del Servicio ha encontrado un guardado que no puede decidir con certeza.',
++      detail:
++        `${f.motivo}.\n\n` + (f.detalle ? `Detalle: ${f.detalle}\n\n` : '') +
++        `Carpeta de trabajo:\n${accionesDir()}\n\n` +
++        'NO se ha borrado ni sobrescrito nada: se conserva todo el material. La aplicación se cierra a ' +
++        'propósito en vez de seguir escribiendo encima. Vuelve a abrirla: si el problema era temporal ' +
++        '(otro equipo guardando, la carpeta compartida sin conexión), se resuelve solo.' +
++        errorCodeSuffix('PS-2006'),
++      buttons: ['Cerrar'],
++      noLink: true,
++    });
++    closeSplashWindow(() => app.quit());
++    return;
++  }
++
+   maybeRunPeriodicVacuum();
+   const loggedIn = await runLoginFlow();
+   if (!loggedIn) {
+@@ -7880,32 +8580,33 @@
+ // contraseña aparte.
+ // ------------------------------------------------------------------
+ ipcMain.handle('meeting:savePrep', (evt, { projectId, meetingDate, finalidad, payload } = {}) => {
+-  if (procesoComprometido) return { ok: false, error: 'La aplicación está cerrándose por un fallo interno; no se ha guardado nada.' }; // B2
+-  if (rekeyInProgress) return { ok: false, error: REKEY_BUSY_MESSAGE }; // A1, ver backup:save
++  // Bloque 4: las guardas tempranas devuelven ya el CONTRATO DE ACCIÓN, no un
++  // `{ok,error}` a medias. Así main dice la verdad por sí mismo y no depende de
++  // que preload complete la forma.
++  if (procesoComprometido) return accionNoAplicada('La aplicación está cerrándose por un fallo interno; no se ha guardado nada.', false); // B2
++  if (rekeyInProgress) return accionNoAplicada(REKEY_BUSY_MESSAGE, true); // A1, ver backup:save
+   const row = dbmod.get('SELECT * FROM projects WHERE id=?', [projectId]);
+-  if (!row) return { ok: false, error: 'Proyecto no encontrado.' };
++  if (!row) return accionNoAplicada('Proyecto no encontrado.', false);
+   const now = new Date().toISOString();
+   const dir = meetingPrepsDirForProject(row);
+   const stamp = now.replace(/[:.]/g, '-');
+-  const isEncrypted = !!securityKey;
+-  const fileName = `reunion_${stamp}.json`;
+-  try {
+-    const fileContent = encryptIfNeeded(payload, isEncrypted);
+-    fs.writeFileSync(path.join(dir, fileName), fileContent, 'utf8');
+-  } catch (e) {
+-    console.warn('No se pudo escribir la preparación de reunión en disco:', e);
+-    return { ok: false, error: 'No se pudo escribir el archivo en disco: ' + ((e && e.message) || String(e)) };
+-  }
+-  let id;
+-  try {
+-    id = dbmod.run(
+-      'INSERT INTO meeting_preps(project_id, created_at, meeting_date, finalidad, file_path, encrypted) VALUES (?,?,?,?,?,?)',
+-      [projectId, now, meetingDate || null, (finalidad || '').slice(0, 300), fileName, isEncrypted ? 1 : 0]
+-    );
+-  } catch (e) {
+-    return { ok: false, error: 'No se pudo registrar la preparación en la base de datos: ' + ((e && e.message) || String(e)) };
+-  }
+-  return { ok: true, id, createdAt: now };
++  // Bloque 4: el nombre lleva un nonce además de la marca de tiempo, para que
++  // el destino sea único de verdad y la fila que lo referencia sirva como
++  // prueba permanente de que esta acción se aplicó.
++  const fileName = `reunion_${stamp}_${crypto.randomBytes(4).toString('hex')}.json`;
++  const destino = path.join(dir, fileName);
++  const r = ejecutarAccionDeArchivo({
++    tipo: 'meeting-nuevo', destino, contenidoPlano: payload, modo: 'nuevo',
++    sentencias: ({ cifrado }) => ([{
++      sql: 'INSERT INTO meeting_preps(project_id, created_at, meeting_date, finalidad, file_path, encrypted) VALUES (?,?,?,?,?,?)',
++      params: [projectId, now, meetingDate || null, (finalidad || '').slice(0, 300), fileName, cifrado ? 1 : 0],
++    }]),
++  });
++  if (!r.ok) return r;
++  // El id de la fila no lo devuelve el helper (la mutación lleva más de una
++  // sentencia): se relee por su `file_path`, que es único.
++  const fila = dbmod.get('SELECT id FROM meeting_preps WHERE project_id=? AND file_path=?', [projectId, fileName]);
++  return Object.assign({}, r, { id: fila ? fila.id : null, createdAt: now });
+ });
+ 
+ // Actualiza EN SITIO una preparación ya guardada (mismo archivo, misma fila
+@@ -7915,30 +8616,25 @@
+ // `created_at` original (es la fecha en que se guardó por primera vez);
+ // solo se actualizan meeting_date/finalidad y el contenido del archivo.
+ ipcMain.handle('meeting:updatePrep', (evt, { projectId, id, meetingDate, finalidad, payload } = {}) => {
+-  if (procesoComprometido) return { ok: false, error: 'La aplicación está cerrándose por un fallo interno; no se ha guardado nada.' }; // B2
+-  if (rekeyInProgress) return { ok: false, error: REKEY_BUSY_MESSAGE }; // A1, ver backup:save
++  if (procesoComprometido) return accionNoAplicada('La aplicación está cerrándose por un fallo interno; no se ha guardado nada.', false); // B2
++  if (rekeyInProgress) return accionNoAplicada(REKEY_BUSY_MESSAGE, true); // A1, ver backup:save
+   const row = dbmod.get('SELECT * FROM projects WHERE id=?', [projectId]);
+-  if (!row) return { ok: false, error: 'Proyecto no encontrado.' };
++  if (!row) return accionNoAplicada('Proyecto no encontrado.', false);
+   const prepRow = dbmod.get('SELECT * FROM meeting_preps WHERE id=? AND project_id=?', [id, projectId]);
+-  if (!prepRow) return { ok: false, error: 'Preparación no encontrada (puede que se haya borrado).' };
++  if (!prepRow) return accionNoAplicada('Preparación no encontrada (puede que se haya borrado).', false);
+   const dir = meetingPrepsDirForProject(row);
+-  const isEncrypted = !!securityKey;
+-  try {
+-    const fileContent = encryptIfNeeded(payload, isEncrypted);
+-    fs.writeFileSync(path.join(dir, prepRow.file_path), fileContent, 'utf8');
+-  } catch (e) {
+-    console.warn('No se pudo actualizar el archivo de la preparación de reunión en disco:', e);
+-    return { ok: false, error: 'No se pudo escribir el archivo en disco: ' + ((e && e.message) || String(e)) };
+-  }
+-  try {
+-    dbmod.run(
+-      'UPDATE meeting_preps SET meeting_date=?, finalidad=?, encrypted=? WHERE id=?',
+-      [meetingDate || null, (finalidad || '').slice(0, 300), isEncrypted ? 1 : 0, id]
+-    );
+-  } catch (e) {
+-    return { ok: false, error: 'No se pudo actualizar el registro en la base de datos: ' + ((e && e.message) || String(e)) };
+-  }
+-  return { ok: true, id };
++  const destino = path.join(dir, prepRow.file_path);
++  // Sobrescribe en sitio: el helper aparta el original y solo lo retira cuando
++  // la fila ha confirmado. Si algo falla, el archivo vuelve a ser el de antes.
++  const r = ejecutarAccionDeArchivo({
++    tipo: 'meeting-editar', destino, contenidoPlano: payload, modo: 'overwrite',
++    sentencias: ({ cifrado }) => ([{
++      sql: 'UPDATE meeting_preps SET meeting_date=?, finalidad=?, encrypted=? WHERE id=?',
++      params: [meetingDate || null, (finalidad || '').slice(0, 300), cifrado ? 1 : 0, id],
++    }]),
++  });
++  if (!r.ok) return r;
++  return Object.assign({}, r, { id });
+ });
+ 
+ ipcMain.handle('meeting:listPreps', (evt, { projectId } = {}) => {
+@@ -8210,30 +8906,24 @@
+ });
+ 
+ ipcMain.handle('candidateEval:save', (evt, { projectId, payload } = {}) => {
+-  if (procesoComprometido) return { ok: false, error: 'La aplicación está cerrándose por un fallo interno; no se ha guardado nada.' }; // B2
+-  if (rekeyInProgress) return { ok: false, error: REKEY_BUSY_MESSAGE }; // A1, ver backup:save
++  if (procesoComprometido) return accionNoAplicada('La aplicación está cerrándose por un fallo interno; no se ha guardado nada.', false); // B2
++  if (rekeyInProgress) return accionNoAplicada(REKEY_BUSY_MESSAGE, true); // A1, ver backup:save
+   const row = dbmod.get('SELECT * FROM projects WHERE id=?', [projectId]);
+-  if (!row) return { ok: false, error: 'Proyecto no encontrado.' };
++  if (!row) return accionNoAplicada('Proyecto no encontrado.', false);
+   const file = candidateEvalFileForProject(row);
+-  const isEncrypted = !!securityKey;
+-  try {
+-    const fileContent = encryptIfNeeded(payload, isEncrypted);
+-    fs.writeFileSync(file, fileContent, 'utf8');
+-  } catch (e) {
+-    console.warn('No se pudo escribir la evaluación de candidatos en disco:', e);
+-    return { ok: false, error: 'No se pudo escribir el archivo en disco: ' + ((e && e.message) || String(e)) };
+-  }
+   const now = new Date().toISOString();
+-  try {
+-    const existing = dbmod.get('SELECT project_id FROM candidate_evals WHERE project_id=?', [projectId]);
+-    if (existing) {
+-      dbmod.run('UPDATE candidate_evals SET updated_at=?, encrypted=? WHERE project_id=?', [now, isEncrypted ? 1 : 0, projectId]);
+-    } else {
+-      dbmod.run('INSERT INTO candidate_evals(project_id, updated_at, encrypted) VALUES (?,?,?)', [projectId, now, isEncrypted ? 1 : 0]);
+-    }
+-  } catch (e) {
+-    return { ok: false, error: 'No se pudo registrar la evaluación en la base de datos: ' + ((e && e.message) || String(e)) };
+-  }
++  // Un único `estado.json` por proyecto: el PRIMER guardado es una creación y
++  // los siguientes son reemplazos. El modo real lo deriva el helper mirando el
++  // disco — el caller no tiene que acertar.
++  const r = ejecutarAccionDeArchivo({
++    tipo: 'candidate-eval', destino: file, contenidoPlano: payload, modo: 'overwrite',
++    sentencias: ({ cifrado }) => ([{
++      sql: 'INSERT INTO candidate_evals(project_id, updated_at, encrypted) VALUES (?,?,?) ' +
++        'ON CONFLICT(project_id) DO UPDATE SET updated_at=excluded.updated_at, encrypted=excluded.encrypted',
++      params: [projectId, now, cifrado ? 1 : 0],
++    }]),
++  });
++  if (!r.ok) return r;
+   // v2.0.25: el badge "N entrevista(s) pendiente(s)" de la tarjeta del
+   // launcher (ver computeCandidatePendingInterviews) se queda ANTIGUO
+   // mientras la app sigue abierta -- projects:list SÍ recalcula en fresco
+@@ -8249,7 +8939,7 @@
+   if (launcherWin && !launcherWin.isDestroyed()) {
+     launcherWin.webContents.send('projects:changed');
+   }
+-  return { ok: true, updatedAt: now };
++  return Object.assign({}, r, { updatedAt: now });
+ });
+ 
+ // v0.1.75: adjuntar/ver/quitar el CV de una evaluación concreta. El archivo
+@@ -8438,10 +9128,17 @@
+ // comentario junto a migrateSchema() en db.js sobre por qué: así la base de
+ // datos nunca crece con el contenido real de los backups, sin importar
+ // cuántos proyectos o cuánto tiempo lleve usándose la app.
++//
++// Bloque 4: devuelve el MISMO contrato de tres formas que las otras tres
++// acciones, en vez del booleano histórico. El cambio obliga a tocar a la vez
++// preload.js y las dos plantillas que lo consumen: con un objeto, el viejo
++// `if (!wroteOk)` sería SIEMPRE falso y cualquier fallo pasaría por éxito —
++// exactamente el bug de `lastSerialized` de la v0.1.62, otra vez.
+ ipcMain.handle('backup:save', (evt, { projectId, payload, reason }) => {
++  const noAplicado = accionNoAplicada;
+   // B2: fallo fatal en curso — el proceso ya no es de fiar, no se inician
+   // escrituras nuevas. Va la primera de las tres guardas por severidad.
+-  if (procesoComprometido) return false;
++  if (procesoComprometido) return noAplicado('La aplicación está cerrándose por un fallo interno; no se ha guardado nada.', false);
+   // A1: mientras se re-cifra todo (activar/cambiar/desactivar la Seguridad)
+   // no se acepta ningún guardado nuevo — un archivo escrito aquí llevaría la
+   // clave VIEJA, no estaría en el inventario de esa migración, y quedaría
+@@ -8449,21 +9146,19 @@
+   // justo lo que maybeBackup() ya sabe tratar desde v0.1.62: lo registra como
+   // "write-failed", NO da por guardado el estado (no toca lastSerialized) y
+   // reintenta solo en el siguiente ciclo de 15 s.
+-  if (rekeyInProgress) return false;
++  if (rekeyInProgress) return noAplicado(REKEY_BUSY_MESSAGE, true);
+   // A2: mismo criterio, por proyecto — mientras se restaura un backup encima
+   // de este proyecto, su estado actual es justo lo que se ha pedido descartar.
+   // Guardarlo aquí lo convertiría en el backup MÁS RECIENTE (y restaurar dos
+   // veces seguidas devolvería lo que querías tirar). Cubre de una vez los tres
+   // caminos que llegan aquí: el guardado final del cierre, el 'beforeunload'
+   // del propio dashboard y el intervalo de 15 s.
+-  if (restoreInProgress.has(projectId)) return false;
++  if (restoreInProgress.has(projectId)) return noAplicado('Se está restaurando un backup de este proyecto ahora mismo.', true);
+   const row = dbmod.get('SELECT * FROM projects WHERE id=?', [projectId]);
+-  if (!row) return false;
++  if (!row) return noAplicado('Proyecto no encontrado.', false);
+   const now = new Date().toISOString();
+   const stamp = now.replace(/[:.]/g, '-');
+-  const isEncrypted = !!securityKey;
+-  const fileName = `backup_${stamp}.json`;
+-  const fileContent = encryptIfNeeded(payload, isEncrypted);
++  const fileName = `backup_${stamp}_${crypto.randomBytes(4).toString('hex')}.json`;
+ 
+   // v0.1.42: mientras dure un corte detectado a media sesión (ver
+   // startUserDataWatchdog), cada guardado normal deja además una copia extra
+@@ -8479,12 +9174,18 @@
+   // nunca llegaría a escribirse (bug real, encontrado probando esto mismo).
+   // No afecta al flujo normal si driveOutageActive está a false (caso de
+   // siempre, sin coste añadido).
++  // Bloque 4: es una COPIA DE RESCATE independiente, no parte de la
++  // mini-transacción. Ni su éxito convierte en éxito un fallo del guardado
++  // principal, ni su fallo falsea el estado de este. Por eso se escribe con el
++  // contenido cifrado igual que el principal, pero fuera del helper.
+   if (driveOutageActive) {
+     try {
+       const safetyDir = localSafetyBackupsDirForProject(row);
+-      fs.writeFileSync(path.join(safetyDir, fileName), fileContent, 'utf8');
++      fs.writeFileSync(path.join(safetyDir, fileName), encryptIfNeeded(payload, !!securityKey), 'utf8');
+       purgeOldLocalSafetyBackups(safetyDir);
++      appLog(`Backup — copia de rescate local escrita (${fileName}).`);
+     } catch (e) {
++      appLog('Backup — la copia de rescate local NO se pudo escribir: ' + String((e && e.message) || e));
+       console.warn('No se pudo escribir la copia de seguridad local de emergencia:', e);
+     }
+   }
+@@ -8492,57 +9193,79 @@
+   let dir;
+   try {
+     dir = backupsDirForProject(row);
+-    fs.writeFileSync(path.join(dir, fileName), fileContent, 'utf8');
+   } catch (e) {
+-    console.warn('No se pudo escribir backup en disco:', e);
+-    return false;
++    return noAplicado('No se pudo preparar la carpeta de backups: ' + String((e && e.message) || e), true);
+   }
+ 
+-  dbmod.run(
+-    'INSERT INTO backups(project_id, created_at, reason, payload, size, file_path, encrypted) VALUES (?,?,?,?,?,?,?)',
+-    [projectId, now, reason || 'auto', '', Buffer.byteLength(payload, 'utf8'), fileName, isEncrypted ? 1 : 0]
+-  );
+-
+-  // Purga unificada: la propia fila de la BD manda (orden por created_at) —
+-  // se borran fila Y archivo a la vez, así nunca quedan huérfanos ni
+-  // desincronizados entre sí (antes eran dos purgas independientes, una
+-  // para las filas y otra listando archivos, que podían desincronizarse).
+-  const rows = dbmod.all(
+-    'SELECT id, file_path FROM backups WHERE project_id=? ORDER BY created_at DESC',
+-    [projectId]
+-  );
+-  if (rows.length > BACKUP_KEEP) {
+-    rows.slice(BACKUP_KEEP).forEach((r) => {
+-      dbmod.run('DELETE FROM backups WHERE id=?', [r.id]);
+-      if (r.file_path) {
+-        try {
+-          fs.unlinkSync(path.join(dir, r.file_path));
+-        } catch (e) {
+-          /* ya no estaba, o no se pudo borrar: no es crítico */
+-        }
++  // El título del proyecto puede venir dentro del propio volcado. Se calcula
++  // ANTES para que su `UPDATE` entre en la MISMA mutación que el INSERT.
++  let tituloNuevo = null;
++  let projectState = null;
++  try {
++    const dump = JSON.parse(payload);
++    const fullKey = Object.keys(dump).find((k) => k.includes('panorama-servicio-full__'));
++    if (fullKey) {
++      projectState = JSON.parse(dump[fullKey]);
++      if (projectState && projectState.projectTitle && projectState.projectTitle !== 'Nombre del Servicio'
++        && projectState.projectTitle !== row.name) {
++        tituloNuevo = projectState.projectTitle;
+       }
+-    });
++    }
++  } catch (e) {
++    console.warn('No se pudo leer el título del proyecto desde el volcado:', e);
+   }
+-  dbmod.run('UPDATE projects SET updated_at=? WHERE id=?', [now, projectId]);
+ 
++  // ---- LA ACCIÓN: archivo + INSERT + updated_at + (nombre) + marca -------
++  const r = ejecutarAccionDeArchivo({
++    tipo: 'backup', destino: path.join(dir, fileName), contenidoPlano: payload, modo: 'nuevo',
++    sentencias: ({ cifrado }) => {
++      const s = [{
++        sql: 'INSERT INTO backups(project_id, created_at, reason, payload, size, file_path, encrypted) VALUES (?,?,?,?,?,?,?)',
++        params: [projectId, now, reason || 'auto', '', Buffer.byteLength(payload, 'utf8'), fileName, cifrado ? 1 : 0],
++      }, {
++        sql: 'UPDATE projects SET updated_at=? WHERE id=?', params: [now, projectId],
++      }];
++      if (tituloNuevo) s.push({ sql: 'UPDATE projects SET name=? WHERE id=?', params: [tituloNuevo, projectId] });
++      return s;
++    },
++  });
++  if (!r.ok) {
++    appLog(`Backup — NO guardado (${r.reintentable ? 'reintentable' : 'no reintentable'}): ${r.error}`);
++    return r;
++  }
++  appLog(`Backup guardado OK (acción ${r.actionId}${r.verificado === false ? ', SIN VERIFICAR' : ''}).`);
++
+   // Si este volcado ya trae un proyecto configurado (título distinto del de
+   // fábrica), hornea/actualiza la copia HTML propia de este proyecto para que
+-  // la próxima vez que se abra no vuelva a pedir el asistente (ver comentario
+-  // junto a regenerateProjectDashboardFile más arriba).
++  // la próxima vez que se abra no vuelva a pedir el asistente.
++  if (projectState && projectState.projectTitle && projectState.projectTitle !== 'Nombre del Servicio') {
++    try {
++      regenerateProjectDashboardFile(projectId, projectState.projectTitle, projectState.serviceStart);
++    } catch (e) {
++      console.warn('No se pudo actualizar la copia HTML del proyecto:', e);
++    }
++  }
++
++  // ---- MANTENIMIENTO: la purga va APARTE ---------------------------------
++  // Borra filas Y archivos, así que es una operación DESTRUCTIVA y pertenece a
++  // su propio bloque (pendiente). Aquí se ejecuta como mantenimiento
++  // independiente: su fallo NO convierte en "fallido" un backup ya aplicado, y
++  // el registro distingue las dos cosas sin ambigüedad.
+   try {
+-    const dump = JSON.parse(payload);
+-    const fullKey = Object.keys(dump).find((k) => k.includes('panorama-servicio-full__'));
+-    if (fullKey) {
+-      const projectState = JSON.parse(dump[fullKey]);
+-      if (projectState && projectState.projectTitle && projectState.projectTitle !== 'Nombre del Servicio') {
+-        regenerateProjectDashboardFile(projectId, projectState.projectTitle, projectState.serviceStart);
+-        if (projectState.projectTitle !== row.name) {
+-          dbmod.run('UPDATE projects SET name=? WHERE id=?', [projectState.projectTitle, projectId]);
++    const rows = dbmod.all(
++      'SELECT id, file_path FROM backups WHERE project_id=? ORDER BY created_at DESC',
++      [projectId]
++    );
++    if (rows.length > BACKUP_KEEP) {
++      rows.slice(BACKUP_KEEP).forEach((b) => {
++        dbmod.run('DELETE FROM backups WHERE id=?', [b.id]);
++        if (b.file_path) {
++          try { fs.unlinkSync(path.join(dir, b.file_path)); } catch (e) { /* ya no estaba */ }
+         }
+-      }
++      });
+     }
+   } catch (e) {
+-    console.warn('No se pudo actualizar la copia HTML del proyecto:', e);
++    appLog('ERROR — mantenimiento de backups falló (el backup SÍ se guardó): ' + String((e && e.message) || e));
+   }
+ 
+   // v0.1.27: cada vez que se guarda un backup (automático cada ~15s si hay
+@@ -8557,7 +9280,7 @@
+     launcherWin.webContents.send('projects:changed');
+   }
+ 
+-  return true;
++  return r;
+ });
+ 
+ ipcMain.handle('backup:list', (evt, projectId) => {

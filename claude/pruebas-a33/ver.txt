@@ -1,0 +1,1 @@
+node 20.16.0 | electron 30.5.1 | arm64

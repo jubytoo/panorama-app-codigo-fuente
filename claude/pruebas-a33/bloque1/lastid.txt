@@ -1,0 +1,7 @@
+=== db.js ORIGINAL (copia previa) ===
+  run() devolvió:            1
+  lastInsertRowId() devuelve: 0
+  ¿coinciden?                 false
+
+CONCLUSIÓN: NO coincidían ANTES tampoco -> es comportamiento preexistente, no una regresión de A3.3
+módulo temporal retirado del proyecto: true

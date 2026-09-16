@@ -1,0 +1,229 @@
+﻿  main.js bajo prueba: C:\Codigo Fuente PS\panorama-app-codigo-fuente_1\main.js
+RUTAS DE PRUEBA
+  raiz:                C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque4-CONSUMIDORES
+  ubicacion real det.: (no configurada)
+  OK    los 5 consumidores REALES se extraen de main.js sin reescribirse
+  OK    el borde REAL de preload.js se extrae y ejecuta
+
+=== I1. CAMINO FELIZ DE LOS CUATRO ===
+  OK    I1) backup:save devuelve el contrato completo
+  OK       la fila existe y su archivo tambien
+  OK       el contenido es el volcado
+  OK       el nombre del archivo lleva nonce (destino unico)
+  OK    I1) meeting:savePrep
+  OK       devuelve el id correcto de la fila
+  OK       y el archivo tiene el contenido
+  OK    I1) meeting:updatePrep
+  OK       sobrescribe el MISMO archivo
+  OK       y la fila refleja la fecha nueva
+  OK    I1) candidateEval:save
+  OK       con su archivo
+  OK       y su fila
+  OK    I1) no queda ningun journal
+  OK       ni ningun .tmp/.old suelto
+
+=== I2. backup:save — UN SOLO COMMIT, PURGA APARTE ===
+  OK    I2) el guardado principal es UN SOLO commit A3.3
+  OK       con el INSERT del backup
+  OK       el UPDATE de projects.updated_at
+  OK       el UPDATE de projects.name (el volcado traia titulo)
+  OK       y la marca de la accion
+  OK       las cuatro cosas estan en el MISMO archivo de disco
+  OK    I2) la purga mantiene el limite de BACKUP_KEEP
+  OK    I2) un fallo de la PURGA no convierte el backup en fallido
+  OK       el backup nuevo SI esta guardado
+  OK       app.log distingue "backup guardado OK" de "mantenimiento fallo"
+
+=== I3. base X -> Y ANTES DEL COMMIT ===
+  OK    I3) otro equipo avanzo la BD antes de confirmar
+  OK       NO aplicado y reintentable
+  OK       el archivo vuelve a la version anterior
+  OK       no queda journal
+  OK       no hay .old ni .tmp
+
+=== I4. FALLO PRE-CONFIRMACION y APLICADO SIN VERIFICAR ===
+  OK    I4-PRE) NO aplicado
+  OK       cero filas
+  OK       cero archivos de backup
+  OK       cero journal
+  OK    I4-POST) forma 3: aplicado sin verificar
+  OK       con aviso para el usuario
+  OK       el archivo SI esta publicado
+  OK       y la fila esta en el archivo de disco
+
+=== I5. PRIMER candidateEval Y OVERWRITE POSTERIOR ===
+  OK    I5) [estado] el estado.json no existe todavia
+  OK       el PRIMER guardado funciona (el helper deriva modo nuevo)
+  OK       con su archivo y su fila
+  OK       el SEGUNDO ya es un reemplazo
+  OK       sin dejar residuos
+  OK       y una sola fila
+
+=== I6. DESTINO OCUPADO POR OTRO WRITER / JOURNAL PROPIO PENDIENTE ===
+  OK    I6) candidateEval sobre un destino ocupado por otro equipo -> NO aplicado
+  OK       nada cambia en la carpeta
+  OK       el archivo sigue siendo el anterior
+  OK       y un backup de otro destino SI se guarda
+  OK    I6) con un journal PROPIO irresoluble, ninguna accion nueva empieza
+  OK       y no se escribio nada
+
+=== I7. CIFRADO ACTIVO Y BARRERA DE SEGURIDAD ===
+  OK    I7) con Seguridad activa, el backup se guarda
+  OK       la fila dice encrypted=1
+  OK       el archivo NO esta en claro
+  OK       DESCIFRADO REAL con la clave correcta
+  OK    I7) con la barrera activa, backup:save NO guarda
+  OK       ni candidateEval:save
+  OK       y no se escribio NADA
+  OK       el contenido NO quedo en claro en ninguna parte
+
+=== I8. GUARDAS HISTORICAS (B2 / A1 / A2) CON EL CONTRATO NUEVO ===
+  OK    I8) procesoComprometido -> forma 1, no un booleano
+  OK       rekeyInProgress -> forma 1 reintentable
+  OK       con el mensaje de "se esta actualizando"
+  OK       proyecto inexistente -> forma 1 no reintentable
+  OK       ninguna de las tres escribio nada
+
+=== I9. COPIA DE RESCATE (driveOutageActive) INDEPENDIENTE ===
+  OK    I9) con corte de Drive el backup se guarda igual
+  OK       y ademas queda la copia de rescate
+electron.exe : No se pudo escribir la copia de seguridad local de emergencia: Error: EIO
+En línea: 1 Carácter: 549
++ ... 384c\scratchpad'; & $e "$s\bloque4\test-consumidores.js" 2>&1 | Tee-O ...
++                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (No se pudo escr...cia: Error: EIO:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+    at fs.writeFileSync (C:\Users\ADMIN~1.JLO\AppData\Local\Temp\claude\C--Codigo-Fuente-PS\e55d4471-ea3f-4279-b758-036
+6ccb6384c\scratchpad\bloque4\test-consumidores.js:591:78)
+    at Object.guardarBackup (eval at construirMain (C:\Users\ADMIN~1.JLO\AppData\Local\Temp\claude\C--Codigo-Fuente-PS\
+e55d4471-ea3f-4279-b758-0366ccb6384c\scratchpad\bloque4\test-consumidores.js:189:13), <anonymous>:1144:10)
+    at C:\Users\ADMIN~1.JLO\AppData\Local\Temp\claude\C--Codigo-Fuente-PS\e55d4471-ea3f-4279-b758-0366ccb6384c\scratchp
+ad\bloque4\test-consumidores.js:594:19 {
+  code: 'EIO'
+}
+  OK    I9) si falla la copia de rescate, el backup principal SIGUE siendo exito
+  OK       y app.log lo registra aparte
+  OK       el backup principal SI esta en disco
+
+=== I10. migrateLegacyInlineBackupsToFiles ===
+Migración de backups antiguos: 4/4 movidos a archivo.
+  OK    I10) las 4 filas legadas se migran
+  OK       cada una con su archivo y su contenido
+  OK       sin dejar journals
+Migración de backups antiguos: 0/4 movidos a archivo.
+  OK    I10b) con una accion no demostrable, la migracion se DETIENE
+  OK       y lo deja dicho en app.log
+
+=== I11. EL CONTRATO QUE RECIBE EL RENDERER (lastSerialized) ===
+  OK    I11) exito -> lastSerialized avanza
+  OK    I11) aplicado:false -> write-failed
+  OK       y lastSerialized NO avanza (se reintentara)
+  OK    I11) el reintento guarda y lastSerialized avanza
+  OK    I11) aplicado:true/verificado:false -> requiereReinicio
+  OK       lastSerialized SI avanza (el contenido se aplico)
+  OK       se avisa al usuario una vez
+  OK    I11) NO se reintenta un aplicado:true
+  OK       y no aparece ningun backup nuevo
+  OK    I11) una promesa rechazada llega como forma 1
+  OK       y un booleano viejo TAMPOCO se interpreta como exito
+
+=== ORD-ACT. PRECEDENCIA: REKEY FAIL-CLOSED ANTES QUE ACCIONES ===
+  OK    ORD-ACT-0) el fail-closed del REKEY va ANTES de recuperar acciones
+  OK       y su bloque cierra la app con un return
+  OK       el fail-closed de ACCIONES va despues, y antes de vacuum/login/migraciones
+  OK       y tambien cierra con return
+  OK    ORD-ACT-1 (journal de rekey AJENO): el rekey queda fail-closed
+  OK       NO se ejecuta la recuperacion de acciones
+  OK       el journal de la accion sigue intacto
+  OK       su tmp sigue intacto
+  OK       CERO renames/borrados: la carpeta queda byte a byte igual
+  OK    ORD-ACT-2 (journal de rekey CORRUPTO): el rekey queda fail-closed
+  OK       NO se ejecuta la recuperacion de acciones
+  OK       el journal de la accion sigue intacto
+  OK       su tmp sigue intacto
+  OK       CERO renames/borrados: la carpeta queda byte a byte igual
+
+=== IPC-MC. CONTRATO DE LAS CUATRO ACCIONES (meeting / candidate) ===
+  OK    IPC-MC meeting:savePrep: procesoComprometido -> aplicado:false
+  OK       meeting:savePrep: rekeyInProgress -> aplicado:false reintentable
+  OK    IPC-MC candidateEval:save: procesoComprometido -> aplicado:false
+  OK       candidateEval:save: rekeyInProgress -> aplicado:false reintentable
+  OK    IPC-MC meeting:updatePrep: procesoComprometido -> aplicado:false
+  OK       meeting:updatePrep: rekeyInProgress -> aplicado:false reintentable
+  OK    IPC-MC meeting:savePrep: proyecto inexistente -> aplicado:false
+  OK    IPC-MC candidateEval:save: proyecto inexistente -> aplicado:false
+  OK    IPC-MC meeting:updatePrep: preparacion inexistente -> aplicado:false
+  OK    IPC-MC preload usa invokeAccion en los CUATRO canales
+  OK       y NO en los IPC de lectura/borrado
+  OK    IPC-MC una promesa rechazada llega como forma 1
+
+=== REND. LOS RENDERERS REALES DE REUNION Y CANDIDATOS ===
+  OK    REND-R1) aplicado:true/verificado:true -> estado ok
+  OK       guarda el id devuelto
+  OK    REND-R2) aplicado:false -> estado error
+  OK       NO guarda ningun id
+  OK       y NO se detiene la ventana (es reintentable)
+  OK    REND-R3) aplicado:true/verificado:false -> estado propio, no "ok" ni "error"
+  OK       se muestra el aviso
+  OK       la ventana deja de guardar
+  OK       y un guardado posterior NO llama al IPC (no se repite)
+  OK       ni se muestra el aviso dos veces
+  OK    REND-C1) aplicado:true/verificado:true -> "Guardado"
+  OK    REND-C2) aplicado:false -> error y NO "Guardado"
+  OK       la ventana sigue viva (reintentable)
+  OK    REND-C3) aplicado:true/verificado:false -> NO muestra "Guardado"
+  OK       muestra un banner PERSISTENTE, no un toast
+  OK       y NO añade otro error temporal
+  OK       la ventana deja de guardar
+  OK       y un guardado posterior NO llama al IPC
+
+=== STOP. ESTADO DE UI Y CONGELACION TRAS LA FORMA 3 ===
+  OK    REND-R4) forma 3 -> el mensaje dice que SI se guardo
+  OK       y que hay que reiniciar
+  OK       NO existe btn-retry-save en ese estado
+  OK       el estado "error" normal SI sigue ofreciendo Reintentar
+  OK       y el estado "ok" sigue igual
+  OK    REND-R4) autoSaveHistory pone "requiere-reinicio", no "error"
+  OK       y con la sesion detenida tampoco vuelve a "error"
+  OK    R-STOP-1) "Nueva preparacion" queda bloqueada con la sesion detenida
+  OK       y lo explica antes de no hacer nada
+  OK    C-STOP-1) el aviso de reinicio NO usa el toast de 4,5 s
+  OK       y el banner NO lleva ningun temporizador
+  OK       es fijo en pantalla
+  OK    C-STOP-1) al ejecutarlo de verdad crea el banner y pone el texto
+  OK       y al repetir NO duplica el banner, solo actualiza el texto
+  OK    C-STOP-2) con la sesion detenida, mutacionesPermitidas() es false
+  OK       y muestra el aviso persistente
+  OK       sin la sesion detenida, true y sin aviso
+  OK    C-STOP-2) TODAS las acciones mutantes quedan impedidas
+  OK       y las de solo lectura siguen permitidas
+  OK    C-CV-1) adjuntar/cambiar CV: la guarda va ANTES de pickCandidateCv
+  OK    C-CV-2) quitar CV: la guarda va ANTES de askConfirm y de removeCandidateCv
+  OK       (es el caso que dejaria estado.json apuntando a un CV ya borrado)
+  OK    C-STOP-2) los 5 manejadores delegados llevan la guarda
+  OK       y los 4 puntos de entrada directos tambien
+
+=== C-STOP-GUIDE / C-STOP-NAME-ENTER. LOS DOS BYPASS ===
+  OK    C-STOP-GUIDE) con la sesion detenida, la guia NO cambia
+  OK       cero llamadas de guardado
+  OK       y se muestra el aviso persistente
+  OK    C-STOP-GUIDE) [control] sin sesion detenida, la guia SI cambia
+  OK       y se guarda
+  OK    C-STOP-NAME-ENTER) con la sesion detenida, el nombre NO cambia
+  OK       cero llamadas de guardado
+  OK       se muestra el aviso persistente
+  OK       y se sigue evitando el salto de linea
+  OK    C-STOP-NAME-ENTER) [control] sin sesion detenida, Enter SI guarda
+  OK    C-STOP-NAME-ESC) Escape sigue permitido y no guarda nada
+  OK    C-STOP-GUIDE) task-guide YA NO figura como solo lectura
+
+=== PRODUCCION NO TOCADA ===
+  OK    la huella de produccion es IDENTICA
+    antes:   f71f4140e7fd68504cbf65c1d930bc4a244554d7bfb013a70557a30ccf74f501
+    despues: f71f4140e7fd68504cbf65c1d930bc4a244554d7bfb013a70557a30ccf74f501
+
+==================================================================
+  BLOQUE 4 / PASO 4 — consumidores + IPC: 167 OK, 0 FALLOS
+==================================================================
+  carpetas de prueba borradas: true

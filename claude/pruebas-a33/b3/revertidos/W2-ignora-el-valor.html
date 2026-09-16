@@ -1,0 +1,3382 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Directorio de Talento</title>
+<!-- v2.0.26: fuentes auto-hospedadas localmente, ver vendor/fonts/fonts.css
+     -- antes se cargaban desde fonts.googleapis.com en cada apertura de
+     ventana (petición HTTP real a un CDN externo en una app que guarda
+     todo en local; ver comentario completo en ese archivo). -->
+<link rel="stylesheet" href="../vendor/fonts/fonts.css">
+<script src="../vendor/xlsx.full.min.js"></script>
+<!-- v2.0.27: tema visual GLOBAL de toda la app -- THEMES/applyTheme ya NO
+     están definidos aquí abajo, viven en vendor/theme.js (antes estaban
+     duplicados palabra por palabra en esta plantilla y en
+     dashboard/plantilla_dashboard.html). Ver ese archivo para el detalle
+     completo. -->
+<script src="../vendor/theme.js"></script>
+<!-- v2.0.29: transiciones y movimiento (Fase 3), ver vendor/motion.css. -->
+<link rel="stylesheet" href="../vendor/motion.css">
+<!-- v2.0.31: modal de confirmación/aviso propio (Fase 5a/5b), ver vendor/modal.js. -->
+<script src="../vendor/modal.js"></script>
+<!-- v2.0.40: scrollbar personalizado y barra de título/controles propios,
+     unificados en vendor/window-chrome.css -- antes duplicados carácter
+     por carácter en esta plantilla, dashboard y preparacion-reunion
+     (auditoría 2026-09-12, secciones 1.6 y 3). -->
+<link rel="stylesheet" href="../vendor/window-chrome.css">
+<style>
+  :root{
+    --bg:#0a0e13; --surface:#121821; --surface-2:#171f2a;
+    --border:#232e3a; --border-soft:#1a2330;
+    --ink:#eef2f6; --ink-soft:#93a3b5; --ink-faint:#546578;
+    --amber:#f0a83c; --amber-bg:#2b2211;
+    --cyan:#4fc3d9; --cyan-bg:#0f242b; --cyan-dim:#1e3540;
+    --green:#4caf82; --green-bg:#102a20;
+    --red:#e2596b; --red-bg:#2b1418;
+    --bg-glow-1:#10202b; --bg-glow-2:#1a1409;
+    --mono:'JetBrains Mono', ui-monospace, Consolas, monospace;
+    --sans:'Inter', system-ui, sans-serif;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.28);
+    --disc-d:#e2596b; --disc-i:#e8c547; --disc-s:#4caf82; --disc-c:#4a90c4;
+    --disc-d-bg:#2b1418; --disc-i-bg:#2b2711; --disc-s-bg:#102a20; --disc-c-bg:#0f1f2b;
+  }
+  *{box-sizing:border-box;}
+  /* v2.0.26: scrollbar propia -- v2.0.40: movida a vendor/window-chrome.css. */
+  body{
+    margin:0; background:
+      radial-gradient(1100px 420px at 15% -10%, var(--bg-glow-1) 0%, transparent 60%),
+      radial-gradient(900px 380px at 100% 0%, var(--bg-glow-2) 0%, transparent 55%),
+      var(--bg);
+    color:var(--ink); font-family:var(--sans); -webkit-font-smoothing:antialiased;
+  }
+  .page{ max-width:1360px; margin:0 auto; padding:36px 32px 60px; }
+  .head{ display:flex; justify-content:space-between; align-items:flex-end; gap:24px; flex-wrap:wrap; margin-bottom:24px; padding-bottom:22px; border-bottom:1px solid var(--border-soft); }
+  .eyebrow{ font-family:var(--mono); font-size:11px; font-weight:600; letter-spacing:.18em; text-transform:uppercase; color:var(--cyan); margin-bottom:10px; display:flex; align-items:center; gap:8px; }
+  .eyebrow .blip{ width:7px; height:7px; border-radius:50%; background:var(--green); box-shadow:0 0 0 3px var(--green-bg); animation:pulse 2.2s ease-in-out infinite; }
+  @keyframes pulse{ 0%,100%{opacity:1;} 50%{opacity:.35;} }
+  h1{ font-family:var(--mono); font-size:26px; font-weight:700; letter-spacing:-.01em; margin:0 0 8px; }
+  .subtitle{ font-size:12.5px; color:var(--ink-soft); max-width:640px; line-height:1.5; }
+  .head-actions{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+
+  .strip{ display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:20px; }
+  .stat{ background:linear-gradient(160deg, color-mix(in srgb, var(--surface) 100%, white 10%) 0%, var(--surface) 65%); border:1px solid var(--border); border-radius:10px; padding:14px 16px; box-shadow:var(--shadow); position:relative; overflow:hidden; }
+  .stat::before{ content:""; position:absolute; top:0; left:0; width:3px; height:100%; background:var(--accent, var(--cyan)); }
+  .stat .label{ font-family:var(--mono); font-size:9.5px; text-transform:uppercase; letter-spacing:.08em; color:var(--ink-faint); margin-bottom:7px; }
+  .stat .value{ font-family:var(--mono); font-size:22px; font-weight:700; color:var(--ink); line-height:1; }
+  .stat .value small{ font-size:12px; color:var(--ink-soft); font-weight:500; }
+  .stat .sub{ font-size:11px; color:var(--ink-soft); margin-top:6px; }
+  .stat.amber{ --accent:var(--amber); } .stat.amber .value{ color:var(--amber); }
+  .stat.red{ --accent:var(--red); } .stat.red .value{ color:var(--red); }
+  .stat.green{ --accent:var(--green); } .stat.green .value{ color:var(--green); }
+
+  .panel{ background:linear-gradient(160deg, color-mix(in srgb, var(--surface) 100%, white 8%) 0%, var(--surface) 60%); border:1px solid var(--border); border-radius:12px; padding:20px 22px 18px; box-shadow:var(--shadow); margin-bottom:16px; }
+  /* v2.0.29: antes renderView() alternaba estos dos bloques con
+     style.display='none'/'' de golpe. app-tab-in viene de
+     vendor/motion.css -- se reproduce sola cada vez que el bloque pasa de
+     display:none a visible, sin tocar el JS de renderView(). */
+  #view-directorio, #view-partes{ animation: app-tab-in .18s ease-out both; }
+  .panel-head{ display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px; flex-wrap:wrap; gap:8px; }
+  .panel h2{ font-family:var(--mono); font-size:11px; font-weight:650; text-transform:uppercase; letter-spacing:.08em; color:var(--ink); margin:0; display:flex; align-items:center; gap:8px; }
+  .panel h2::before{ content:""; width:6px; height:6px; background:var(--cyan); }
+  .panel .hint{ font-size:10.5px; color:var(--ink-faint); font-family:var(--mono); }
+  .hint{ font-size:10.5px; color:var(--ink-faint); font-family:var(--mono); line-height:1.5; }
+
+  .btn{ font-family:var(--mono); font-size:10.5px; font-weight:600; border-radius:6px; padding:6px 11px; cursor:pointer; border:1px solid var(--border); background:var(--surface-2); color:var(--ink-soft); }
+  .btn:hover{ color:var(--ink); border-color:var(--ink-faint); }
+  .btn.primary{ background:var(--cyan-bg); border-color:var(--cyan-dim); color:var(--cyan); }
+  .btn.danger{ background:var(--red-bg); border-color:var(--red-border); color:var(--red); }
+  .btn.ghost{ background:transparent; border-color:transparent; padding:6px 8px; }
+  /* v2.0.32: mismo motivo que en dashboard/plantilla_dashboard.html -- ver
+     el comentario largo junto a esta misma clase ahí. Solo cambia forma/
+     tipografía de los botones de cabecera (Guardar/Salir), el resto de
+     .btn de esta ventana se queda con el estilo monoespaciado de siempre. */
+  .btn.header-action{
+    font-family:var(--sans); font-size:12.5px; font-weight:600;
+    border-radius:8px; padding:8px 15px;
+  }
+  .btn-row{ display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+  .icon-btn{ background:transparent; border:none; color:var(--ink-faint); cursor:pointer; font-size:13px; padding:3px 5px; border-radius:4px; }
+  .icon-btn:hover{ color:var(--ink); background:var(--surface-2); }
+
+  input[type=text], input[type=number], input[type=date], input[type=password], select, textarea{
+    background:var(--surface-2); border:1px solid var(--border); color:var(--ink); border-radius:5px;
+    padding:6px 8px; font-family:var(--sans); font-size:12px; width:100%;
+  }
+  label{ font-family:var(--mono); font-size:9.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-faint); display:block; margin-bottom:3px; }
+
+  .field-grid{ display:grid; grid-template-columns:repeat(auto-fit, minmax(160px,1fr)); gap:10px 14px; }
+  .field{ display:flex; flex-direction:column; gap:3px; }
+
+  /* Combobox de texto libre con sugerencias propias (usado en el filtro de
+     Rol) — un <input list="..."> con <datalist> nativo se ve bien cerrado,
+     pero el desplegable de sugerencias lo pinta el sistema operativo/navegador
+     y no se puede maquetar con CSS. Este combobox propio sustituye a ese
+     desplegable nativo, pero pintado a propósito con la MISMA paleta que
+     usan los <select> nativos (Proyecto, Estado, Categoría, SBA, DISC) —
+     decisión explícita del usuario tras ver ambos estilos en pantalla:
+     quería que Rol se viera IGUAL que los demás filtros, no con el tema
+     oscuro/cian del resto de la app (eso se probó primero y se descartó por
+     pedido suyo). El campo de texto en sí (cerrado) sigue con el tema
+     oscuro de la app, igual que el resto de los inputs — solo el desplegable
+     ABIERTO imita el de un <select> nativo.
+     OJO con el color fijo: un <select> nativo NO tiene un color fijo — lo
+     pinta Chromium seleccionando entre paleta clara u oscura según el tema
+     del SISTEMA OPERATIVO (Windows en modo oscuro pinta sus desplegables
+     nativos con fondo oscuro, no blanco). Un primer intento con blanco fijo
+     (#fff) solo "combinaba" en un Windows en modo claro; en modo oscuro (el
+     caso más probable dado que toda esta app usa tema oscuro) el usuario
+     seguía viendo un desplegable de Rol blanco junto a otros que Windows
+     pintaba oscuros. La media query de abajo sigue el mismo criterio que ya
+     usa Chromium (prefers-color-scheme, atado al tema del sistema) para que
+     este desplegable propio quede sincronizado con lo que el sistema esté
+     pintando en los nativos, sea cual sea su tema.
+     SEGUNDO intento (0.1.17→0.1.18): el usuario mandó capturas de su propio
+     desplegable de Proyecto (nativo) abierto en su Windows real, en modo
+     oscuro. Muestreando los píxeles de esas capturas a mano, el fondo del
+     popup nativo NO es el gris genérico #2b2b2b que se había puesto a ojo
+     — es #171f2a, que resulta ser EXACTAMENTE la misma `--surface-2` que ya
+     usa esta app para el fondo de sus propios inputs/selects (línea 13,
+     `:root`). Esto tiene sentido: Chromium en modo oscuro pinta el popup de
+     un <select> con el mismo `background-color` que ya tiene declarado el
+     propio elemento vía CSS de autor, no con un gris fijo del sistema — así
+     que el "verde apropiado" no era adivinar un gris cualquiera, sino
+     reusar la MISMA variable que ya usan los `<select>` reales. También se
+     muestreó el azul de resaltado del ítem activo/hover: no es el azul
+     clásico de Windows (#0078d4) que se había puesto a ojo, sino #1967d2 —
+     casi seguro el color de acento que este usuario tiene elegido en la
+     personalización de Windows (que varía de un usuario a otro, no es fijo
+     ni siquiera dentro de "modo oscuro"). En vez de hardcodear ESE azul en
+     concreto (que solo sería correcto para este usuario y quedaría mal si
+     cambia su acento), se usan los colores de sistema CSS `Highlight` /
+     `HighlightText` — los mismos con los que el propio navegador pinta la
+     selección de una lista nativa, así que siguen automáticamente el
+     acento que tenga configurado CADA usuario, sin adivinar ningún valor
+     fijo. Son colores CSS estándar de toda la vida (soportados desde hace
+     años en Chromium), así que no hace falta media query aparte para esto
+     — se aplican igual en claro y en oscuro. */
+  .combo-wrap{ position:relative; }
+  .combo-wrap input[type=text]{ padding-right:26px; }
+  .combo-clear{
+    position:absolute; right:4px; top:50%; transform:translateY(-50%);
+    width:20px; height:20px; border:none; background:transparent; color:var(--ink-faint);
+    cursor:pointer; font-size:13px; line-height:1; border-radius:4px; display:flex;
+    align-items:center; justify-content:center; padding:0;
+  }
+  .combo-clear:hover{ color:var(--ink); background:var(--surface); }
+  /* TERCER intento (0.1.19): dijiste que el desplegable "parece mas grande" que los
+     nativos y que el azul "parece algo diferente" — pero esta vez no había capturas
+     nuevas que medir a píxel, así que en vez de volver a adivinar un valor se ha
+     mirado la fuente: el CSS interno de Chromium para <option> (html.css de Blink,
+     el mismo motor que usa esta app — Electron 30.5.1 = Chrome 124). Ahí el padding
+     real de cada fila de un <select> nativo es minúsculo: 2px a los lados y solo 1px
+     abajo (nada arriba), con una altura mínima de 1.2 veces el tamaño de letra — para
+     13px de fuente eso da una fila de ~17px. Aquí se tenía padding:6px 10px SIN fijar
+     line-height (hereda el del body, "normal", ~1.15), lo que da una fila de ~28px:
+     casi el doble de alta que la nativa. Eso es lo que se ve como "más grande". Se
+     ajusta a padding:2px 8px + line-height:1.2 (~20px de fila) — no se copia el 2px/1px
+     nativo literal porque aquí el ratón elige la fila con clic, no con teclado, y
+     dejarlo tan justo sería incómodo de pulsar; el objetivo es acercarse mucho sin
+     perder área clicable cómoda.
+     Sobre el azul: se investigó por qué `Highlight`/`HighlightText` (puesto en 0.1.18)
+     no está saliendo idéntico al de Proyecto. Resulta que esos dos son colores CSS2
+     pensados para "modo alto contraste" — en Windows normal, Chromium los resuelve
+     contra el color de selección CLÁSICO del sistema (GetSysColor(COLOR_HIGHLIGHT)),
+     que en Windows 10/11 NO coincide con el acento moderno que el usuario elige en
+     Personalización > Colores. El propio desplegable NATIVO de un <select> sí usa ese
+     acento moderno, pero lo lee por una vía interna de Chromium (no expuesta por CSS)
+     — por eso puede no coincidir con `Highlight`. Existe un color CSS más nuevo pensado
+     exactamente para esto, `AccentColor`/`AccentColorText`, pero necesita Chrome 150+ y
+     esta app corre sobre Chrome 124 (Electron 30.5.1): ese valor no es compatible aquí
+     todavía, usarlo dejaría el hover sin color. No hay, hoy por hoy, ninguna forma 100%
+     fiable por CSS de leer el acento real de Windows en este motor — se deja `Highlight`
+     tal cual (sigue siendo mejor que un azul fijo adivinado: al menos representa ALGÚN
+     color de selección del sistema, y seguirá el modo alto contraste si lo usas). Si
+     prefieres que en vez de esto se deje fijo tu azul medido (#1967d2, el de tu última
+     captura) para que coincida exacto en tu máquina aunque no siga si cambias de acento
+     algún día, dímelo y se cambia en un momento — es una decisión de compromiso, no algo
+     que se pueda "arreglar del todo" con el Chromium que trae esta versión de Electron. */
+  .combo-dropdown{
+    position:absolute; top:calc(100% + 4px); left:0; right:0; z-index:80;
+    background:#ffffff; border:1px solid #c8c8c8; border-radius:4px;
+    box-shadow:0 2px 10px rgba(0,0,0,.35); max-height:220px; overflow-y:auto; display:none;
+  }
+  .combo-dropdown.open{ display:block; }
+  .combo-option{
+    padding:2px 8px; line-height:1.2; font-size:13px; font-family:system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color:#1f1f1f; cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .combo-option:hover, .combo-option.active{ background:Highlight; color:HighlightText; }
+  .combo-empty{ padding:7px 10px; font-size:12px; font-family:system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color:#666; }
+  @media (prefers-color-scheme: dark){
+    .combo-dropdown{ background:#171f2a; border-color:#232e3a; }
+    .combo-option{ color:#eef2f6; }
+    .combo-empty{ color:#7f8fa3; }
+  }
+
+  .appearance-panel{ background:var(--surface); border:1px solid var(--border); border-left:3px solid var(--cyan); border-radius:10px; padding:16px 18px; margin:10px 0 16px; display:flex; flex-direction:column; gap:14px; box-shadow:var(--shadow); }
+  .ap-row{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  .ap-row > label{ min-width:140px; margin-bottom:0; }
+  .ap-logo-preview{ height:34px; max-width:180px; border-radius:4px; background:#fff; padding:2px 6px; object-fit:contain; }
+
+  /* ---- filtros ---- */
+  .filters-bar{ display:grid; grid-template-columns:repeat(auto-fit, minmax(150px,1fr)); gap:10px; align-items:end; }
+  .filters-bar .field label{ margin-bottom:4px; }
+  .filters-summary{ font-family:var(--mono); font-size:10.5px; color:var(--ink-faint); margin-top:10px; }
+
+  /* ---- tabla de personas ---- */
+  .people-table{ width:100%; border-collapse:collapse; font-size:12px; margin-top:12px; }
+  .people-table th{ text-align:left; font-family:var(--mono); font-size:9.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-faint); padding:7px 10px; border-bottom:1px solid var(--border); cursor:pointer; user-select:none; white-space:nowrap; }
+  .people-table th:hover{ color:var(--ink-soft); }
+  .people-table td{ padding:9px 10px; border-bottom:1px solid var(--border-soft); vertical-align:middle; }
+  .people-table tr:last-child td{ border-bottom:none; }
+  .people-table tr.row-link{ cursor:pointer; }
+  .people-table tr.row-link:hover td{ background:var(--surface-2); }
+  .name-cell{ display:flex; flex-direction:column; }
+  .name-cell .nm{ color:var(--ink); font-weight:600; }
+  .name-cell .dni{ font-family:var(--mono); font-size:10px; color:var(--ink-faint); }
+  /* v2.0.19: en la tabla de Equipo, .name-cell necesita flex/column porque apila nombre + DNI +
+     chips de proyecto dentro de la misma celda. Pero en la tabla de Partes mensuales
+     (renderPartesTable) esa misma clase se reutiliza en una celda que SOLO contiene el nombre
+     -- y un <td> con display:flex deja de comportarse como celda de tabla a efectos de
+     vertical-align: su contenido se queda pegado arriba, mientras las demás columnas de esa fila
+     (Proyecto(s), Estado, Nota) siguen centrándose verticalmente vía ".people-table td{
+     vertical-align:middle }". Con la celda de Estado más alta que una línea (botones + fecha de
+     la última marca debajo), eso producía el efecto "escalera" que reportó el usuario: nombre
+     pegado arriba, proyecto/estado más abajo, distinto en cada fila según su altura. Aquí se
+     restaura el comportamiento normal de celda SOLO dentro de #partes-table, sin tocar la tabla
+     de Equipo (que sigue necesitando el flex/column de siempre). */
+  #partes-table .name-cell{ display:table-cell; }
+  /* v2.0.20: la celda de Estado apila 2 líneas (botones arriba + fecha de la última marca debajo),
+     así que su contenido -- y con él, la altura visual de toda la fila -- queda más alto que una
+     celda de una sola línea. Con "vertical-align:middle" (heredado de .people-table td, arriba),
+     cada celda se centra en el ALTO TOTAL de la fila por separado: Nombre/Proyecto(s)/Nota, de una
+     sola línea, terminan centrados EN MEDIO de esas 2 líneas de Estado -- es decir, más abajo que
+     la línea de los botones. El usuario lo señaló con el campo "Motivo" cayendo visiblemente más
+     bajo que los botones de Estado de su misma fila. Se alinean las 4 columnas al principio de la
+     fila (arriba) en vez de centrarlas, para que todas arranquen a la altura de la primera línea de
+     Estado (los botones) sin importar cuántas líneas tenga esa celda en cada fila. Con
+     display:table-cell ya restaurado arriba, .name-cell también respeta vertical-align con
+     normalidad. */
+  #partes-table td{ vertical-align:top; }
+  .proj-chip{ display:inline-flex; align-items:center; gap:4px; font-family:var(--mono); font-size:9.5px; background:var(--surface-2); border:1px solid var(--border); color:var(--ink-soft); padding:2px 7px; border-radius:20px; margin:1px 3px 1px 0; white-space:nowrap; }
+  .status-pill{ display:inline-flex; align-items:center; gap:6px; font-family:var(--mono); font-size:10.5px; font-weight:600; padding:3px 9px; border-radius:20px; border:none; }
+  .status-pill .dot{ width:6px; height:6px; border-radius:50%; }
+  .status-pill.activo{ background:var(--green-bg); color:var(--green); }
+  .status-pill.pendiente{ background:var(--amber-bg); color:var(--amber); }
+  .status-pill.baja{ background:var(--surface-2); color:var(--ink-faint); }
+  .mini-radar-cell{ display:flex; align-items:center; }
+  .empty-state{ text-align:center; padding:30px 10px; color:var(--ink-faint); font-size:12px; }
+
+  /* ---- partes mensuales ---- */
+  /* Reportado por el usuario (v2.0.16→v2.0.17): "No aplica" saltaba a una
+     segunda línea, separado de Pendiente/Aprobado/Incidencia, cuando la
+     columna Estado se quedaba sin sitio (comprimida por Proyecto(s) y por
+     el input de Nota oculto, que aun invisible reservaba min-width:120px
+     en TODAS las filas). Fix original: forzar que los 4 botones nunca
+     partan línea entre ellos (white-space:nowrap en la celda) y reservar
+     ancho mínimo explícito para la columna Estado (min-width:300px) —
+     en ese momento además se hizo que el input de Nota oculto NO
+     reservara 120px cuando no aplicaba.
+     v2.0.24: esa segunda parte se ha revertido. El input de Nota oculto
+     vuelve a reservar SIEMPRE su ancho máximo (170px, ver .partes-nota
+     y el estilo inline en renderPartesTable) — solo se alterna
+     visibility:hidden, nunca el ancho — porque el usuario reportó que la
+     columna Nota saltando de 1px a 170px al marcar/desmarcar Incidencia
+     seguía empujando visualmente el resto de la fila. Con el min-width
+     de 300px de aquí abajo la columna Estado sigue sin partir línea al
+     reservar Nota su ancho siempre — verificado en v2.0.24.
+  */
+  .partes-estado-cell{ white-space:nowrap; min-width:300px; }
+  .partes-estado-btn{ margin-right:4px; }
+  .partes-estado-btn.active[data-estado="pendiente"]{ background:var(--amber-bg); border-color:var(--amber); color:var(--amber); }
+  .partes-estado-btn.active[data-estado="aprobado"]{ background:var(--green-bg); border-color:var(--green); color:var(--green); }
+  .partes-estado-btn.active[data-estado="incidencia"]{ background:var(--red-bg); border-color:var(--red); color:var(--red); }
+  .partes-estado-btn.active[data-estado="no_aplica"]{ background:var(--surface-2); border-color:var(--border); color:var(--ink-faint); }
+  tr.partes-row-done{ opacity:0.5; }
+  /* v2.0.21: al marcar "Incidencia" este input pasa de oculto (visibility:hidden,
+     casi sin ancho, ver estilo inline en renderPartesTable) a visible con
+     width:100% de una columna sin ancho fijo -- la tabla (sin table-layout:fixed)
+     recalculaba entonces el ancho de TODAS las columnas para hacerle sitio,
+     y el resto de la fila se veía "empujar"/desplazar. Con un max-width fijo
+     ya no reclama más espacio del que cabía antes, así que aparecer/desaparecer
+     no mueve nada más de la fila. */
+  .partes-nota{ width:100%; min-width:120px; max-width:170px; }
+  .partes-estado-ts{ margin-top:4px; } /* v0.1.28: fecha/hora de la marca actual, debajo de los botones */
+  .partes-window-banner{ display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
+  .partes-window-banner input[type="number"]{ width:50px; }
+
+  /* ---- duplicados ---- */
+  .dup-item{ border:1px solid var(--amber); background:var(--amber-bg); border-radius:8px; padding:10px 12px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
+  .dup-item .dup-text{ font-size:12px; color:var(--ink); line-height:1.5; }
+  .dup-item .dup-text b{ color:var(--amber); }
+  .dup-actions{ display:flex; gap:6px; flex-shrink:0; }
+
+  /* ---- modal ficha de persona / prompt genérico ---- */
+  .modal-backdrop{ position:fixed; inset:0; background:rgba(0,0,0,.6); display:flex; align-items:flex-start; justify-content:center; padding:40px 20px; overflow-y:auto; z-index:100; }
+  .modal-box{ background:var(--surface); border:1px solid var(--border); border-radius:14px; box-shadow:var(--shadow); max-width:920px; width:100%; padding:26px 28px 22px; }
+  .modal-box.narrow{ max-width:420px; }
+  .modal-head{ display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:16px; padding-bottom:14px; border-bottom:1px solid var(--border-soft); }
+  .modal-head h2{ font-family:var(--mono); font-size:16px; margin:0 0 4px; color:var(--ink); text-transform:none; letter-spacing:0; }
+  .modal-head h2::before{ content:none; }
+  .modal-head .sub{ font-family:var(--mono); font-size:10.5px; color:var(--ink-faint); }
+  .modal-grid{ display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+  @media (max-width:760px){ .modal-grid{ grid-template-columns:1fr; } .strip{ grid-template-columns:repeat(2,1fr); } .filters-bar{ grid-template-columns:1fr 1fr; } }
+  .detail-section{ margin-bottom:18px; }
+  .detail-section h3{ font-family:var(--mono); font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-faint); margin:0 0 8px; border-bottom:1px solid var(--border-soft); padding-bottom:5px; }
+  .assign-item{ display:flex; justify-content:space-between; align-items:flex-start; gap:8px; padding:6px 0; border-bottom:1px solid var(--border-soft); font-size:12px; }
+  .assign-item:last-child{ border-bottom:none; }
+  .assign-item .a-main{ color:var(--ink); font-weight:600; }
+  .assign-item .a-meta{ font-family:var(--mono); font-size:10px; color:var(--ink-faint); }
+  .role-history{ font-size:10.5px; color:var(--ink-faint); margin-top:2px; font-family:var(--mono); }
+  .chip-list{ display:flex; flex-wrap:wrap; gap:5px; }
+  .chip{ font-family:var(--mono); font-size:10px; background:var(--surface-2); border:1px solid var(--border); color:var(--ink-soft); padding:3px 8px; border-radius:20px; display:inline-flex; align-items:center; gap:5px; }
+  .chip button{ background:none; border:none; color:var(--ink-faint); cursor:pointer; font-size:11px; padding:0; }
+  .chip-add-row{ display:flex; gap:6px; margin-top:6px; }
+  .chip-add-row input{ flex:1; }
+  .test-block{ border:1px solid var(--border); border-radius:10px; padding:12px 14px; margin-bottom:10px; background:var(--surface-2); }
+  .test-block-head{ display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+  .test-block-head .tname{ font-family:var(--mono); font-size:11px; font-weight:700; color:var(--ink); }
+  .test-block-head .tdate{ font-family:var(--mono); font-size:10px; color:var(--ink-faint); }
+  .bono-item{ display:flex; justify-content:space-between; align-items:flex-start; gap:8px; padding:8px 0; border-bottom:1px solid var(--border-soft); font-size:12px; }
+  .bono-item:last-child{ border-bottom:none; }
+  .bono-item .b-amount{ color:var(--green); font-weight:700; font-family:var(--mono); }
+  .bono-item .b-meta{ font-family:var(--mono); font-size:10px; color:var(--ink-faint); margin-top:2px; }
+  .bono-item .b-motivo{ font-size:11px; color:var(--ink-soft); margin-top:2px; }
+  .bono-add-grid{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-top:8px; }
+  .bono-add-grid .field-wide{ grid-column:1/4; }
+  input.field-invalid, select.field-invalid{ border-color:var(--red) !important; box-shadow:0 0 0 1px var(--red); }
+  .modal-alert{ font-family:var(--mono); font-size:11px; color:var(--red); background:var(--red-bg); border:1px solid var(--red-border); border-radius:6px; padding:7px 10px; margin-top:8px; display:none; }
+  .modal-alert.visible{ display:block; }
+  .modal-alert.ok{ color:var(--green); background:var(--green-bg); border-color:#1e4a34; }
+  textarea{ resize:vertical; min-height:60px; font-family:var(--sans); }
+  .axis-input-row{ display:flex; align-items:center; gap:8px; margin-bottom:5px; }
+  .axis-input-row .axis-label{ width:100px; font-family:var(--mono); font-size:10.5px; flex-shrink:0; }
+  .axis-input-row input[type=range]{ flex:1; }
+  .axis-input-row .axis-val{ width:34px; text-align:right; font-family:var(--mono); font-size:11px; }
+
+  .charts-grid{ display:grid; grid-template-columns:repeat(2, 1fr); gap:14px; }
+  @media (max-width:900px){ .charts-grid{ grid-template-columns:1fr; } }
+  .chart-card{
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    background:var(--surface-2); border:1px solid var(--border); border-radius:10px;
+    padding:16px 16px 18px; min-height:260px;
+  }
+  .chart-card svg{ max-width:100%; }
+  .chart-card .chart-title{ font-family:var(--mono); font-size:10px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink-faint); margin-bottom:12px; align-self:flex-start; }
+  .chart-card .chart-body{ display:flex; align-items:center; justify-content:center; flex:1; width:100%; }
+  .chart-empty{ color:var(--ink-faint); font-family:var(--mono); font-size:11px; text-align:center; }
+  .disc-badge{ display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; border-radius:50%; font-family:var(--mono); font-weight:800; font-size:12px; }
+  .disc-badge-pair{ display:inline-flex; align-items:center; }
+  .disc-badge-pair .disc-badge-secondary{ width:19px; height:19px; font-size:10px; margin-left:-6px; border:2px solid var(--surface); }
+
+  .save-note{ font-family:var(--mono); font-size:9.5px; color:var(--ink-faint); text-align:center; margin-top:8px; min-height:14px; }
+  .footer-note{ margin-top:22px; font-size:10.5px; color:var(--ink-faint); text-align:center; font-family:var(--mono); letter-spacing:.02em; }
+  .footer-actions{ display:flex; justify-content:center; gap:10px; margin-top:12px; flex-wrap:wrap; }
+  .io-feedback{ font-family:var(--mono); font-size:10.5px; text-align:center; margin-top:8px; min-height:14px; }
+  .io-feedback.ok{ color:var(--green); }
+  .io-feedback.err{ color:var(--red); }
+  #sync-feedback{
+    font-family:var(--mono); font-size:11px; min-height:18px; margin:8px 0 14px;
+    text-align:right;
+  }
+  #sync-feedback.ok{ color:var(--green); }
+  #sync-feedback.err{ color:var(--red); }
+  .count-badge{ font-family:var(--mono); font-size:11.5px; font-weight:400; color:var(--ink-faint); margin-left:6px; }
+  #btn-scroll-top{
+    position:fixed; bottom:22px; right:22px; width:44px; height:44px; border-radius:50%;
+    background:var(--cyan-bg); border:1.5px solid var(--cyan-dim); color:var(--cyan);
+    font-size:18px; font-weight:700; cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,.4);
+    opacity:0; pointer-events:none; transform:translateY(8px);
+    transition:opacity .2s ease, transform .2s ease; z-index:50;
+  }
+  #btn-scroll-top.visible{ opacity:1; pointer-events:auto; transform:translateY(0); }
+
+  /* ------------------------------------------------------------------
+     v2.0.16 — barra de título y menú PROPIOS, mismo patrón que el
+     lanzador (ver createLauncherWindow en main.js: frame:false) y que
+     dashboard/plantilla_dashboard.html. El icono usa "../assets/
+     icon-256.png" tal cual — fixVendorScriptPaths() en main.js lo
+     reescribe a ruta absoluta al hornear esta plantilla (mismo mecanismo
+     que ya arreglaba el <script> de vendor/ de arriba).
+     v2.0.40: las reglas .titlebar/.win-controls en sí se movieron a
+     vendor/window-chrome.css (estaban duplicadas carácter por carácter en
+     esta plantilla, dashboard y preparacion-reunion).
+     ------------------------------------------------------------------ */
+  .menubar{
+    -webkit-app-region: no-drag;
+    display:flex; align-items:center; gap:2px;
+    height:28px; padding:0 10px; background:var(--surface); border-bottom:1px solid var(--border);
+    font-size:12.5px; flex-shrink:0;
+  }
+  .menu-group{ position:relative; }
+  .menubar .menu-item{
+    background:transparent; border:none; color:var(--ink-soft);
+    padding:5px 10px; border-radius:4px; cursor:pointer; font-family:var(--sans); font-size:12.5px;
+  }
+  .menubar .menu-item:hover, .menubar .menu-item.open{ background:var(--surface-2); color:var(--ink); }
+  .menu-dropdown{
+    display:none; position:absolute; top:100%; left:0; margin-top:2px; min-width:250px;
+    background:var(--surface-2); border:1px solid var(--border); border-radius:8px;
+    box-shadow:0 8px 24px rgba(0,0,0,.4); padding:5px; z-index:50; flex-direction:column; gap:1px;
+  }
+  .menu-dropdown.open{ display:flex; }
+  .menu-dropdown button{
+    background:transparent; border:none; color:var(--ink); text-align:left;
+    padding:7px 10px; border-radius:5px; font-size:12.5px; font-family:var(--sans); cursor:pointer;
+    white-space:nowrap;
+  }
+  .menu-dropdown button:hover{ background:var(--bg); }
+  .menu-dropdown .sep{ height:1px; background:var(--border); margin:4px 2px; }
+
+  /* v2.0.38: overlay de carga inicial premium -- mismo mecanismo que
+     dashboard/plantilla_dashboard.html (ver el comentario largo de ahí),
+     esta ventana comparte plantilla de apertura con las de proyecto. Se
+     retira con un fundido corto en cuanto startApp() termina de pintar
+     (ver initApp() al final del archivo). */
+  #boot-loading{
+    position:fixed; inset:0; z-index:100000;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:14px; background:var(--bg);
+  }
+  #boot-loading img{ width:56px; height:56px; border-radius:14px; opacity:.92; }
+  #boot-loading .boot-loading-bar{
+    width:160px; height:3px; border-radius:99px; background:var(--border); overflow:hidden;
+  }
+  #boot-loading .boot-loading-bar-fill{
+    width:40%; height:100%; border-radius:99px; background:var(--cyan);
+    animation:boot-loading-sweep 1.1s ease-in-out infinite;
+  }
+  #boot-loading .boot-loading-label{
+    font-family:var(--mono); font-size:11px; letter-spacing:.04em;
+    color:var(--ink-faint); text-transform:uppercase;
+  }
+  @keyframes boot-loading-sweep{
+    0%{ transform:translateX(-120%); }
+    100%{ transform:translateX(360%); }
+  }
+  #boot-loading.boot-loading-done{ opacity:0; pointer-events:none; transition:opacity .28s ease; }
+</style>
+</head>
+<body>
+  <div id="boot-loading" aria-hidden="true">
+    <img src="../assets/icon-256.png" alt="">
+    <div class="boot-loading-bar"><div class="boot-loading-bar-fill"></div></div>
+    <span class="boot-loading-label">Cargando…</span>
+  </div>
+  <div class="titlebar" id="titlebar">
+    <img src="../assets/icon-256.png" alt="" />
+    <span class="tb-title">Directorio de Talento</span>
+    <span class="tb-spacer"></span>
+    <div class="win-controls">
+      <button id="tb-minimize" title="Minimizar">─</button>
+      <button id="tb-maximize" title="Maximizar">▢</button>
+      <button id="tb-close" class="close" title="Cerrar">✕</button>
+    </div>
+  </div>
+  <nav class="menubar" id="menubar">
+    <div class="menu-group">
+      <button class="menu-item" data-menu="archivo">Archivo</button>
+      <div class="menu-dropdown" data-dropdown="archivo">
+        <button data-action="archivo-nuevo">Nuevo proyecto…&emsp;&emsp;Ctrl+N</button>
+        <button data-action="archivo-elegir">Elegir proyecto…&emsp;&emsp;Ctrl+O</button>
+        <button data-action="archivo-directorio">Directorio de Talento</button>
+        <div class="sep"></div>
+        <button data-action="archivo-cerrar">Cerrar ventana&emsp;&emsp;Ctrl+W</button>
+        <button data-action="archivo-salir">Salir de la aplicación</button>
+      </div>
+    </div>
+    <div class="menu-group">
+      <button class="menu-item" data-menu="editar">Editar</button>
+      <div class="menu-dropdown" data-dropdown="editar">
+        <button data-action="editar-deshacer">Deshacer</button>
+        <button data-action="editar-rehacer">Rehacer</button>
+        <div class="sep"></div>
+        <button data-action="editar-cortar">Cortar</button>
+        <button data-action="editar-copiar">Copiar</button>
+        <button data-action="editar-pegar">Pegar</button>
+        <button data-action="editar-todo">Seleccionar todo</button>
+      </div>
+    </div>
+    <div class="menu-group">
+      <button class="menu-item" data-menu="proyecto">Proyecto</button>
+      <div class="menu-dropdown" data-dropdown="proyecto">
+        <button data-action="proyecto-backup-ahora">Guardar backup ahora&emsp;&emsp;Ctrl+S</button>
+        <button data-action="proyecto-ver-backups">Ver carpeta de backups</button>
+        <button data-action="proyecto-restaurar-ultimo">Restaurar último backup…</button>
+        <button data-action="proyecto-restaurar-concreto">Restaurar un backup concreto…</button>
+        <div class="sep"></div>
+        <button data-action="proyecto-eliminar">Eliminar este proyecto…</button>
+      </div>
+    </div>
+    <button class="menu-item" data-action="partes-mensuales" title="Ctrl+2 — Ctrl+1 vuelve al Directorio">Partes mensuales</button>
+    <div class="menu-group">
+      <button class="menu-item" data-menu="seguridad">Seguridad</button>
+      <div class="menu-dropdown" data-dropdown="seguridad"></div>
+    </div>
+  </nav>
+<div class="page" id="main-page" style="display:none;">
+<div id="data-load-warning-slot"></div>
+<div id="view-directorio">
+  <div id="corp-logo-wrap" style="display:none; margin-bottom:18px;">
+    <img id="corp-logo-img" style="max-height:88px; max-width:320px; border-radius:8px; background:#fff; padding:10px 16px; object-fit:contain;" alt="Logo corporativo">
+  </div>
+  <div class="head">
+    <div>
+      <div class="eyebrow"><span class="blip"></span>DIRECTORIO DE TALENTO</div>
+      <h1 id="page-title">Directorio de Talento</h1>
+      <div class="subtitle">Perfiles de equipo consolidados de todos los proyectos de Panorama del Servicio — una persona, todas sus asignaciones. Los perfiles con nombre, rol, estado y contacto se sincronizan solos desde cada proyecto; el resto (SBA, tests, categoría, bonos) se rellena aquí a mano.</div>
+    </div>
+    <div class="head-actions">
+      <button class="btn header-action" id="btn-header-save" title="Guardar una copia de seguridad ahora mismo" style="border-color:var(--cyan-dim); color:var(--cyan); background:var(--cyan-bg); min-width:96px;">💾 Guardar</button>
+      <button class="btn danger header-action" id="btn-header-exit" title="Cerrar esta ventana">⏻ Salir</button>
+      <button class="btn ghost" id="btn-appearance">⚙ Apariencia</button>
+      <button class="btn primary" id="btn-sync">🔄 Sincronizar ahora</button>
+      <input type="file" id="import-file-input" accept=".csv,.xlsx,.xls" style="display:none" multiple>
+      <button class="btn ghost" id="btn-import">⇪ Importar CSV / Excel</button>
+    </div>
+  </div>
+  <div id="sync-feedback"></div>
+  <div class="field" style="max-width:320px; margin-bottom:16px;">
+    <label>Buscar persona</label>
+    <input type="text" id="f-search" placeholder="Nombre, DNI o email…">
+  </div>
+
+  <div id="appearance-panel-slot"></div>
+
+  <div class="strip" id="stats-strip"></div>
+
+  <div class="panel" id="dup-panel" style="display:none;">
+    <div class="panel-head"><h2>Posibles duplicados</h2><span class="hint" id="dup-count-hint"></span></div>
+    <div class="hint" style="margin-bottom:10px;">Estas personas comparten nombre entre proyectos distintos y ninguna tiene DNI para confirmarlo automáticamente. Revisa cada caso.</div>
+    <div id="dup-list"></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h2>Filtros</h2><button class="btn ghost" id="btn-clear-filters">Limpiar filtros</button></div>
+    <div class="filters-bar" id="filters-bar"></div>
+    <div class="filters-summary" id="filters-summary"></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h2>Equipo <span id="people-count-badge" class="count-badge"></span></h2><div style="display:flex; gap:8px;"><button class="btn ghost" id="btn-export-people-csv" title="Exporta las personas de la tabla de abajo (respeta los filtros activos)">⇩ Exportar CSV</button><button class="btn ghost" id="btn-export-people-xlsx" title="Exporta las personas de la tabla de abajo (respeta los filtros activos)">⇩ Exportar Excel</button><button class="btn ghost" id="btn-toggle-sba">👁 Revelar SBA</button><button class="btn ghost" id="btn-add-person">+ Añadir persona manual</button></div></div>
+    <table class="people-table" id="people-table"><thead></thead><tbody></tbody></table>
+    <div class="empty-state" id="people-empty" style="display:none;">Sin personas todavía. Se sincronizan solas en cuanto los proyectos tengan Equipo guardado — o añade una persona manual / importa un CSV/Excel.</div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head"><h2>Gráficas</h2><span class="hint" id="charts-hint"></span></div>
+    <div class="charts-grid" id="charts-grid"></div>
+  </div>
+
+  <div class="footer-actions">
+    <button class="btn ghost" id="btn-export-json">Exportar copia completa (JSON)</button>
+    <button class="btn ghost" id="btn-import-json">Importar copia (JSON)</button>
+    <input type="file" id="import-json-input" accept=".json" style="display:none">
+  </div>
+  <div class="io-feedback" id="io-feedback"></div>
+  <div class="footer-note">Directorio de Talento — se guarda igual que cualquier proyecto de Panorama del Servicio (backup automático de la app, cifrado si tienes activada la Seguridad).</div>
+  <div class="save-note" id="save-note"></div>
+</div>
+
+<div id="view-partes" style="display:none;">
+  <div class="head">
+    <div>
+      <div class="eyebrow"><span class="blip"></span>DIRECTORIO DE TALENTO</div>
+      <h1>Partes mensuales</h1>
+      <div class="subtitle">Checklist de aprobación de partes/imputación de horas — un vistazo rápido por persona activa y mes, sin leer ni calcular nada de Unit4. Solo el registro de lo que ya contrastaste.</div>
+    </div>
+    <div class="head-actions">
+      <button class="btn ghost" id="btn-partes-back">← Volver al Directorio</button>
+    </div>
+  </div>
+
+  <div class="panel" id="partes-panel">
+    <div class="panel-head">
+      <h2>Partes mensuales <span id="partes-count-badge" class="count-badge"></span></h2>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <button class="btn ghost" id="btn-export-partes-csv" title="Exporta la tabla del mes que ves ahora (respeta el mes seleccionado)">⇩ Exportar CSV</button>
+        <button class="btn ghost" id="btn-export-partes-xlsx" title="Exporta la tabla del mes que ves ahora (respeta el mes seleccionado)">⇩ Exportar Excel</button>
+        <button class="btn ghost" id="btn-partes-prev-month" title="Mes anterior">◀</button>
+        <span id="partes-month-label" style="font-family:var(--mono); font-size:12.5px; min-width:130px; text-align:center; display:inline-block;"></span>
+        <button class="btn ghost" id="btn-partes-next-month" title="Mes siguiente">▶</button>
+        <button class="btn ghost" id="btn-partes-today">Mes actual</button>
+      </div>
+    </div>
+    <div class="hint partes-window-banner" id="partes-window-banner"></div>
+    <div class="strip" id="partes-kpis" style="grid-template-columns:repeat(4,1fr);"></div>
+    <table class="people-table" id="partes-table"><thead></thead><tbody></tbody></table>
+    <div class="empty-state" id="partes-empty" style="display:none;">Sin personas activas en el Directorio (revisa el filtro de Estado en Equipo, o sincroniza).</div>
+  </div>
+</div>
+</div>
+<div id="modal-slot"></div>
+<button id="btn-scroll-top" title="Ir arriba">↑</button>
+<script>
+// ============================================================
+// DIRECTORIO DE TALENTO — lógica de aplicación
+// ============================================================
+
+const STORAGE_KEY = 'directorio-talento-state-v1';
+const LS_PREFIX = 'dt-';
+
+// ---- almacenamiento (window.storage de Claude.ai, con fallback a localStorage) ----
+async function storageGet(key){
+  try{
+    if(window.storage && window.storage.get){
+      const r = await window.storage.get(key, false);
+      return r ? r.value : null;
+    }
+  }catch(e){ /* clave inexistente o storage no disponible */ }
+  try{ return localStorage.getItem(LS_PREFIX + key); }catch(e){ return null; }
+}
+async function storageSet(key, value){
+  try{
+    if(window.storage && window.storage.set){
+      await window.storage.set(key, value, false);
+      return true;
+    }
+  }catch(e){ /* ignorar, probamos fallback */ }
+  try{ localStorage.setItem(LS_PREFIX + key, value); return true; }catch(e){ return false; }
+}
+
+// ============================================================
+// TEMA VISUAL: desde v2.0.27 es un ajuste GLOBAL de toda la aplicación
+// (antes cada Directorio/Dashboard tenía su propio state.theme) —
+// THEMES/applyTheme viven en vendor/theme.js, cargado como <script> en el
+// <head> de este archivo. currentTheme guarda la clave aplicada en ESTA
+// ventana (para accentHex() en exportaciones); se rellena con
+// initGlobalTheme() en el arranque, más abajo.
+// ============================================================
+let currentTheme = 'medianoche';
+
+// ============================================================
+// CATÁLOGO DE TESTS (extensible — DISC viene precargado)
+// ============================================================
+function defaultTestCatalog(){
+  return [
+    { id:'disc', nombre:'DISC', tipo:'radar',
+      ejes:[
+        { clave:'D', etiqueta:'Dominancia',  color:'var(--disc-d)' },
+        { clave:'C', etiqueta:'Cumplimiento', color:'var(--disc-c)' },
+        { clave:'I', etiqueta:'Influencia',  color:'var(--disc-i)' },
+        { clave:'S', etiqueta:'Estabilidad', color:'var(--disc-s)' }
+      ] }
+  ];
+}
+
+// ============================================================
+// ESTADO POR DEFECTO
+// ============================================================
+function defaultState(){
+  return {
+    version: 1,
+    theme: 'medianoche',
+    corporateLogo: null,
+    people: [],
+    testCatalog: defaultTestCatalog(),
+    dismissedDupPairs: [], // pares [idA,idB] que el usuario ya confirmó como "personas distintas"
+    lastSyncAt: null,
+    // Partes mensuales (v0.1.24): checklist de aprobación de partes/imputación
+    // de horas, uno por persona activa y mes. NO lee ni calcula nada de Unit4
+    // — es solo el registro manual de "lo contrasté y está bien" que hace el
+    // usuario. Clave "YYYY-MM" -> { entries: { personId: {estado, nota, updatedAt} } }.
+    // estado ∈ 'pendiente' (por defecto, no requiere entrada) | 'aprobado' |
+    // 'incidencia' | 'no_aplica'.
+    partesMensuales: {},
+    // Config de la "ventana de revisión" (aviso visual, no bloquea nada):
+    // cuántos días antes de fin de mes se resalta el mes actual como "toca
+    // revisar ya". Editable desde el propio panel.
+    partesConfig: { windowDays: 7 }
+  };
+}
+
+let state = defaultState();
+let ui = {
+  filters: { search:'', proyecto:'', rol:'', categoria:'', sbaMin:'', sbaMax:'', discDominante:'', antiguedadMin:'', estado:'activo' },
+  sbaRevealed: false,
+  sortKey: 'nombre', sortDir: 'asc',
+  openPersonId: null,
+  appearancePanelOpen: false,
+  partesMonthKey: null, // se fija en startApp() al mes actual
+  // v2.0.18: orden de la tabla de Partes mensuales, elegido por el usuario
+  // pinchando en la cabecera de columna (Nombre/Proyecto(s)/Estado) — ver
+  // renderPartesTable(). Sustituye al reordenamiento automático por rank
+  // que había antes (pendientes/incidencias arriba, aprobados/no aplica
+  // abajo): el usuario reportó que le desorientaba ver la fila saltar sola
+  // al fondo de la tabla nada más marcarla.
+  partesSortKey: 'nombre', partesSortDir: 'asc',
+  // v2.0.21: orden CONGELADO de filas de la tabla de Partes mensuales —
+  // array de ids de persona en el orden que se ve ahora mismo, o null si
+  // toca recalcularlo desde cero (recién entrado a la vista, cambio de
+  // mes, o el usuario pinchó una cabecera). El v2.0.18 quitó el
+  // reordenamiento automático por rank, pero ordenar por la columna
+  // "Estado" reintroducía el mismo problema por otra vía: al ordenar por
+  // ese campo, CADA render (incluido el que dispara marcar una fila)
+  // recalculaba el sort entero, así que la fila que acabas de marcar
+  // saltaba sola de grupo. Ver renderPartesTable().
+  partesOrder: null,
+  view: 'directorio' // 'directorio' | 'partes' — qué bloque de #main-page se muestra (ver renderView())
+};
+
+// ============================================================
+// UTILIDADES DE TEXTO / NORMALIZACIÓN
+// ============================================================
+function normalizeDni(raw){
+  if(!raw) return '';
+  return String(raw).toUpperCase().replace(/[^A-Z0-9]/g,'').trim();
+}
+function normalizeName(raw){
+  if(!raw) return '';
+  return String(raw)
+    .normalize('NFD').replace(/[̀-ͯ]/g,'') // quita acentos
+    .toLowerCase().replace(/\s+/g,' ').trim();
+}
+function uid(prefix){
+  return (prefix||'id') + '_' + Math.random().toString(36).slice(2,10) + Date.now().toString(36).slice(-4);
+}
+function parseDateFlexible(raw){
+  if(!raw) return null;
+  const s = String(raw).trim();
+  if(!s) return null;
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(m) return `${m[1]}-${m[2]}-${m[3]}`;
+  // dd/mm/aaaa
+  const m2 = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if(m2) return `${m2[3]}-${m2[2].padStart(2,'0')}-${m2[1].padStart(2,'0')}`;
+  return null;
+}
+function yearsBetween(startIso, endIso){
+  if(!startIso) return null;
+  const start = new Date(startIso);
+  const end = endIso ? new Date(endIso) : new Date();
+  if(isNaN(start.getTime())) return null;
+  let years = end.getFullYear() - start.getFullYear();
+  const anniversaryPassed = (end.getMonth() > start.getMonth()) || (end.getMonth()===start.getMonth() && end.getDate()>=start.getDate());
+  if(!anniversaryPassed) years -= 1;
+  return Math.max(0, years);
+}
+function fmtMoney(v){
+  if(v === null || v === undefined || v === '') return '—';
+  return Number(v).toLocaleString('es-ES') + ' €';
+}
+function escapeHtml(s){
+  return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// ============================================================
+// PERSISTENCIA
+// ============================================================
+let saveTimer = null;
+
+// B3 (15 sept 2026) — un guardado que falla NO puede quedarse en `console.warn`.
+// Antes, si `storageSet` fallaba, el único rastro era un warn invisible en la
+// app empaquetada: el usuario seguía editando creyendo que su trabajo se estaba
+// guardando. Los cambios NO se pierden de memoria —`state` sigue intacto y el
+// siguiente guardado vuelve a intentarlo— pero hay que decírselo.
+//
+// Dos canales, los que esta pantalla ya tiene:
+//   - `#save-note`, que hasta ahora solo sabía decir "Guardado hh:mm:ss";
+//   - un `psAlert`, UNA vez por sesión. `saveState()` es un debounce que se
+//     dispara con cada tecla: avisar en cada intento sería inusable.
+let avisoGuardadoMostrado = false;
+function marcarGuardadoFallido(e){
+  const note = document.getElementById('save-note');
+  if(note) note.textContent = 'NO GUARDADO — ver aviso';
+  console.warn('Error al guardar', e);
+  if(avisoGuardadoMostrado) return;
+  avisoGuardadoMostrado = true;
+  // Sin `await` a propósito: esto se llama también desde `flushPendingSave()`,
+  // que es síncrono (corre durante el cierre de la ventana).
+  try{
+    psAlert('No se han podido guardar los últimos cambios del Directorio de Talento.\n\n' +
+      'Lo que has escrito sigue en pantalla: no cierres esta ventana sin volver a intentarlo. ' +
+      'Si el problema continúa, revisa que la carpeta de datos siga disponible.',
+      { title: 'Los cambios NO se han guardado', danger: true });
+  }catch(e2){ /* si ni el aviso se puede mostrar, el save-note ya lo dice */ }
+}
+function marcarGuardadoOk(){
+  const note = document.getElementById('save-note');
+  if(note) note.textContent = 'Guardado ' + new Date().toLocaleTimeString('es-ES');
+}
+
+async function saveState(){
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async ()=>{
+    try{
+      const raw = JSON.stringify({ state, savedAt: new Date().toISOString() });
+      // B3 (15 sept 2026) — `storageSet` NO lanza cuando la escritura falla:
+      // se traga la excepción y devuelve `false` (ver su definición arriba).
+      // Ignorar ese valor era PEOR que el warn mudo: el `catch` de abajo casi
+      // nunca llegaba a dispararse por un fallo real de escritura, y la
+      // pantalla escribía "Guardado hh:mm:ss" para un guardado que no había
+      // ocurrido. Se decide por el valor devuelto, no por si hubo excepción.
+      await storageSet(STORAGE_KEY, raw);
+      marcarGuardadoOk();
+    }catch(e){
+      marcarGuardadoFallido(e);
+    }finally{
+      saveTimer = null;
+    }
+  }, 350);
+}
+// v0.1.51: bug real reportado por el usuario — marcó varios "Partes mensuales" en un PC y,
+// tras sincronizar por Drive, NINGÚN backup (ni el más reciente) los tenía; al reabrir en el
+// PC de origen, seguían sin marcar. Causa encontrada leyendo el código: saveState() de arriba
+// RETRASA 350ms la escritura real a localStorage (debounce, para no escribir en cada tecla).
+// maybeBackup() y hasUnsavedChanges() leen localStorage con collectLocalStorageDump() — si se
+// disparan DENTRO de esos 350ms (p.ej. el usuario marca un parte y cierra la ventana casi al
+// instante), leen el estado ANTERIOR al cambio. Si además la ventana llega a cerrarse de
+// verdad antes de que el temporizador de 350ms complete, ese cambio no llega a escribirse
+// NUNCA — no es que falte en el backup, es que no llega a persistir ni siquiera en el propio
+// PC. Arreglo: forzar el guardado pendiente a completarse YA, de forma síncrona, antes de
+// leer localStorage — se llama al principio de maybeBackup() y de hasUnsavedChanges(), así
+// ninguna de las dos puede ver un estado más viejo que el que hay realmente en memoria.
+function flushPendingSave(){
+  if(saveTimer === null) return;
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  try{
+    const raw = JSON.stringify({ state, savedAt: new Date().toISOString() });
+    localStorage.setItem(LS_PREFIX + STORAGE_KEY, raw);
+    marcarGuardadoOk();
+  }catch(e){
+    // B3: este es el camino del CIERRE de la ventana — el último guardado
+    // posible. Si falla aquí y nadie avisa, el cambio se pierde de verdad.
+    marcarGuardadoFallido(e);
+  }
+}
+
+// ============================================================
+// FUSIÓN DE PERSONAS AL IMPORTAR / SINCRONIZAR
+// ============================================================
+// Estructura esperada de fila (nombres de columna flexibles, ver mapImportedRow):
+// { id, proyecto, nombre, rol, fechaIncorporacion, estado, dni, email, telefono, fechaSalida, fechaSalidaPrevista }
+
+function findPersonByDni(dniNorm){
+  return state.people.find(p => p.dni && p.dni === dniNorm) || null;
+}
+function findPeopleByNameNorm(nameNorm){
+  return state.people.filter(p => normalizeName(p.nombre) === nameNorm);
+}
+function pairDismissed(idA, idB){
+  return state.dismissedDupPairs.some(pair => (pair[0]===idA && pair[1]===idB) || (pair[0]===idB && pair[1]===idA));
+}
+function makeEmptyPerson(row){
+  return {
+    id: uid('p'),
+    dni: row.dni ? normalizeDni(row.dni) : '',
+    dniRaw: row.dni || '',
+    nombre: row.nombre || '(sin nombre)',
+    email: row.email || '',
+    telefono: row.telefono || '',
+    asignaciones: [],
+    manual: {
+      sba: null, fechaAltaEmpresa: null, categoriaProfesional: '', manager: '',
+      certificaciones: [], idiomas: [], dedicacion: {}, observaciones: '', bonos: []
+    },
+    resultadosTests: [],
+    dupPendiente: false,
+    dupCandidatoId: null,
+    creadoManual: false
+  };
+}
+// Devuelve true si se ha modificado algo de verdad (asignación nueva, campo
+// distinto al que ya había, contacto completado) — false si la fila traía
+// exactamente los mismos datos que ya teníamos. Se usa para que "Sincronizar
+// ahora" pueda distinguir "encontré a esta persona otra vez, sin novedad" de
+// "esto SÍ es nuevo/ha cambiado", en vez de contar cualquier coincidencia
+// como "actualizada" aunque no cambiara nada.
+function upsertAsignacion(person, row){
+  const hoy = new Date().toISOString().slice(0,10);
+  let asig = person.asignaciones.find(a => a.proyecto === row.proyecto);
+  let changed = false;
+  if(!asig){
+    asig = {
+      proyecto: row.proyecto, rol: row.rol || '', estado: row.estado || 'activo',
+      fechaIncorporacion: parseDateFlexible(row.fechaIncorporacion),
+      fechaSalida: parseDateFlexible(row.fechaSalida),
+      fechaSalidaPrevista: parseDateFlexible(row.fechaSalidaPrevista),
+      // v0.1.94: fecha de inicio/fin del PROYECTO de origen (no de la
+      // persona) — ver estadoEfectivoAsignacion() para el porqué.
+      proyectoInicio: parseDateFlexible(row.proyectoInicio),
+      proyectoFin: parseDateFlexible(row.proyectoFin),
+      historialRol: []
+    };
+    person.asignaciones.push(asig);
+    changed = true;
+  } else {
+    if(row.rol && asig.rol && row.rol !== asig.rol){
+      asig.historialRol.push({ rol: asig.rol, hasta: hoy });
+      asig.rol = row.rol;
+      changed = true;
+    } else if(row.rol && !asig.rol){
+      asig.rol = row.rol;
+      changed = true;
+    }
+    if(row.estado && row.estado !== asig.estado){ asig.estado = row.estado; changed = true; }
+    if(row.fechaIncorporacion){
+      const v = parseDateFlexible(row.fechaIncorporacion) || asig.fechaIncorporacion;
+      if(v !== asig.fechaIncorporacion){ asig.fechaIncorporacion = v; changed = true; }
+    }
+    if(row.fechaSalida){
+      const v = parseDateFlexible(row.fechaSalida) || asig.fechaSalida;
+      if(v !== asig.fechaSalida){ asig.fechaSalida = v; changed = true; }
+    }
+    if(row.fechaSalidaPrevista){
+      const v = parseDateFlexible(row.fechaSalidaPrevista) || asig.fechaSalidaPrevista;
+      if(v !== asig.fechaSalidaPrevista){ asig.fechaSalidaPrevista = v; changed = true; }
+    }
+    if(row.proyectoInicio){
+      const v = parseDateFlexible(row.proyectoInicio) || asig.proyectoInicio;
+      if(v !== asig.proyectoInicio){ asig.proyectoInicio = v; changed = true; }
+    }
+    if(row.proyectoFin){
+      const v = parseDateFlexible(row.proyectoFin) || asig.proyectoFin;
+      if(v !== asig.proyectoFin){ asig.proyectoFin = v; changed = true; }
+    }
+  }
+  // datos de contacto: se completan si venían vacíos
+  if(row.email && !person.email){ person.email = row.email; changed = true; }
+  if(row.telefono && !person.telefono){ person.telefono = row.telefono; changed = true; }
+  return changed;
+}
+// Devuelve { action: 'merged'|'unchanged'|'created'|'flagged', personId }
+// 'merged' ahora significa "coincidió Y además trajo algo nuevo/distinto";
+// si coincidió pero no había nada que actualizar, se devuelve 'unchanged'.
+function mergeImportedRow(row){
+  const dniNorm = row.dni ? normalizeDni(row.dni) : '';
+  if(dniNorm){
+    let person = findPersonByDni(dniNorm);
+    if(!person){
+      person = makeEmptyPerson(row);
+      state.people.push(person);
+      upsertAsignacion(person, row);
+      return { action:'created', personId: person.id };
+    }
+    const changed = upsertAsignacion(person, row);
+    return { action: changed ? 'merged' : 'unchanged', personId: person.id };
+  }
+  // Sin DNI: buscamos coincidencia de nombre
+  const nameNorm = normalizeName(row.nombre);
+  const candidates = findPeopleByNameNorm(nameNorm).filter(p => !p.dni); // solo comparamos contra personas que tampoco tienen DNI confirmado
+  if(candidates.length === 0){
+    const person = makeEmptyPerson(row);
+    state.people.push(person);
+    upsertAsignacion(person, row);
+    return { action:'created', personId: person.id };
+  }
+  // ¿Ya existe una asignación para este mismo proyecto en algún candidato? => es la misma fila reimportada/resincronizada, fusiona directo sin marcar duplicado
+  const sameProjectMatch = candidates.find(p => p.asignaciones.some(a => a.proyecto === row.proyecto));
+  if(sameProjectMatch){
+    const changed = upsertAsignacion(sameProjectMatch, row);
+    return { action: changed ? 'merged' : 'unchanged', personId: sameProjectMatch.id };
+  }
+  const target = candidates[0];
+  if(pairDismissed(target.id, 'pending:'+nameNorm)){
+    // el usuario ya decidió antes que este nombre en otro proyecto es una persona distinta: no lo fusiones ni lo flagees, créalo aparte
+    const person = makeEmptyPerson(row);
+    state.people.push(person);
+    upsertAsignacion(person, row);
+    return { action:'created', personId: person.id };
+  }
+  // Coincide el nombre en un proyecto distinto y sin DNI para confirmar: se crea como persona nueva
+  // pero se marca pendiente de revisión, enlazada al candidato existente.
+  const person = makeEmptyPerson(row);
+  person.dupPendiente = true;
+  person.dupCandidatoId = target.id;
+  state.people.push(person);
+  upsertAsignacion(person, row);
+  return { action:'flagged', personId: person.id };
+}
+
+function resolveDuplicateMerge(newPersonId, keepPersonId){
+  const idx = state.people.findIndex(p => p.id === newPersonId);
+  const keep = state.people.find(p => p.id === keepPersonId);
+  if(idx === -1 || !keep) return;
+  const dup = state.people[idx];
+  dup.asignaciones.forEach(a => {
+    const existing = keep.asignaciones.find(k => k.proyecto === a.proyecto);
+    if(!existing) keep.asignaciones.push(a);
+  });
+  if(dup.dni && !keep.dni){ keep.dni = dup.dni; keep.dniRaw = dup.dniRaw; }
+  if(dup.email && !keep.email) keep.email = dup.email;
+  if(dup.telefono && !keep.telefono) keep.telefono = dup.telefono;
+  state.people.splice(idx,1);
+}
+function resolveDuplicateKeepSeparate(newPersonId, candidateId){
+  const person = state.people.find(p => p.id === newPersonId);
+  if(!person) return;
+  const nameNorm = normalizeName(person.nombre);
+  state.dismissedDupPairs.push([candidateId, 'pending:'+nameNorm]);
+  person.dupPendiente = false;
+  person.dupCandidatoId = null;
+}
+
+// ============================================================
+// SINCRONIZACIÓN AUTOMÁTICA DESDE LOS PROYECTOS DE LA APP
+// ============================================================
+// El proceso principal (main.js) recorre el último backup guardado de cada
+// proyecto de Panorama del Servicio y devuelve su Equipo ya aplanado, en el
+// mismo formato de fila que produce la importación manual de CSV/Excel — así
+// se reutiliza el mismo mergeImportedRow() de siempre, sin duplicar lógica.
+// Solo toca nombre/rol/asignación/estado/contacto: los campos manuales de
+// RRHH (SBA, tests, categoría, bonos, observaciones) nunca se tocan aquí.
+const ESTADO_SINONIMOS_BAJA = ['rotado','baja','cesado','cese','finalizado','salida','inactivo','ex'];
+function normalizarEstadoImportado(raw){
+  const v = (raw || '').toString().trim().toLowerCase();
+  if(!v) return 'activo';
+  if(v === 'pendiente') return 'pendiente';
+  if(ESTADO_SINONIMOS_BAJA.includes(v)) return 'baja';
+  if(v === 'activo') return 'activo';
+  return 'activo';
+}
+// Feedback del botón "Sincronizar ahora" — separado de showIOFeedback()
+// (que pinta en el pie de página, bajo Equipo/Gráficas: con datos reales
+// esa zona queda fuera de la pantalla sin hacer scroll). Este se pinta
+// justo debajo del propio botón, arriba, para que se vea sin desplazarse
+// — si no, un clic parece "no hacer nada" aunque sí haya sincronizado.
+function showSyncFeedback(msg, ok){
+  const el = document.getElementById('sync-feedback');
+  if(!el) return;
+  el.textContent = msg;
+  el.className = ok ? 'ok' : 'err';
+  clearTimeout(showSyncFeedback._t);
+  showSyncFeedback._t = setTimeout(()=>{ if(el.textContent===msg) el.textContent=''; }, 10000);
+}
+// Una plaza "en búsqueda de candidato" (rotación del proyecto de origen
+// todavía sin cubrir) no es una persona real — el dashboard la guarda con
+// alias:'—' (guion, sin nombre de verdad). main.js ya la excluye al leer
+// los backups (ver collectTeamProfilesFromProjects), pero esto es una
+// segunda barrera aquí, y sobre todo sirve para LIMPIAR las que ya se
+// sincronizaron por error antes de ese arreglo (quedaron guardadas en el
+// Directorio con nombre "—", y nadie las habría rellenado a mano porque no
+// representan a nadie real).
+function esNombrePlaceholder(nombre){
+  const t = (nombre||'').trim();
+  return !t || t==='—' || t==='-';
+}
+function personaSinDatosManuales(p){
+  const m = p.manual || {};
+  return !m.sba && !m.fechaAltaEmpresa && !(m.categoriaProfesional||'').trim() && !(m.manager||'').trim()
+    && !(m.certificaciones && m.certificaciones.length) && !(m.idiomas && m.idiomas.length)
+    && !(m.observaciones||'').trim() && !(m.bonos && m.bonos.length)
+    && !(p.resultadosTests && p.resultadosTests.length)
+    && !(p.dniRaw||'').trim() && !(p.email||'').trim() && !(p.telefono||'').trim();
+}
+function limpiarFantasmasPlazasEnBusqueda(){
+  const antes = state.people.length;
+  state.people = state.people.filter(p => !(esNombrePlaceholder(p.nombre) && personaSinDatosManuales(p)));
+  return antes - state.people.length;
+}
+async function syncFromProjects(silent){
+  if(!window.panoramaBridge || typeof window.panoramaBridge.syncTeamProfiles !== 'function'){
+    if(!silent) showSyncFeedback('Esta función solo está disponible dentro de la app de escritorio.', false);
+    return;
+  }
+  if(!silent) showSyncFeedback('Sincronizando…', true);
+  try{
+    const result = await window.panoramaBridge.syncTeamProfiles();
+    let created=0, merged=0, flagged=0;
+    (result.profiles||[]).forEach(row=>{
+      if(!row.proyecto || !row.nombre || esNombrePlaceholder(row.nombre)) return;
+      row.estado = normalizarEstadoImportado(row.estado);
+      const res = mergeImportedRow(row);
+      if(res.action==='created') created++;
+      else if(res.action==='merged') merged++;
+      else if(res.action==='flagged') flagged++;
+    });
+    const eliminados = limpiarFantasmasPlazasEnBusqueda();
+    state.lastSyncAt = new Date().toISOString();
+    await saveState();
+    renderAll();
+    const parts = [];
+    if(created) parts.push(`${created} nueva(s)`);
+    if(merged) parts.push(`${merged} actualizada(s)`);
+    if(flagged) parts.push(`${flagged} pendiente(s) de confirmar duplicado`);
+    if(eliminados) parts.push(`${eliminados} sin nombre retirada(s) (plazas en búsqueda de candidato)`);
+    const errorCount = (result.errors||[]).length;
+    if(errorCount){
+      const names = result.errors.map(e=>e.project).join(', ');
+      showSyncFeedback(`Sincronizado${parts.length?': '+parts.join(', '):''}. ${errorCount} proyecto(s) no se pudieron leer (${names}).`, false);
+    } else if(parts.length){
+      showSyncFeedback(`Sincronizado: ${parts.join(', ')}.`, true);
+    } else if(!silent){
+      showSyncFeedback('Sincronizado — sin cambios nuevos.', true);
+    }
+  }catch(e){
+    if(!silent) showSyncFeedback('No se pudo sincronizar con los proyectos: ' + ((e&&e.message)||e), false);
+    else console.warn('Sincronización automática fallida:', e);
+  }
+}
+
+// ============================================================
+// PARSEO DE ARCHIVOS (CSV / XLSX) — import manual (candidatos, freelance, etc.)
+// ============================================================
+const COLUMN_ALIASES = {
+  id: ['id'],
+  proyecto: ['proyecto'],
+  nombre: ['nombre','alias'],
+  rol: ['rol'],
+  fechaIncorporacion: ['fecha incorporación (aaaa-mm-dd)','fecha incorporacion','fecha incorporación'],
+  estado: ['estado'],
+  dni: ['dni/nie','dni','nie'],
+  email: ['email','correo'],
+  telefono: ['teléfono','telefono'],
+  fechaSalida: ['fecha salida (rotación)','fecha salida rotacion','fecha salida (rotacion)'],
+  fechaSalidaPrevista: ['fecha salida prevista']
+};
+function buildHeaderMap(headerRow){
+  const map = {};
+  headerRow.forEach((h, i)=>{
+    const norm = normalizeName(h);
+    for(const key in COLUMN_ALIASES){
+      if(COLUMN_ALIASES[key].some(alias => normalizeName(alias) === norm)){
+        map[key] = i;
+      }
+    }
+  });
+  return map;
+}
+function parseCsvText(text){
+  // parser CSV sencillo con soporte de comillas y "sep=,"
+  let t = text.replace(/^﻿/, '');
+  const lines0 = t.split(/\r\n|\n/);
+  if(lines0[0] && /^sep=/i.test(lines0[0].trim())) lines0.shift();
+  const rows = [];
+  for(const line of lines0){
+    if(line === '') continue;
+    const cells = [];
+    let cur = '', inQuotes = false;
+    for(let i=0;i<line.length;i++){
+      const c = line[i];
+      if(inQuotes){
+        if(c === '"'){
+          if(line[i+1] === '"'){ cur += '"'; i++; } else inQuotes = false;
+        } else cur += c;
+      } else {
+        if(c === '"') inQuotes = true;
+        else if(c === ','){ cells.push(cur); cur=''; }
+        else cur += c;
+      }
+    }
+    cells.push(cur);
+    rows.push(cells);
+  }
+  return rows;
+}
+function rowsToImportRows(rows){
+  if(rows.length === 0) return [];
+  const headerMap = buildHeaderMap(rows[0]);
+  const out = [];
+  for(let i=1;i<rows.length;i++){
+    const r = rows[i];
+    if(!r || r.every(c=>String(c).trim()==='')) continue;
+    const get = (key)=> headerMap[key]!==undefined ? (r[headerMap[key]]||'').toString().trim() : '';
+    out.push({
+      proyecto: get('proyecto'), nombre: get('nombre'), rol: get('rol'),
+      fechaIncorporacion: get('fechaIncorporacion'), estado: normalizarEstadoImportado(get('estado')),
+      dni: get('dni'), email: get('email'), telefono: get('telefono'),
+      fechaSalida: get('fechaSalida'), fechaSalidaPrevista: get('fechaSalidaPrevista')
+    });
+  }
+  return out;
+}
+async function readFileAsImportRows(file){
+  const name = file.name.toLowerCase();
+  if(name.endsWith('.csv')){
+    const text = await file.text();
+    return rowsToImportRows(parseCsvText(text));
+  }
+  // xlsx / xls
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type:'array' });
+  const sheet = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(sheet, { header:1, raw:false, defval:'' });
+  return rowsToImportRows(rows);
+}
+async function importFiles(fileList){
+  let created=0, merged=0, flagged=0, skipped=0;
+  for(const file of fileList){
+    try{
+      const rows = await readFileAsImportRows(file);
+      rows.forEach(row=>{
+        if(!row.proyecto || !row.nombre || esNombrePlaceholder(row.nombre)){ skipped++; return; }
+        const res = mergeImportedRow(row);
+        if(res.action==='created') created++;
+        else if(res.action==='merged') merged++;
+        else if(res.action==='flagged') flagged++;
+      });
+    }catch(e){
+      console.warn('Error importando archivo', file.name, e);
+    }
+  }
+  await saveState();
+  renderAll();
+  showIOFeedback(`Importación completa: ${created} personas nuevas, ${merged} fusionadas, ${flagged} pendientes de confirmar duplicado${skipped?`, ${skipped} filas omitidas`:''}.`, true);
+}
+
+// ============================================================
+// DERIVADOS: proyectos, roles, categorías, antigüedad, perfil DISC dominante
+// ============================================================
+// Bug reportado: una persona con un contrato que termina (p.ej. "6M") y otro
+// que arranca en el mismo cliente al día siguiente ("2026") aparecía como
+// "activo" en AMBAS asignaciones y se contaba como "multi-proyecto" — aunque
+// nunca coincidan de verdad en el tiempo. La causa real (confirmada con
+// datos reales del usuario en la 0.1.93, que resultó estar mal planteada):
+// el campo `estado` de cada asignación es el que trae el proyecto de origen
+// (activo/pendiente/baja), y solo se actualiza solo cuando alguien abre ESE
+// proyecto y la fecha ya ha llegado (ver `checkScheduledExits()` en
+// dashboard/plantilla_dashboard.html) — si nadie lo abre justo esos días, el
+// Directorio sincroniza un `estado` desfasado.
+//
+// La 0.1.93 intentó arreglarlo recalculando el estado a partir de la
+// "Fecha" (fechaIncorporacion) de CADA fila de equipo — pero se comprobó con
+// un caso real que ese campo NO representa de forma fiable el inicio real
+// de un contrato concreto: puede quedar clavado a un valor heredado (p.ej.
+// la fecha en que la persona entró en la empresa) sin relación con cuándo
+// arranca ESTE proyecto en concreto. Con esa fecha mal aprovechada, encima
+// se ignoraba el toggle manual "Pendiente" que el usuario sí mantiene a
+// mano en el dashboard de origen — el bug seguía reproduciéndose.
+//
+// Esta versión usa en su lugar la fecha de inicio/fin del PROYECTO de
+// origen (`proyectoInicio`/`proyectoFin`, sincronizadas desde
+// `state.serviceStart`/`state.serviceEnd` del dashboard — el "Inicio
+// servicio"/"Fin estimado" de la cabecera) como señal automática de
+// pendiente/baja: esa fecha si la mantiene el usuario a propósito para
+// reflejar cuándo arranca/termina cada contrato, a diferencia de la fecha
+// de cada fila de equipo. Se combina con el estado manual (activo/pendiente
+// del botón toggle) y con las fechas de salida por rotación individual
+// (fechaSalida/fechaSalidaPrevista, que sí se fijan a propósito con el
+// flujo de rotación) — sin depender de que nadie abra el proyecto de
+// origen ni toque nada a mano.
+function estadoEfectivoAsignacion(a, hoy){
+  hoy = hoy ? new Date(hoy) : new Date();
+  hoy = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate());
+
+  // BAJA: la señal más fuerte, ya sea explícita o por fecha ya cumplida —
+  // de la persona (rotación individual) o del proyecto entero.
+  if(a.estado === 'baja' || a.estado === 'rotado') return 'baja';
+  if(a.fechaSalida && new Date(a.fechaSalida+'T00:00:00') <= hoy) return 'baja';
+  if(a.fechaSalidaPrevista && new Date(a.fechaSalidaPrevista+'T00:00:00') <= hoy) return 'baja';
+  if(a.proyectoFin && new Date(a.proyectoFin+'T00:00:00') <= hoy) return 'baja';
+
+  // PENDIENTE/ACTIVO por fecha del PROYECTO: si se conoce su "Inicio
+  // servicio", esa fecha manda por completo, en los dos sentidos — no
+  // solo para forzar "pendiente" mientras no ha llegado (aunque el
+  // estado sincronizado diga "activo", el valor por defecto que nunca se
+  // corrige solo), sino también para dejar de forzarlo en cuanto llega,
+  // AUNQUE alguien haya dejado el botón "Pendiente" pulsado a mano en el
+  // dashboard de origen sin volver a tocarlo — así el día que cambian las
+  // fechas se invierte solo de verdad, sin que nadie tenga que entrar a
+  // los dos proyectos a la vez a actualizar el toggle.
+  if(a.proyectoInicio){
+    return new Date(a.proyectoInicio+'T00:00:00') > hoy ? 'pendiente' : 'activo';
+  }
+
+  // Sin fecha de proyecto sincronizada (proyectos de antes de esta
+  // versión, o sin "Inicio servicio" configurado): se respeta el estado
+  // pendiente/activo tal cual lo mantiene el usuario a mano en el
+  // dashboard de origen (botón "Activo"/"Pendiente"), como único dato
+  // disponible.
+  if(a.estado === 'pendiente') return 'pendiente';
+
+  return 'activo';
+}
+function personActiveAssignments(p){
+  // "Activas" en sentido amplio (igual que siempre se ha usado en filtros y
+  // exportación): no han terminado todavía — incluye las pendientes de
+  // arrancar, no solo las ya en marcha.
+  return p.asignaciones.filter(a => estadoEfectivoAsignacion(a) !== 'baja');
+}
+// Estado global de la persona para la columna "Estado" de la tabla y la
+// exportación: activo si tiene AL MENOS una asignación ya en marcha ahora
+// mismo; si no, pendiente si tiene alguna por arrancar; si no, baja.
+function personOverallEstado(p){
+  let anyPendiente = false;
+  for(const a of p.asignaciones){
+    const ef = estadoEfectivoAsignacion(a);
+    if(ef === 'activo') return 'activo';
+    if(ef === 'pendiente') anyPendiente = true;
+  }
+  return anyPendiente ? 'pendiente' : 'baja';
+}
+function allProjects(){
+  const set = new Set();
+  state.people.forEach(p => p.asignaciones.forEach(a => set.add(a.proyecto)));
+  return Array.from(set).sort();
+}
+// v2.0.6: admite acotar por proyecto -- si se pasa `proyecto`, solo cuentan los roles
+// usados en asignaciones DE ESE PROYECTO (no todos los roles que tenga la persona en
+// otros proyectos). Sin `proyecto` (o vacío) se comporta igual que antes: todos los
+// roles de toda la plantilla. Lo usa el combo "Rol" del panel de filtros para no
+// mostrar roles de proyectos distintos al que se ha elegido en "Proyecto".
+function allRoles(proyecto){
+  const set = new Set();
+  state.people.forEach(p => p.asignaciones.forEach(a => {
+    if(a.rol && (!proyecto || a.proyecto === proyecto)) set.add(a.rol);
+  }));
+  return Array.from(set).sort();
+}
+// Búsqueda de rol en texto libre: en vez de exigir coincidencia exacta con el
+// desplegable (antes obligaba a elegir el string EXACTO guardado, así que
+// "Administrador de sistemas" y "Sistemas" contaban como roles distintos e
+// incompatibles), se parte la búsqueda en palabras y basta con que TODAS
+// aparezcan como subcadena del rol guardado — así "admin sistema" encuentra
+// "Administrador de Sistemas", "sistemas" encuentra ese mismo rol, etc.
+// Sin acentos/mayúsculas de por medio (normalizeName ya se encarga de eso).
+function roleMatchesQuery(rol, query){
+  if(!query || !query.trim()) return true;
+  const tokens = normalizeName(query).split(/\s+/).filter(Boolean);
+  if(!tokens.length) return true;
+  const hay = normalizeName(rol || '');
+  if(!hay) return false;
+  return tokens.every(t => hay.includes(t));
+}
+// v2.0.49: bug real reportado -- "Distribución de antigüedad (años)" salía
+// "Sin datos suficientes" para personas que SÍ tienen fecha de
+// incorporación real a un proyecto (se ve en su propia ficha:
+// "Incorporación: aaaa-mm-dd", campo `fechaIncorporacion` de cada
+// asignación) porque esta función solo miraba `fechaAltaEmpresa`, un campo
+// manual aparte que nadie había rellenado. Ahora, si no hay fecha manual,
+// cae a la más antigua de sus fechas de incorporación reales.
+function personAntiguedadInicio(p){
+  if(p.manual.fechaAltaEmpresa) return p.manual.fechaAltaEmpresa;
+  const fechas = (p.asignaciones||[]).map(a=>a.fechaIncorporacion).filter(Boolean).sort();
+  return fechas.length ? fechas[0] : null;
+}
+function personAntiguedad(p){
+  const inicio = personAntiguedadInicio(p);
+  return inicio ? yearsBetween(inicio, null) : null;
+}
+// v2.0.50: bug real reportado -- "hay perfiles que ponen 0 años" (comprobado
+// con datos reales: personas incorporadas hace 1 y hasta 11 meses, TODAS
+// mostraban "0 a" igual, sin distinguir "acaba de llegar" de "casi cumple un
+// año" -- no era un cálculo erróneo (yearsBetween ya cuenta solo años
+// COMPLETOS, la convención habitual de antigüedad) sino la tabla mostrando
+// siempre años enteros incluso cuando el valor real es 0. Para quien lleva
+// menos de un año, se muestra en MESES en vez de "0 a" -- personAntiguedad()
+// (años enteros) no cambia, se sigue usando tal cual para ordenar/filtrar/
+// gráfica; esto es solo el texto que ve el usuario en la columna de la tabla.
+function monthsBetween(startIso, endIso){
+  if(!startIso) return null;
+  const start = new Date(startIso);
+  const end = endIso ? new Date(endIso) : new Date();
+  if(isNaN(start.getTime())) return null;
+  let months = (end.getFullYear()-start.getFullYear())*12 + (end.getMonth()-start.getMonth());
+  if(end.getDate() < start.getDate()) months -= 1;
+  return Math.max(0, months);
+}
+// v2.0.52: bug real reportado -- "que no ponga solo 1a". Antes de un año se
+// mostraban meses (2.0.50), pero a partir de 1 año volvía a redondear a un
+// entero plano -- alguien recién cumplido el año y alguien a 11 meses de
+// cumplir el segundo mostraban el mismo "1 a", perdiendo la misma
+// granularidad que ya se había corregido para el tramo 0-1. Se calculan los
+// MESES totales una sola vez (monthsBetween, ya existente) y se derivan años
+// + meses sobrantes -- "1 a 3 m" en vez de "1 a" a secas. yearsBetween()
+// sigue igual y se sigue usando tal cual para ordenar/filtrar/gráfica (no
+// tiene sentido ordenar por una cadena "1 a 3 m").
+function fmtAntiguedad(p){
+  const inicio = personAntiguedadInicio(p);
+  if(!inicio) return '—';
+  const totalMonths = monthsBetween(inicio, null) || 0;
+  const years = Math.floor(totalMonths/12);
+  const remMonths = totalMonths % 12;
+  if(years === 0) return remMonths + (remMonths===1 ? ' mes' : ' meses');
+  if(remMonths === 0) return years + ' a';
+  return years + ' a ' + remMonths + ' m';
+}
+function discResult(p){
+  return (p.resultadosTests||[]).filter(r=>r.testId==='disc').sort((a,b)=> (b.fecha||'').localeCompare(a.fecha||''))[0] || null;
+}
+function discDominant(p){
+  const r = discResult(p);
+  if(!r) return null;
+  let best=null, bestVal=-1;
+  for(const k in r.valores){ if(r.valores[k] > bestVal){ bestVal = r.valores[k]; best = k; } }
+  return best;
+}
+// Pareja dominante-secundario: la segunda letra solo se muestra si está realmente cerca de la
+// primera (margen pequeño) y tiene un valor mínimo — si no, solo diría ruido, no un rasgo real.
+const DISC_SECONDARY_MAX_GAP = 15;
+const DISC_SECONDARY_MIN_VALUE = 40;
+function discDominantPair(p){
+  const r = discResult(p);
+  if(!r) return null;
+  const entries = Object.keys(r.valores).map(k=>({ key:k, val:r.valores[k]||0 })).sort((a,b)=>b.val-a.val);
+  const primary = entries[0];
+  const second = entries[1];
+  const hasSecondary = second && (primary.val - second.val) <= DISC_SECONDARY_MAX_GAP && second.val >= DISC_SECONDARY_MIN_VALUE;
+  return { primary: primary.key, primaryVal: primary.val, secondary: hasSecondary ? second.key : null, secondaryVal: hasSecondary ? second.val : null };
+}
+
+// ============================================================
+// PARTES MENSUALES (v0.1.24)
+// ============================================================
+// Roster: SIEMPRE "activos" (misma definición que personActiveAssignments,
+// la que usa el filtro Estado=Activos de Equipo), independientemente de qué
+// filtro tenga puesto el usuario en el panel de Equipo — decisión explícita
+// del usuario ("solo los activos"). Sin lógica de fechas de alta/baja dentro
+// del mes: cualquier persona activa AHORA aparece, decisión también explícita
+// ("cualquier persona que este independientemente de los dias que figure").
+function activePeopleForPartes(){
+  return state.people
+    .filter(p => personActiveAssignments(p).length > 0)
+    .slice()
+    .sort((a,b)=>{
+      const an = normalizeName(a.nombre), bn = normalizeName(b.nombre);
+      return an < bn ? -1 : an > bn ? 1 : 0;
+    });
+}
+function currentMonthKey(d){
+  d = d || new Date();
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+}
+function monthKeyLabel(key){
+  const [y,m] = key.split('-').map(Number);
+  const dt = new Date(y, m-1, 1);
+  const label = dt.toLocaleDateString('es-ES', { month:'long', year:'numeric' });
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+function daysInMonth(y,m){ return new Date(y, m, 0).getDate(); } // m: 1-12
+// v0.1.28: fecha y hora de la última marca (aprobado/pendiente/incidencia)
+// de cada persona en Partes mensuales — pedido explícito del usuario tras
+// ver que `entry.updatedAt` ya se guardaba (desde 0.1.24) pero nunca se
+// mostraba en ningún sitio. Solo guarda el timestamp del cambio MÁS
+// RECIENTE por persona y mes (no un historial completo de cada cambio de
+// estado) — si alguien marca incidencia y luego aprobado, solo queda la
+// fecha del aprobado. Es lo que pidió: "fecha y hora de cada aprobacion,
+// pendiente, incidencia", es decir, de la marca actual, no un log.
+function fmtParteTimestamp(iso){
+  if(!iso) return '';
+  try{
+    const d = new Date(iso);
+    return d.toLocaleString('es-ES', { dateStyle:'medium', timeStyle:'short' });
+  }catch(e){ return ''; }
+}
+function isInReviewWindow(monthKey){
+  const now = new Date();
+  if(monthKey !== currentMonthKey(now)) return false;
+  const [y,m] = monthKey.split('-').map(Number);
+  const dim = daysInMonth(y,m);
+  const windowDays = (state.partesConfig && state.partesConfig.windowDays) || 7;
+  return now.getDate() >= (dim - windowDays + 1);
+}
+function getPartesMonth(monthKey){
+  if(!state.partesMensuales[monthKey]) state.partesMensuales[monthKey] = { entries:{} };
+  return state.partesMensuales[monthKey];
+}
+function getParteEntry(monthKey, personId){
+  const m = state.partesMensuales[monthKey];
+  return (m && m.entries[personId]) || null;
+}
+function getParteEstado(monthKey, personId){
+  const e = getParteEntry(monthKey, personId);
+  return e ? e.estado : 'pendiente';
+}
+function setParteEstado(monthKey, personId, estado, nota){
+  const m = getPartesMonth(monthKey);
+  const prev = m.entries[personId];
+  m.entries[personId] = { estado, nota: (nota!==undefined ? nota : (prev ? prev.nota : '')) || '', updatedAt: new Date().toISOString() };
+  saveState();
+}
+
+// ============================================================
+// FILTROS
+// ============================================================
+function personMatchesFilters(p){
+  const f = ui.filters;
+  if(f.search && f.search.trim()){
+    const q = normalizeName(f.search);
+    const inName = normalizeName(p.nombre).includes(q);
+    const inDni = (p.dniRaw||'').toLowerCase().includes(f.search.trim().toLowerCase());
+    const inEmail = (p.email||'').toLowerCase().includes(f.search.trim().toLowerCase());
+    if(!inName && !inDni && !inEmail) return false;
+  }
+  if(f.proyecto && !p.asignaciones.some(a=>a.proyecto===f.proyecto)) return false;
+  if(f.rol && !p.asignaciones.some(a=>roleMatchesQuery(a.rol, f.rol))) return false;
+  if(f.sbaMin !== '' && !(p.manual.sba !== null && p.manual.sba >= Number(f.sbaMin))) return false;
+  if(f.sbaMax !== '' && !(p.manual.sba !== null && p.manual.sba <= Number(f.sbaMax))) return false;
+  if(f.discDominante && discDominant(p) !== f.discDominante) return false;
+  if(f.antiguedadMin !== ''){
+    const ant = personAntiguedad(p);
+    if(ant === null || ant < Number(f.antiguedadMin)) return false;
+  }
+  if(f.estado === 'activo' && !personActiveAssignments(p).length) return false;
+  if(f.estado === 'baja' && personActiveAssignments(p).length) return false;
+  return true;
+}
+function filteredPeople(){
+  let list = state.people.filter(personMatchesFilters);
+  list.sort((a,b)=>{
+    let av, bv;
+    if(ui.sortKey==='nombre'){ av=normalizeName(a.nombre); bv=normalizeName(b.nombre); }
+    else if(ui.sortKey==='sba'){ av=a.manual.sba??-1; bv=b.manual.sba??-1; }
+    else if(ui.sortKey==='antiguedad'){ av=personAntiguedad(a)??-1; bv=personAntiguedad(b)??-1; }
+    else if(ui.sortKey==='proyectos'){ av=a.asignaciones.length; bv=b.asignaciones.length; }
+    else { av=normalizeName(a.nombre); bv=normalizeName(b.nombre); }
+    if(av<bv) return ui.sortDir==='asc'?-1:1;
+    if(av>bv) return ui.sortDir==='asc'?1:-1;
+    return 0;
+  });
+  return list;
+}
+
+// ============================================================
+// SVG — RADAR DISC (4 puntas, cuadrantes coloreados)
+// ============================================================
+function radarDiscSVG(valores, size, showLabels){
+  size = size || 220;
+  showLabels = showLabels !== false;
+  const cx = size/2, cy = size/2, R = size*0.36;
+  valores = valores || { D:0, C:0, I:0, S:0 };
+  const axes = [
+    { key:'D', angle:-45, color:'var(--disc-d)' },
+    { key:'C', angle:45,  color:'var(--disc-c)' },
+    { key:'I', angle:135, color:'var(--disc-i)' },
+    { key:'S', angle:225, color:'var(--disc-s)' }
+  ];
+  function pt(angleDeg, r){
+    const rad = angleDeg * Math.PI/180;
+    return [ cx + r*Math.cos(rad), cy + r*Math.sin(rad) ];
+  }
+  const Router = R * 1.22;
+  let quadrants = '';
+  axes.forEach(ax=>{
+    const a1 = ax.angle - 45, a2 = ax.angle + 45;
+    const [x1,y1] = pt(a1, Router), [x2,y2] = pt(a2, Router);
+    quadrants += `<path d="M${cx},${cy} L${x1},${y1} A${Router},${Router} 0 0 1 ${x2},${y2} Z" fill="${ax.color}" opacity="0.30"/>`;
+  });
+  let grid = '';
+  [0.33,0.66,1].forEach(f=>{
+    const pts = axes.map(ax=> pt(ax.angle, R*f).join(',')).join(' ');
+    grid += `<polygon points="${pts}" fill="none" stroke="var(--ink)" stroke-width="1" opacity="0.16"/>`;
+  });
+  axes.forEach(ax=>{
+    const [x,y] = pt(ax.angle, Router);
+    grid += `<line x1="${cx}" y1="${cy}" x2="${x}" y2="${y}" stroke="var(--ink)" stroke-width="1" opacity="0.14"/>`;
+  });
+  const dataPts = axes.map(ax=> pt(ax.angle, R * Math.max(0.05, Math.min(1, (valores[ax.key]||0)/100))));
+  const polyPts = dataPts.map(p=>p.join(',')).join(' ');
+  const dotR = showLabels ? 5 : 3.4;
+  let dots = '';
+  axes.forEach((ax,i)=>{
+    dots += `<circle cx="${dataPts[i][0]}" cy="${dataPts[i][1]}" r="${dotR}" fill="${ax.color}" stroke="var(--surface)" stroke-width="${showLabels?1.5:1}"/>`;
+  });
+  let labels = '';
+  if(showLabels){
+    axes.forEach(ax=>{
+      const [x,y] = pt(ax.angle, Router*1.24);
+      labels += `<text x="${x}" y="${y}" text-anchor="middle" dominant-baseline="middle" font-family="var(--mono)" font-weight="800" font-size="${Math.max(12,size*0.078)}" fill="${ax.color}">${ax.key}</text>`;
+    });
+  }
+  const viewSize = showLabels ? size * 1.18 : size;
+  const off = showLabels ? (viewSize-size)/2 : 0;
+  return `<svg viewBox="${-off} ${-off} ${viewSize} ${viewSize}" width="${size}" height="${size}" style="overflow:visible;">
+    <circle cx="${cx}" cy="${cy}" r="${Router}" fill="var(--surface-2)"/>
+    ${quadrants}
+    <circle cx="${cx}" cy="${cy}" r="${Router}" fill="none" stroke="var(--border)" stroke-width="1.5"/>
+    ${grid}
+    <polygon points="${polyPts}" fill="var(--ink)" fill-opacity="0.22" stroke="var(--ink)" stroke-width="${showLabels?2.5:1.6}" stroke-linejoin="round"/>
+    ${dots}
+    ${labels}
+  </svg>`;
+}
+function discBadgeHtml(p){
+  const pair = discDominantPair(p);
+  if(!pair) return '<span class="hint">—</span>';
+  const colors = { D:'var(--disc-d)', I:'var(--disc-i)', S:'var(--disc-s)', C:'var(--disc-c)' };
+  const bgs = { D:'var(--disc-d-bg)', I:'var(--disc-i-bg)', S:'var(--disc-s-bg)', C:'var(--disc-c-bg)' };
+  const labels = { D:'Dominancia', I:'Influencia', S:'Estabilidad', C:'Cumplimiento' };
+  const title = pair.secondary
+    ? `${labels[pair.primary]} (${pair.primaryVal}) + ${labels[pair.secondary]} (${pair.secondaryVal})`
+    : `${labels[pair.primary]} (${pair.primaryVal}), perfil dominante`;
+  const secondaryHtml = pair.secondary
+    ? `<span class="disc-badge disc-badge-secondary" style="color:${colors[pair.secondary]}; background:${bgs[pair.secondary]};">${pair.secondary}</span>`
+    : '';
+  return `<span class="disc-badge-pair" title="${title}"><span class="disc-badge" style="color:${colors[pair.primary]}; background:${bgs[pair.primary]};">${pair.primary}</span>${secondaryHtml}</span>`;
+}
+
+// ============================================================
+// SVG — gráficas agregadas del equipo
+// ============================================================
+function svgWrap(w,h,inner){ return `<svg viewBox="0 0 ${w} ${h}" width="100%" style="max-width:${w}px">${inner}</svg>`; }
+// v2.0.55: pedido explícito del usuario -- que el tooltip de cada barra/
+// porción de los gráficos globales (Personas por proyecto, Distribución
+// por rol, Composición DISC, tramos de antigüedad/SBA) muestre los
+// NOMBRES concretos detrás del número, no solo el conteo. Un `<title>`
+// SVG nativo sí respeta saltos de línea (a diferencia de un tooltip HTML
+// normal) -- una segunda línea con los nombres, sin JS ni librería nueva,
+// igual que ya se hacía con el conteo. Tope de 12 nombres visibles (más
+// que eso, "+N más") para que un grupo grande no deje un tooltip enorme.
+function namesTooltipSuffix(names){
+  if(!names || !names.length) return '';
+  const shown = names.slice(0,12);
+  const rest = names.length - shown.length;
+  return '\n' + shown.join(', ') + (rest>0 ? ` +${rest} más` : '');
+}
+// v2.0.48: bug real reportado -- con el filtro puesto en un proyecto
+// concreto, "Personas por proyecto" podía mostrar DOS barras con la
+// etiqueta visible IDÉNTICA ("IMUS - INSTITUTO _" dos veces) cuando dos
+// proyectos comparten un prefijo largo y solo se diferencian al final
+// ("...MUJERES 2026" vs "...MUJERES 6M") -- el recorte anterior
+// (slice(0,17)+'…', se queda con el PRINCIPIO) descarta justo la parte
+// que los distingue. Recorte "inteligente" con elipsis en el MEDIO
+// (principio + final, como hacen los navegadores con rutas de archivo
+// largas): conserva el contexto inicial Y el sufijo que diferencia.
+function smartTruncateLabel(s, maxLen){
+  if(s.length<=maxLen) return s;
+  const headLen = Math.ceil((maxLen-1)*0.6);
+  const tailLen = maxLen-1-headLen;
+  return s.slice(0,headLen) + '…' + s.slice(-tailLen);
+}
+function barChartSVG(data, opts){
+  opts = opts || {};
+  // v2.0.42: padL/padR y el límite de recorte de la etiqueta se revisaron
+  // con evidencia real (capturas en Windows real, tema Medianoche) -- con
+  // padL=90 y slice(0,15) el texto de proyectos largos ("IMUS - INSTITUTO
+  // DE LAS MUJERES 6M") no cabía en el hueco reservado: como el texto usa
+  // text-anchor="end" (crece hacia la izquierda desde padL-8), un texto más
+  // ancho que ese hueco no se recorta "limpio" por el final -- se sale por
+  // la izquierda del propio viewBox del SVG (que empieza en x=0) y ahí SÍ
+  // lo recorta el navegador, cortando el PRINCIPIO del texto en vez del
+  // final (se veía "S - INSTITUT…" en vez de "IMUS - INSTITU…"). Con
+  // padR=16, el número de la barra más larga (bw=chartW, la del valor
+  // máximo) se dibuja empezando en `padL+chartW+6`, a solo 10px del borde
+  // derecho del SVG -- un valor de 2 cifras (~13px en este monoespaciado)
+  // no cabe entero ahí y se recorta también ("37"→"3"). Ambos números se
+  // recalcularon para que quepan de verdad, no solo "un poco mejor".
+  const w = opts.w||360, h = opts.h||220, padL=132, padB=26, padT=10, padR=32;
+  const max = Math.max(1, ...data.map(d=>d.value));
+  const chartH = h-padT-padB, chartW = w-padL-padR;
+  // v2.0.46: grosor de barra tope 24px (guía interna de gráficas: nunca
+  // rellenar todo el carril aunque haya hueco de sobra) -- antes hasta 26px.
+  const barH = data.length ? Math.min(24, chartH/data.length - 8) : 0;
+  let bars = '';
+  data.forEach((d,i)=>{
+    // v2.0.47: bug real de desalineación -- una etiqueta con un espacio
+    // suelto al principio o al final (algo tan tonto como "Soporte IBERIA
+    // N1 " con un espacio de más al escribir el nombre del proyecto) hace
+    // que text-anchor="end" ancle el texto por el borde de ESE espacio
+    // invisible, no por el último carácter visible -- la etiqueta entera
+    // queda corrida hacia la izquierda respecto a las demás, aunque el
+    // propio texto visible mida menos. .trim() antes de medir/truncar/
+    // dibujar elimina la causa de raíz en vez de solo maquillar el síntoma.
+    const label = String(d.label||'').trim();
+    const y = padT + i*(chartH/data.length) + (chartH/data.length - barH)/2;
+    const bw = Math.max(2, (d.value/max) * chartW);
+    const x0 = padL, x1 = padL + bw;
+    // v2.0.46: extremo redondeado (4px) SOLO en la punta -- el origen
+    // (línea base, izquierda) se queda recto. Antes rx=3 redondeaba las 4
+    // esquinas por igual; un <rect> no permite radios por esquina, así que
+    // se dibuja como <path> con arcos solo en las dos esquinas derechas.
+    const r = Math.min(4, bw / 2);
+    const barPath = `M${x0},${y} L${x1 - r},${y} A${r},${r} 0 0 1 ${x1},${y + r} ` +
+      `L${x1},${y + barH - r} A${r},${r} 0 0 1 ${x1 - r},${y + barH} L${x0},${y + barH} Z`;
+    bars += `<text x="${padL-8}" y="${y+barH/2}" text-anchor="end" dominant-baseline="middle" font-family="var(--mono)" font-size="10.5" fill="var(--ink-soft)">${escapeHtml(smartTruncateLabel(label,18))}</text>`;
+    // v2.0.46: <title> nativo -- tooltip del propio navegador al pasar el
+    // ratón por la barra, sin JS ni librería, con la etiqueta completa (útil
+    // sobre todo para las que se truncan) y el valor exacto.
+    bars += `<path d="${barPath}" fill="var(--cyan)" opacity="0.85"><title>${escapeHtml(label)}: ${d.value}${escapeHtml(namesTooltipSuffix(d.names))}</title></path>`;
+    bars += `<text x="${padL+bw+6}" y="${y+barH/2}" dominant-baseline="middle" font-family="var(--mono)" font-size="10.5" fill="var(--ink)">${d.value}</text>`;
+  });
+  return svgWrap(w,h, bars);
+}
+// v2.0.55: `people` pasa de un array de números sueltos a un array de
+// {value, name} -- mismo motivo que antiguedadBandsSVG (listar quién cae
+// en cada bucket, no solo cuántos).
+function histogramSVG(people, opts){
+  opts = opts || {};
+  const w = opts.w||360, h = opts.h||200, padL=32, padB=28, padT=14, padR=14;
+  const clean = people.filter(p=>p && p.value!==null && p.value!==undefined && !isNaN(p.value));
+  if(clean.length===0) return svgWrap(w,h, `<text x="${w/2}" y="${h/2}" text-anchor="middle" font-family="var(--mono)" font-size="11" fill="var(--ink-faint)">Sin datos suficientes</text>`);
+  const vals = clean.map(p=>p.value);
+  const min = Math.min(...vals), max = Math.max(...vals);
+  const bucketCount = Math.min(8, Math.max(4, Math.ceil(Math.sqrt(clean.length))));
+  const span = (max-min) || 1;
+  const bucketSize = span/bucketCount;
+  const buckets = new Array(bucketCount).fill(null).map(()=>[]);
+  clean.forEach(p=>{
+    let idx = Math.floor((p.value-min)/bucketSize);
+    if(idx>=bucketCount) idx = bucketCount-1;
+    if(idx<0) idx = 0;
+    buckets[idx].push(p.name);
+  });
+  const maxCount = Math.max(1,...buckets.map(b=>b.length));
+  const chartW = w-padL-padR, chartH = h-padT-padB;
+  const bw = chartW/bucketCount;
+  let bars = '';
+  buckets.forEach((names,i)=>{
+    const c = names.length;
+    const bh = (c/maxCount)*chartH;
+    const x = padL + i*bw;
+    const y = padT + chartH - bh;
+    const bucketLo = Math.round(min + i*bucketSize), bucketHi = Math.round(min + (i+1)*bucketSize);
+    bars += `<rect x="${x+2}" y="${y}" width="${Math.max(1,bw-4)}" height="${bh}" fill="var(--cyan)" opacity="0.8" rx="2"><title>${bucketLo}–${bucketHi}: ${c} persona${c===1?'':'s'}${escapeHtml(namesTooltipSuffix(names))}</title></rect>`;
+    // v2.0.50: bug real reportado -- el usuario leyó el "14" de encima de una
+    // barra como si fuera un valor del eje (años), no lo que es de verdad: el
+    // NÚMERO DE PERSONAS en ese rango ("no veo a nadie con esos años"). Sin
+    // ninguna marca, un conteo y un año son indistinguibles a simple vista en
+    // un gráfico cuyo título dice "(años)". Prefijo "n=" para que quede claro
+    // que es un conteo, no un valor del eje -- mismo <title> nativo de antes
+    // para el rango exacto al pasar el ratón.
+    if(c>0) bars += `<text x="${x+bw/2}" y="${y-4}" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--ink-faint)">n=${c}</text>`;
+  });
+  const fmtEdge = opts.fmt || (v=>Math.round(v));
+  bars += `<text x="${padL}" y="${h-8}" font-family="var(--mono)" font-size="9.5" fill="var(--ink-faint)">${fmtEdge(min)}</text>`;
+  bars += `<text x="${w-padR}" y="${h-8}" text-anchor="end" font-family="var(--mono)" font-size="9.5" fill="var(--ink-faint)">${fmtEdge(max)}</text>`;
+  bars += `<line x1="${padL}" y1="${padT+chartH}" x2="${w-padR}" y2="${padT+chartH}" stroke="var(--border)" stroke-width="1"/>`;
+  return svgWrap(w,h, bars);
+}
+// v2.0.52: histograma de antigüedad con bandas FIJAS (0-1, 1-2, 2-3, 3-4, 4-5,
+// 5+ años) en vez del reparto dinámico de histogramSVG() (nº de bandas según
+// raíz cuadrada del nº de personas, límites del rango repartidos a partes
+// iguales). Pedido explícito del usuario: explicar de dónde salía el cálculo
+// y buscar algo mejor. El reparto dinámico daba límites de bucket
+// FRACCIONARIOS (p.ej. "0–1" podía ser en realidad 0–0.57 años, redondeado
+// al mostrarlo) que además cambian de forma sin ningún motivo real cada vez
+// que entra o sale una persona de la plantilla (el nº de bandas depende de
+// `Math.sqrt(personas)`). Bandas fijas = el mismo criterio siempre, el
+// habitual en informes de antigüedad de RRHH, y con la etiqueta de cada
+// banda SIEMPRE visible debajo de su barra (no solo en los extremos), así
+// que no hace falta pasar el ratón para saber qué representa cada una.
+// v2.0.55: `people` pasa de un array de números sueltos a un array de
+// {value, name} -- para poder listar en el tooltip QUIÉN cae en cada
+// banda, no solo cuántos (pedido explícito del usuario, ver namesTooltipSuffix).
+function antiguedadBandsSVG(people, opts){
+  opts = opts || {};
+  const w = opts.w||360, h = opts.h||200, padL=14, padB=32, padT=14, padR=14;
+  const clean = people.filter(p=>p && p.value!==null && p.value!==undefined && !isNaN(p.value));
+  if(clean.length===0) return svgWrap(w,h, `<text x="${w/2}" y="${h/2}" text-anchor="middle" font-family="var(--mono)" font-size="11" fill="var(--ink-faint)">Sin datos suficientes</text>`);
+  const BANDS = [
+    {lo:0, hi:1, label:'0-1'}, {lo:1, hi:2, label:'1-2'}, {lo:2, hi:3, label:'2-3'},
+    {lo:3, hi:4, label:'3-4'}, {lo:4, hi:5, label:'4-5'}, {lo:5, hi:Infinity, label:'5+'}
+  ];
+  const bandPeople = BANDS.map(b => clean.filter(p => p.value>=b.lo && p.value<b.hi));
+  const counts = bandPeople.map(arr=>arr.length);
+  const maxCount = Math.max(1, ...counts);
+  const chartW = w-padL-padR, chartH = h-padT-padB;
+  const bw = chartW/BANDS.length;
+  let bars = '';
+  BANDS.forEach((b,i)=>{
+    const c = counts[i];
+    const bh = (c/maxCount)*chartH;
+    const x = padL + i*bw;
+    const y = padT + chartH - bh;
+    const names = bandPeople[i].map(p=>p.name);
+    bars += `<rect x="${x+3}" y="${y}" width="${Math.max(1,bw-6)}" height="${bh}" fill="var(--cyan)" opacity="0.8" rx="2"><title>${b.label} años: ${c} persona${c===1?'':'s'}${escapeHtml(namesTooltipSuffix(names))}</title></rect>`;
+    if(c>0) bars += `<text x="${x+bw/2}" y="${y-4}" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--ink-faint)">n=${c}</text>`;
+    bars += `<text x="${x+bw/2}" y="${h-10}" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--ink-faint)">${b.label}</text>`;
+  });
+  bars += `<line x1="${padL}" y1="${padT+chartH}" x2="${w-padR}" y2="${padT+chartH}" stroke="var(--border)" stroke-width="1"/>`;
+  return svgWrap(w,h, bars);
+}
+function donutSVG(data, opts){
+  opts = opts || {};
+  const w = opts.w||220, h = opts.h||220, cx=w/2, cy=h/2, R=Math.min(w,h)/2-10, r=R*0.58;
+  const total = data.reduce((s,d)=>s+d.value,0);
+  if(total===0) return svgWrap(w,h, `<text x="${cx}" y="${cy}" text-anchor="middle" font-family="var(--mono)" font-size="11" fill="var(--ink-faint)">Sin datos</text>`);
+  let angle = -90, paths='';
+  data.forEach(d=>{
+    if(d.value<=0) return;
+    const sweep = (d.value/total)*360;
+    const a1 = angle*Math.PI/180, a2 = (angle+sweep)*Math.PI/180;
+    const x1=cx+R*Math.cos(a1), y1=cy+R*Math.sin(a1), x2=cx+R*Math.cos(a2), y2=cy+R*Math.sin(a2);
+    const large = sweep>180?1:0;
+    const pct = Math.round((d.value/total)*100);
+    // v2.0.46: stroke de 2px en el color de superficie -- el "hueco" que
+    // separa cada porción de la siguiente (guía interna de gráficas: nunca
+    // un borde para separar marcas, pero SÍ un margen del color de fondo).
+    // <title> nativo para el valor exacto y el % al pasar el ratón.
+    paths += `<path d="M${cx},${cy} L${x1},${y1} A${R},${R} 0 ${large} 1 ${x2},${y2} Z" fill="${d.color}" stroke="var(--surface)" stroke-width="2"><title>${escapeHtml(d.label)}: ${d.value} (${pct}%)${escapeHtml(namesTooltipSuffix(d.names))}</title></path>`;
+    angle += sweep;
+  });
+  paths += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="var(--surface)"/>`;
+  paths += `<text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="middle" font-family="var(--mono)" font-size="18" font-weight="700" fill="var(--ink)">${total}</text>`;
+  let legend = data.filter(d=>d.value>0).map(d=>`<div style="display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10.5px;color:var(--ink-soft);"><span style="width:9px;height:9px;border-radius:50%;background:${d.color};display:inline-block;"></span>${escapeHtml(d.label)} (${d.value})</div>`).join('');
+  return `<div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;">${svgWrap(w,h,paths)}<div style="display:flex;flex-direction:column;gap:5px;">${legend}</div></div>`;
+}
+
+// ============================================================
+// RENDER — cabecera / estadísticas
+// ============================================================
+function showIOFeedback(msg, ok){
+  const el = document.getElementById('io-feedback');
+  if(!el) return;
+  el.textContent = msg;
+  el.className = 'io-feedback ' + (ok?'ok':'err');
+  // v2.0.29: entrada animada (.motion-flash, ver vendor/motion.css) -- se
+  // añade en un paso aparte (no dentro del className de arriba) y con un
+  // reflow de por medio (el.offsetWidth) para que se reproduzca también
+  // si ya había un aviso visible antes de que el anterior se borrara solo.
+  el.classList.remove('motion-flash');
+  void el.offsetWidth;
+  el.classList.add('motion-flash');
+  setTimeout(()=>{ if(el.textContent===msg) el.textContent=''; }, 6000);
+}
+function renderStatsStrip(){
+  const el = document.getElementById('stats-strip');
+  if(!el) return;
+  const list = filteredPeople();
+  const totalPeople = state.people.length;
+  // "A la vez" de verdad: solo cuentan las asignaciones ACTIVAS ahora mismo,
+  // no el total histórico (una que ya terminó y otra que empieza después no
+  // son simultáneas, aunque las dos sigan en el array de asignaciones).
+  const multiProject = state.people.filter(p=>p.asignaciones.filter(a=>estadoEfectivoAsignacion(a)==='activo').length>1).length;
+  const sbaVals = state.people.map(p=>p.manual.sba).filter(v=>v!==null && v!==undefined);
+  const avgSba = sbaVals.length ? Math.round(sbaVals.reduce((a,b)=>a+b,0)/sbaVals.length) : null;
+  const antVals = state.people.map(personAntiguedad).filter(v=>v!==null);
+  const avgAnt = antVals.length ? (antVals.reduce((a,b)=>a+b,0)/antVals.length).toFixed(1) : null;
+  const pendingDups = state.people.filter(p=>p.dupPendiente).length;
+  el.innerHTML = `
+    <div class="stat"><div class="label">Personas totales</div><div class="value">${totalPeople}</div><div class="sub">${allProjects().length} proyectos</div></div>
+    <div class="stat"><div class="label">Multi-proyecto</div><div class="value">${multiProject}</div><div class="sub">en 2+ proyectos a la vez</div></div>
+    <div class="stat"><div class="label">SBA media</div><div class="value">${ui.sbaRevealed ? (avgSba!==null?fmtMoney(avgSba):'—') : (avgSba!==null?'•••••':'—')}</div><div class="sub">${sbaVals.length} con dato</div></div>
+    <div class="stat"><div class="label">Antigüedad media</div><div class="value">${avgAnt!==null?avgAnt+' <small>años</small>':'—'}</div><div class="sub">${antVals.length} con dato</div></div>
+    <div class="stat ${pendingDups?'amber':''}"><div class="label">Duplicados pendientes</div><div class="value">${pendingDups}</div><div class="sub">por confirmar</div></div>
+  `;
+}
+
+// ============================================================
+// RENDER — filtros
+// ============================================================
+function renderFiltersBar(){
+  const el = document.getElementById('filters-bar');
+  if(!el) return;
+  const f = ui.filters;
+  const opt = (val,cur)=> `<option value="${escapeHtml(val)}" ${val===cur?'selected':''}>${escapeHtml(val)}</option>`;
+  el.innerHTML = `
+    <div class="field"><label>Proyecto</label><select id="f-proyecto"><option value="">Todos</option>${allProjects().map(p=>opt(p,f.proyecto)).join('')}</select></div>
+    <div class="field"><label>Rol</label><div class="combo-wrap" id="rol-combo-wrap">
+      <input type="text" id="f-rol" value="${escapeHtml(f.rol)}" placeholder="Ej: admin sistemas…" autocomplete="off" spellcheck="false">
+      <button type="button" class="combo-clear" id="f-rol-clear" style="${f.rol ? '' : 'display:none;'}" title="Borrar">✕</button>
+      <div class="combo-dropdown" id="f-rol-dropdown"></div>
+    </div></div>
+    <div class="field"><label>SBA mín.</label><input type="number" id="f-sba-min" value="${f.sbaMin}" placeholder="€"></div>
+    <div class="field"><label>SBA máx.</label><input type="number" id="f-sba-max" value="${f.sbaMax}" placeholder="€"></div>
+    <div class="field"><label>Perfil DISC dominante</label><select id="f-disc"><option value="">Todos</option>${['D','I','S','C'].map(k=>opt(k,f.discDominante)).join('')}</select></div>
+    <div class="field"><label>Antigüedad mín. (años)</label><input type="number" id="f-ant-min" value="${f.antiguedadMin}"></div>
+    <div class="field"><label>Estado</label><select id="f-estado">
+      <option value="" ${f.estado===''?'selected':''}>Todos</option>
+      <option value="activo" ${f.estado==='activo'?'selected':''}>Activos</option>
+      <option value="baja" ${f.estado==='baja'?'selected':''}>Solo bajas</option>
+    </select></div>
+  `;
+  const bind = (id, key)=>{
+    document.getElementById(id).addEventListener('change', e=>{
+      ui.filters[key] = e.target.value;
+      renderFilteredViews();
+    });
+  };
+  // v2.0.6: "Proyecto" acota las OPCIONES de Rol (ver allRoles() más arriba,
+  // y renderFiltersBar() bajo este bloque) -- pedido explícito del usuario,
+  // antes el desplegable de Rol mezclaba roles de todos los proyectos a la
+  // vez. Al cambiar de proyecto hay que repintar la barra entera (no solo
+  // renderFilteredViews()) para que esa lista se recalcule; y si el Rol que
+  // había elegido ya no existe en el proyecto nuevo, se limpia -- si no, el
+  // combo mostraría vacío por no encontrar la opción, pero el filtro
+  // seguiría aplicando el valor viejo por debajo, dando resultados que no
+  // cuadran con lo que se ve en pantalla.
+  // v2.0.49: el filtro "Categoría" se quitó de la barra (pedido explícito
+  // del usuario, "el campo categorías no debería estar, solo el de rol")
+  // -- el dato en sí (`categoriaProfesional`) NO se borra, sigue en la
+  // ficha de cada persona y en el CSV/Excel, solo deja de tener un control
+  // de filtro propio en esta pantalla.
+  document.getElementById('f-proyecto').addEventListener('change', e=>{
+    ui.filters.proyecto = e.target.value;
+    const rolesScoped = allRoles(ui.filters.proyecto);
+    // "Rol" es texto libre (roleMatchesQuery, ver más arriba) -- no tiene por qué
+    // coincidir EXACTO con ningún rol de la lista, basta con que siga encajando con
+    // alguno de los roles ya acotados al proyecto nuevo (misma lógica que usa el
+    // propio filtro al aplicarse).
+    if(ui.filters.rol && !rolesScoped.some(r => roleMatchesQuery(r, ui.filters.rol))) ui.filters.rol = '';
+    renderFiltersBar();
+    renderFilteredViews();
+  });
+  bind('f-sba-min','sbaMin'); bind('f-sba-max','sbaMax'); bind('f-disc','discDominante');
+  bind('f-ant-min','antiguedadMin'); bind('f-estado','estado');
+  // Rol es texto libre (ver roleMatchesQuery): se filtra en vivo mientras se
+  // escribe, igual que "Buscar persona", en vez de esperar a un "change" de
+  // <select> que ya no aplica aquí. El desplegable de sugerencias es propio
+  // (ver .combo-dropdown en el CSS) en vez de un <datalist> nativo, para que
+  // se vea igual de maquetado que el resto de la app.
+  wireRolCombo();
+}
+function wireRolCombo(){
+  const input = document.getElementById('f-rol');
+  const clearBtn = document.getElementById('f-rol-clear');
+  const dropdown = document.getElementById('f-rol-dropdown');
+  if(!input || !dropdown) return;
+  let rolDebounce = null;
+  let activeIdx = -1;
+
+  const suggestionsFor = (query)=>{
+    const roles = allRoles(ui.filters.proyecto);
+    if(!query || !query.trim()) return roles;
+    return roles.filter(r => roleMatchesQuery(r, query));
+  };
+  const renderDropdown = ()=>{
+    const list = suggestionsFor(input.value);
+    activeIdx = -1;
+    if(!list.length){
+      dropdown.innerHTML = `<div class="combo-empty">Sin roles guardados que coincidan</div>`;
+    } else {
+      dropdown.innerHTML = list.map((r,i)=>`<div class="combo-option" data-idx="${i}" data-val="${escapeHtml(r)}">${escapeHtml(r)}</div>`).join('');
+    }
+    dropdown.querySelectorAll('.combo-option[data-val]').forEach(opt=>{
+      // mousedown (no click) para que dispare ANTES del blur del input y no se cierre el desplegable primero
+      opt.addEventListener('mousedown', e=>{
+        e.preventDefault();
+        selectRole(opt.dataset.val);
+      });
+    });
+  };
+  const openDropdown = ()=>{ renderDropdown(); dropdown.classList.add('open'); };
+  const closeDropdown = ()=>{ dropdown.classList.remove('open'); activeIdx = -1; };
+  const selectRole = (val)=>{
+    input.value = val;
+    clearBtn.style.display = val ? '' : 'none';
+    ui.filters.rol = val;
+    closeDropdown();
+    renderFilteredViews();
+  };
+  const setActive = (idx)=>{
+    const opts = dropdown.querySelectorAll('.combo-option[data-val]');
+    opts.forEach(o=>o.classList.remove('active'));
+    if(idx>=0 && idx<opts.length){ opts[idx].classList.add('active'); opts[idx].scrollIntoView({block:'nearest'}); }
+    activeIdx = idx;
+  };
+
+  input.addEventListener('input', e=>{
+    ui.filters.rol = e.target.value;
+    clearBtn.style.display = e.target.value ? '' : 'none';
+    openDropdown();
+    clearTimeout(rolDebounce);
+    rolDebounce = setTimeout(()=> renderFilteredViews(), 150);
+  });
+  input.addEventListener('focus', openDropdown);
+  input.addEventListener('blur', ()=> setTimeout(closeDropdown, 120));
+  input.addEventListener('keydown', e=>{
+    const opts = dropdown.querySelectorAll('.combo-option[data-val]');
+    if(e.key==='ArrowDown'){ e.preventDefault(); if(!dropdown.classList.contains('open')) openDropdown(); setActive(Math.min(activeIdx+1, opts.length-1)); }
+    else if(e.key==='ArrowUp'){ e.preventDefault(); setActive(Math.max(activeIdx-1, 0)); }
+    else if(e.key==='Enter'){ if(activeIdx>=0 && opts[activeIdx]){ e.preventDefault(); selectRole(opts[activeIdx].dataset.val); } }
+    else if(e.key==='Escape'){ closeDropdown(); }
+  });
+  clearBtn.addEventListener('click', ()=>{
+    input.value = '';
+    clearBtn.style.display = 'none';
+    ui.filters.rol = '';
+    input.focus();
+    renderFilteredViews();
+  });
+}
+function clearFilters(){
+  ui.filters = { search:'', proyecto:'', rol:'', categoria:'', sbaMin:'', sbaMax:'', discDominante:'', antiguedadMin:'', estado:'activo' };
+  const searchInput = document.getElementById('f-search');
+  if(searchInput) searchInput.value = '';
+  renderFiltersBar(); renderFilteredViews();
+}
+
+// ============================================================
+// RENDER — tabla de personas
+// ============================================================
+const SORT_COLUMNS = [
+  {key:'nombre', label:'Nombre'}, {key:'proyectos', label:'Proyectos'},
+  {key:'sba', label:'SBA'}, {key:'antiguedad', label:'Antigüedad'}
+];
+function renderPeopleSection(){
+  const el = document.getElementById('people-table');
+  const empty = document.getElementById('people-empty');
+  if(!el) return;
+  const list = filteredPeople();
+  const countBadge = document.getElementById('people-count-badge');
+  if(countBadge){
+    const total = state.people.length;
+    countBadge.textContent = list.length === total
+      ? `· ${list.length} perfil${list.length===1?'':'es'}`
+      : `· ${list.length} de ${total} perfil${total===1?'':'es'}`;
+  }
+  const thead = `<thead><tr>
+    ${SORT_COLUMNS.map(c=>`<th data-sort="${c.key}">${c.label}${ui.sortKey===c.key?(ui.sortDir==='asc'?' ▲':' ▼'):''}</th>`).join('')}
+    <th>Rol(es)</th><th>DISC</th><th>Estado</th>
+  </tr></thead>`;
+  const tbody = list.map(p=>{
+    const projChips = p.asignaciones.map(a=>{
+      const ef = estadoEfectivoAsignacion(a);
+      return `<span class="proj-chip">${escapeHtml(a.proyecto)}${ef!=='activo'?` · ${ef}`:''}</span>`;
+    }).join('');
+    const roles = Array.from(new Set(p.asignaciones.map(a=>a.rol).filter(Boolean))).join(', ');
+    const estadoLabel = personOverallEstado(p);
+    return `<tr class="row-link" data-person-id="${p.id}">
+      <td class="name-cell"><span class="nm">${escapeHtml(p.nombre)}</span>${p.dniRaw?`<span class="dni">${escapeHtml(p.dniRaw)}</span>`:''}<div>${projChips}</div></td>
+      <td>${p.asignaciones.length}</td>
+      <td>${ui.sbaRevealed ? fmtMoney(p.manual.sba) : (p.manual.sba!=null ? '•••••' : '—')}</td>
+      <td>${fmtAntiguedad(p)}</td>
+      <td>${escapeHtml(roles||'—')}</td>
+      <td>${discBadgeHtml(p)}</td>
+      <td><span class="status-pill ${estadoLabel}"><span class="dot"></span>${estadoLabel}</span></td>
+    </tr>`;
+  }).join('');
+  el.innerHTML = thead + `<tbody>${tbody}</tbody>`;
+  empty.style.display = list.length ? 'none' : 'block';
+  el.querySelectorAll('th[data-sort]').forEach(th=> th.addEventListener('click', ()=>{
+    const key = th.dataset.sort;
+    if(ui.sortKey===key) ui.sortDir = ui.sortDir==='asc'?'desc':'asc';
+    else { ui.sortKey = key; ui.sortDir = 'asc'; }
+    renderPeopleSection();
+  }));
+  el.querySelectorAll('tr[data-person-id]').forEach(tr=> tr.addEventListener('click', ()=>{
+    ui.openPersonId = tr.dataset.personId; renderPersonModal();
+  }));
+}
+
+// ============================================================
+// RENDER — partes mensuales
+// ============================================================
+const PARTES_ESTADOS = [
+  { key:'pendiente', label:'Pendiente' },
+  { key:'aprobado', label:'Aprobado' },
+  { key:'incidencia', label:'Incidencia' },
+  { key:'no_aplica', label:'No aplica' }
+];
+// v2.0.18: columnas ordenables de la tabla de Partes mensuales (mismo
+// patrón que SORT_COLUMNS de la tabla de Equipo — ver renderPeopleSection).
+const PARTES_SORT_COLUMNS = [
+  {key:'nombre', label:'Nombre'}, {key:'proyecto', label:'Proyecto(s)'}, {key:'estado', label:'Estado'}
+];
+// v0.1.29: exportar CSV/Excel de Partes mensuales — pedido explícito del
+// usuario ("otra mejora mas. exportar excel csv de los partes"). Mismo
+// patrón que ya existía para Equipo (PEOPLE_EXPORT_COLUMNS +
+// exportPeopleCSV/XLSX, más abajo en este archivo): una lista de columnas
+// con `get(row)`, reutilizando arrayToCSV/downloadCSV para el CSV y
+// aoa_to_sheet (con la cabecera puesta a mano, no json_to_sheet — ver el
+// comentario largo junto a exportBlockXLSX en dashboard/plantilla_dashboard.html
+// sobre por qué: json_to_sheet([]) no genera cabecera si no hay filas)
+// para el Excel. Exporta SIEMPRE el mes que se está viendo en pantalla en
+// ese momento (ui.partesMonthKey), no necesariamente el mes actual.
+function partesExportRows(monthKey){
+  return activePeopleForPartes().map(p=>{
+    const estado = getParteEstado(monthKey, p.id);
+    const entry = getParteEntry(monthKey, p.id);
+    return { p, estado, entry };
+  });
+}
+// v0.1.33: se quita la columna "Fecha y hora de la marca" del export —
+// pedido explícito del usuario ("quiero que en los partes los excel y
+// csv que exporta que sea de las columnas... nombre, proyectos, estado y
+// nota(incidencia)"), dejando el export con exactamente las mismas 4
+// columnas que ya se ven en pantalla en la tabla de Partes mensuales
+// (ver thead de renderPartesTable, más abajo).
+const PARTES_EXPORT_COLUMNS = [
+  { key:'nombre', label:'Nombre', get:r=> r.p.nombre },
+  { key:'proyectos', label:'Proyecto(s)', get:r=> personActiveAssignments(r.p).map(a=>a.proyecto).join(', ') },
+  { key:'estado', label:'Estado', get:r=> (PARTES_ESTADOS.find(s=>s.key===r.estado)||{}).label || r.estado },
+  { key:'nota', label:'Nota (incidencia)', get:r=> (r.entry && r.entry.nota) || '' }
+];
+function partesExportFilenameStamp(){
+  const d = new Date();
+  return `${d.toISOString().slice(0,10)}_${d.toTimeString().slice(0,5).replace(':','-')}`;
+}
+function exportPartesCSV(){
+  const monthKey = ui.partesMonthKey || currentMonthKey();
+  const rows = partesExportRows(monthKey);
+  const csv = arrayToCSV(rows, PARTES_EXPORT_COLUMNS);
+  const filename = `DirectorioTalento_partes_${monthKey}_${partesExportFilenameStamp()}.csv`;
+  downloadCSV(filename, csv);
+  showIOFeedback(`Partes de ${monthKeyLabel(monthKey)} exportados como "${filename}" — ${rows.length} persona${rows.length===1?'':'s'}.`, true);
+}
+function exportPartesXLSX(){
+  const monthKey = ui.partesMonthKey || currentMonthKey();
+  const rows = partesExportRows(monthKey);
+  if(typeof XLSX === 'undefined'){
+    showIOFeedback('No se ha podido exportar a Excel: la librería no se ha cargado.', false);
+    return;
+  }
+  const header = PARTES_EXPORT_COLUMNS.map(c=>c.label);
+  const dataRows = rows.map(r=> PARTES_EXPORT_COLUMNS.map(c=> c.get(r)));
+  const ws = XLSX.utils.aoa_to_sheet([header, ...dataRows]);
+  ws['!cols'] = PARTES_EXPORT_COLUMNS.map((c,i)=>{
+    const maxLen = Math.max(c.label.length, ...dataRows.map(row=> String(row[i]||'').length));
+    return { wch: Math.min(60, Math.max(10, maxLen + 2)) };
+  });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Partes');
+  const filename = `DirectorioTalento_partes_${monthKey}_${partesExportFilenameStamp()}.xlsx`;
+  XLSX.writeFile(wb, filename);
+  showIOFeedback(`Partes de ${monthKeyLabel(monthKey)} exportados como "${filename}" — ${rows.length} persona${rows.length===1?'':'s'}.`, true);
+}
+function renderPartesWindowBanner(monthKey){
+  const el = document.getElementById('partes-window-banner');
+  if(!el) return;
+  const nowKey = currentMonthKey();
+  const windowDays = (state.partesConfig && state.partesConfig.windowDays) || 7;
+  if(monthKey !== nowKey){
+    el.innerHTML = `<span>Viendo ${monthKeyLabel(monthKey)} — no es el mes actual, esto es solo consulta/histórico.</span>`;
+    return;
+  }
+  const inWindow = isInReviewWindow(monthKey);
+  el.innerHTML = `
+    <span>${inWindow ? `📋 Dentro de la ventana de revisión habitual (últimos ${windowDays} días del mes).` : `Fuera de la ventana de revisión habitual — se resalta ${windowDays} días antes de fin de mes. Puedes revisar igualmente.`}</span>
+    <span style="display:flex; align-items:center; gap:6px; white-space:nowrap;">Ventana:
+      <input type="number" id="partes-window-days-input" value="${windowDays}" min="1" max="28">
+      días antes de fin de mes
+    </span>
+  `;
+  const input = document.getElementById('partes-window-days-input');
+  if(input){
+    input.addEventListener('change', e=>{
+      let v = Number(e.target.value);
+      if(!v || v<1) v = 1;
+      if(v>28) v = 28;
+      if(!state.partesConfig) state.partesConfig = { windowDays: 7 };
+      state.partesConfig.windowDays = v;
+      saveState();
+      renderPartesWindowBanner(monthKey);
+    });
+  }
+}
+function renderPartesKpis(monthKey){
+  const el = document.getElementById('partes-kpis');
+  if(!el) return;
+  const people = activePeopleForPartes();
+  const counts = { pendiente:0, aprobado:0, incidencia:0, no_aplica:0 };
+  people.forEach(p=>{ counts[getParteEstado(monthKey, p.id)]++; });
+  el.innerHTML = `
+    <div class="stat amber"><div class="label">Pendientes</div><div class="value">${counts.pendiente}</div><div class="sub">de ${people.length} activos</div></div>
+    <div class="stat green"><div class="label">Aprobados</div><div class="value">${counts.aprobado}</div></div>
+    <div class="stat red"><div class="label">Incidencias</div><div class="value">${counts.incidencia}</div></div>
+    <div class="stat"><div class="label">No aplica</div><div class="value">${counts.no_aplica}</div></div>
+  `;
+}
+function renderPartesTable(monthKey){
+  const el = document.getElementById('partes-table');
+  const empty = document.getElementById('partes-empty');
+  if(!el) return;
+  const people = activePeopleForPartes();
+  const badge = document.getElementById('partes-count-badge');
+  if(badge) badge.textContent = `· ${people.length} activo${people.length===1?'':'s'}`;
+  const thead = `<thead><tr>
+    ${PARTES_SORT_COLUMNS.map(c=>`<th data-sort="${c.key}">${c.label}${ui.partesSortKey===c.key?(ui.partesSortDir==='asc'?' ▲':' ▼'):''}</th>`).join('')}
+    <th>Nota (incidencia)</th>
+  </tr></thead>`;
+  // v2.0.18: antes esto reordenaba SOLO por rank (pendientes/incidencias
+  // arriba, aprobados/no aplica abajo) cada vez que se marcaba una fila —
+  // el usuario reportó que le desorientaba ver la fila saltar sola al
+  // fondo de la tabla nada más pulsar un botón. Ahora el orden lo decide
+  // el usuario pinchando en Nombre/Proyecto(s)/Estado (ui.partesSortKey/
+  // partesSortDir, ver PARTES_SORT_COLUMNS) — marcar una fila ya NO cambia
+  // su posición, solo su aspecto (atenuada vía .partes-row-done). El orden
+  // por PARTES_ESTADOS.findIndex() al ordenar por "estado" reproduce el
+  // rank de antes (Pendiente/Aprobado/Incidencia/No aplica) pero solo
+  // cuando el usuario elige esa columna explícitamente.
+  const estadoRank = Object.fromEntries(PARTES_ESTADOS.map((s,i)=>[s.key,i]));
+  const withEstado = people.map(p=>({
+    p, estado: getParteEstado(monthKey, p.id),
+    proyectosStr: personActiveAssignments(p).map(a=>a.proyecto).join(', ')
+  }));
+  withEstado.sort((a,b)=>{
+    let av, bv;
+    if(ui.partesSortKey==='proyecto'){ av=normalizeName(a.proyectosStr); bv=normalizeName(b.proyectosStr); }
+    else if(ui.partesSortKey==='estado'){ av=estadoRank[a.estado]; bv=estadoRank[b.estado]; }
+    else { av=normalizeName(a.p.nombre); bv=normalizeName(b.p.nombre); }
+    if(av<bv) return ui.partesSortDir==='asc'?-1:1;
+    if(av>bv) return ui.partesSortDir==='asc'?1:-1;
+    return normalizeName(a.p.nombre) < normalizeName(b.p.nombre) ? -1 : 1; // desempate estable por nombre
+  });
+  // v2.0.21: "withEstado" ya sale ordenado según ui.partesSortKey/Dir, pero
+  // usarlo tal cual en CADA render (incluido el que dispara marcar una
+  // fila) hace que ordenar por "Estado" reordene solo con marcar, porque
+  // el propio campo que decide el orden acaba de cambiar. ui.partesOrder
+  // congela el orden de ids visto la última vez que se recalculó de
+  // verdad (entrar a la vista / cambiar de mes / pinchar una cabecera —
+  // ver los sitios que ponen ui.partesOrder=null). Mientras no se pida un
+  // recálculo, se reutiliza ese orden; la gente activa nueva que no
+  // estaba en él se añade al final, en el orden del sort fresco.
+  let orderedWithEstado;
+  if(!ui.partesOrder){
+    orderedWithEstado = withEstado;
+  } else {
+    const byId = new Map(withEstado.map(item=>[item.p.id, item]));
+    orderedWithEstado = [];
+    ui.partesOrder.forEach(id=>{
+      const item = byId.get(id);
+      if(item){ orderedWithEstado.push(item); byId.delete(id); }
+    });
+    withEstado.forEach(item=>{ if(byId.has(item.p.id)) orderedWithEstado.push(item); });
+  }
+  ui.partesOrder = orderedWithEstado.map(item=>item.p.id);
+  const rows = orderedWithEstado.map(({p, estado, proyectosStr: proyectos})=>{
+    const entry = getParteEntry(monthKey, p.id);
+    const done = estado==='aprobado' || estado==='no_aplica';
+    const botones = PARTES_ESTADOS.map(s=>
+      `<button type="button" class="btn ghost partes-estado-btn ${estado===s.key?'active':''}" data-estado="${s.key}">${s.label}</button>`
+    ).join('');
+    // v0.1.28: fecha y hora de la marca actual, debajo de los botones —
+    // solo si hay algo que mostrar (persona nunca tocada = sin entry, no
+    // se inventa un "pendiente desde siempre").
+    // v2.0.21: ese "solo si hay algo que mostrar" omitía el <div> entero
+    // cuando no había fecha, así que esa fila quedaba con una línea menos
+    // de alto que las demás -- toda la tabla con filas de alto distinto
+    // según tuvieran fecha o no. El <div> ahora SIEMPRE se renderiza
+    // (reserva la misma línea de alto en todas las filas); si no hay fecha
+    // se oculta con visibility:hidden (mismo truco que ya usa el campo de
+    // Nota más abajo) en vez de desaparecer del layout.
+    const ts = entry && entry.updatedAt ? fmtParteTimestamp(entry.updatedAt) : '';
+    const tsHtml = `<div class="hint partes-estado-ts" style="${ts ? '' : 'visibility:hidden;'}">${escapeHtml(ts || '—')}</div>`;
+    return `<tr class="${done?'partes-row-done':''}" data-partes-person="${p.id}">
+      <td class="name-cell"><span class="nm">${escapeHtml(p.nombre)}</span></td>
+      <td>${escapeHtml(proyectos)}</td>
+      <td class="partes-estado-cell">${botones}${tsHtml}</td>
+      <td><input type="text" class="partes-nota" data-partes-nota="${p.id}" value="${escapeHtml(entry && entry.nota || '')}" placeholder="Motivo, opcional…" style="${estado==='incidencia' ? '' : 'visibility:hidden;'}"></td>
+    </tr>`;
+  }).join('');
+  el.innerHTML = thead + `<tbody>${rows}</tbody>`;
+  empty.style.display = people.length ? 'none' : 'block';
+  el.querySelectorAll('th[data-sort]').forEach(th=> th.addEventListener('click', ()=>{
+    const key = th.dataset.sort;
+    if(ui.partesSortKey===key) ui.partesSortDir = ui.partesSortDir==='asc'?'desc':'asc';
+    else { ui.partesSortKey = key; ui.partesSortDir = 'asc'; }
+    ui.partesOrder = null; // v2.0.21: esto SÍ es "ordenar yo" -- recalcula de verdad
+    renderPartesTable(monthKey);
+  }));
+  el.querySelectorAll('tr[data-partes-person]').forEach(tr=>{
+    const personId = tr.dataset.partesPerson;
+    const notaInput = tr.querySelector('.partes-nota');
+    tr.querySelectorAll('.partes-estado-btn').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        setParteEstado(monthKey, personId, btn.dataset.estado, notaInput ? notaInput.value : '');
+        renderPartesSection();
+      });
+    });
+    if(notaInput){
+      notaInput.addEventListener('change', ()=>{
+        setParteEstado(monthKey, personId, getParteEstado(monthKey, personId), notaInput.value);
+      });
+    }
+  });
+}
+function renderPartesSection(){
+  if(!ui.partesMonthKey) ui.partesMonthKey = currentMonthKey();
+  const monthKey = ui.partesMonthKey;
+  const label = document.getElementById('partes-month-label');
+  if(label) label.textContent = monthKeyLabel(monthKey);
+  renderPartesWindowBanner(monthKey);
+  renderPartesKpis(monthKey);
+  renderPartesTable(monthKey);
+}
+function shiftPartesMonth(delta){
+  const [y,m] = (ui.partesMonthKey || currentMonthKey()).split('-').map(Number);
+  const d = new Date(y, (m-1)+delta, 1);
+  ui.partesMonthKey = currentMonthKey(d);
+  ui.partesOrder = null; // v2.0.21: mes distinto = orden fresco
+  renderPartesSection();
+}
+// Alterna entre la vista normal del Directorio y la vista de "Partes
+// mensuales" (v0.1.25) — vistas EXCLUYENTES dentro de la MISMA ventana,
+// no un panel más metido entre Equipo y Gráficas (eso se veía "aparatoso").
+// Se llega a la vista de Partes desde el menú nativo "Partes mensuales"
+// (entre "Proyecto" y "Seguridad", ver buildProjectMenu en main.js), que
+// manda el IPC 'panorama:show-partes-mensuales' — ver el bloque final del
+// archivo (puente aditivo) para dónde se engancha.
+function renderView(){
+  const isPartes = ui.view === 'partes';
+  document.getElementById('view-directorio').style.display = isPartes ? 'none' : '';
+  document.getElementById('view-partes').style.display = isPartes ? '' : 'none';
+  if(isPartes) renderPartesSection();
+  window.scrollTo(0,0);
+}
+
+// ============================================================
+// RENDER — panel de duplicados
+// ============================================================
+function renderDupPanel(){
+  const panel = document.getElementById('dup-panel');
+  const list = document.getElementById('dup-list');
+  const hint = document.getElementById('dup-count-hint');
+  // Si la persona con la que se comparaba (dupCandidatoId) ya no existe —
+  // p.ej. se eliminó desde su ficha — el aviso de "posible duplicado" ya no
+  // tiene con qué comparar: se limpia el marcador en vez de dejarlo colgado
+  // (si no, quedaba como un aviso pendiente invisible para siempre, sin
+  // aparecer en el panel pero sin poder resolverse tampoco).
+  state.people.forEach(p=>{
+    if(p.dupPendiente && !state.people.some(c=>c.id===p.dupCandidatoId)){
+      p.dupPendiente = false;
+      p.dupCandidatoId = null;
+    }
+  });
+  const pending = state.people.filter(p=>p.dupPendiente);
+  list.innerHTML = '';
+  if(pending.length===0){ panel.style.display='none'; return; }
+  panel.style.display='block';
+  hint.textContent = `${pending.length} pendiente${pending.length>1?'s':''}`;
+  list.innerHTML = pending.map(p=>{
+    const cand = state.people.find(c=>c.id===p.dupCandidatoId);
+    if(!cand) return '';
+    return `<div class="dup-item">
+      <div class="dup-text"><b>${escapeHtml(p.nombre)}</b> aparece en <b>${escapeHtml(p.asignaciones[0]?.proyecto||'')}</b> y ya existe con el mismo nombre en <b>${escapeHtml(cand.asignaciones.map(a=>a.proyecto).join(', '))}</b>. ¿Es la misma persona?</div>
+      <div class="dup-actions">
+        <button class="btn primary" data-dup-merge="${p.id}|${cand.id}">Fusionar (es la misma)</button>
+        <button class="btn ghost" data-dup-separate="${p.id}|${cand.id}">Son personas distintas</button>
+      </div>
+    </div>`;
+  }).join('');
+  list.querySelectorAll('[data-dup-merge]').forEach(b=> b.addEventListener('click', async ()=>{
+    const [newId, keepId] = b.dataset.dupMerge.split('|');
+    resolveDuplicateMerge(newId, keepId);
+    await saveState(); renderAll();
+    showIOFeedback('Personas fusionadas.', true);
+  }));
+  list.querySelectorAll('[data-dup-separate]').forEach(b=> b.addEventListener('click', async ()=>{
+    const [newId, candId] = b.dataset.dupSeparate.split('|');
+    resolveDuplicateKeepSeparate(newId, candId);
+    await saveState(); renderAll();
+  }));
+}
+
+// ============================================================
+// RENDER — gráficas del equipo
+// ============================================================
+function renderChartsGrid(){
+  const el = document.getElementById('charts-grid');
+  if(!el) return;
+  const list = filteredPeople();
+  // v2.0.55: pedido explícito del usuario -- "quiero que muestre los
+  // técnicos" al pasar el ratón, no solo el número. Cada valor va emparejado
+  // con el nombre de la persona (`{value, name}`) para que histogramSVG/
+  // antiguedadBandsSVG puedan listar quién cae en cada tramo (ver
+  // namesTooltipSuffix). "Personas por proyecto" y "Distribución por rol"
+  // ya agrupan por asignación, así que se acompaña cada grupo de su lista
+  // de nombres de la misma manera.
+  const sbaVals = list.filter(p=>p.manual.sba!=null).map(p=>({value:p.manual.sba, name:p.nombre}));
+  const antVals = list.map(p=>({value:personAntiguedad(p), name:p.nombre})).filter(x=>x.value!==null);
+  const byProject = {}; const byProjectNames = {};
+  list.forEach(p=> p.asignaciones.forEach(a=>{
+    byProject[a.proyecto] = (byProject[a.proyecto]||0)+1;
+    (byProjectNames[a.proyecto] = byProjectNames[a.proyecto]||[]).push(p.nombre);
+  }));
+  const projectData = Object.keys(byProject).sort((a,b)=>byProject[b]-byProject[a]).slice(0,10).map(k=>({label:k, value:byProject[k], names:byProjectNames[k]}));
+  const discCounts = {D:0,I:0,S:0,C:0, sin:0};
+  const discNames = {D:[],I:[],S:[],C:[]};
+  list.forEach(p=>{ const d=discDominant(p); if(d){ discCounts[d]++; discNames[d].push(p.nombre); } else discCounts.sin++; });
+  const discAvg = {D:0,I:0,S:0,C:0}; let discN=0;
+  list.forEach(p=>{ const r=discResult(p); if(r){ discN++; ['D','I','S','C'].forEach(k=> discAvg[k]+= (r.valores[k]||0)); } });
+  if(discN>0) ['D','I','S','C'].forEach(k=> discAvg[k] = Math.round(discAvg[k]/discN));
+  // v2.0.49: "Categoría profesional" -> "Distribución por rol", pedido
+  // explícito del usuario ("el campo categorías no debería estar, solo el
+  // de rol"). El dato/campo categoriaProfesional no se toca (se decidió
+  // no arriesgar lo que ya hubiera rellenado a mano) -- solo se retira del
+  // filtro y se sustituye esta gráfica. Un rol es de la ASIGNACIÓN, no de
+  // la persona (alguien puede tener roles distintos en proyectos
+  // distintos), así que se cuenta igual que "Personas por proyecto": por
+  // asignación, no por persona.
+  const roleCounts = {}; const roleNames = {};
+  list.forEach(p=> p.asignaciones.forEach(a=>{
+    if(a.rol){ roleCounts[a.rol] = (roleCounts[a.rol]||0)+1; (roleNames[a.rol] = roleNames[a.rol]||[]).push(p.nombre); }
+  }));
+  const roleData = Object.keys(roleCounts).sort((a,b)=>roleCounts[b]-roleCounts[a]).slice(0,10).map(k=>({label:k, value:roleCounts[k], names:roleNames[k]}));
+  const multiCount = list.filter(p=>p.asignaciones.filter(a=>estadoEfectivoAsignacion(a)==='activo').length>1).length;
+
+  el.innerHTML = `
+    <div class="chart-card"><div class="chart-title">Distribución de SBA</div><div class="chart-body">${ui.sbaRevealed ? histogramSVG(sbaVals, {w:420,h:200,fmt:v=>Math.round(v/1000)+'k'}) : `<div class="chart-empty">🔒 Oculto — "👁 Revelar SBA" arriba de la tabla<br>(${sbaVals.length} con dato)</div>`}</div></div>
+    <div class="chart-card"><div class="chart-title">Distribución de antigüedad (años)</div><div class="chart-body">${antiguedadBandsSVG(antVals,{w:420,h:200})}</div></div>
+    <div class="chart-card"><div class="chart-title">Personas por proyecto</div><div class="chart-body">${barChartSVG(projectData,{w:420,h:200})}</div></div>
+    <div class="chart-card"><div class="chart-title">Composición DISC del equipo (perfil dominante)${discCounts.D+discCounts.I+discCounts.S+discCounts.C?` · ${discCounts.D+discCounts.I+discCounts.S+discCounts.C} con test`:''}</div><div class="chart-body">${
+      (discCounts.D+discCounts.I+discCounts.S+discCounts.C) ? donutSVG([
+        {label:'D · Dominancia', value:discCounts.D, color:'var(--disc-d)', names:discNames.D},
+        {label:'I · Influencia', value:discCounts.I, color:'var(--disc-i)', names:discNames.I},
+        {label:'S · Estabilidad', value:discCounts.S, color:'var(--disc-s)', names:discNames.S},
+        {label:'C · Cumplimiento', value:discCounts.C, color:'var(--disc-c)', names:discNames.C}
+      ]) : '<div class="chart-empty">Sin resultados DISC registrados todavía</div>'
+    }</div></div>
+    <div class="chart-card"><div class="chart-title">DISC medio del equipo${discN?` (${discN} con test)`:''}</div><div class="chart-body">${discN?radarDiscSVG(discAvg,190):'<div class="chart-empty">Sin resultados DISC registrados todavía</div>'}</div></div>
+    <div class="chart-card"><div class="chart-title">Distribución por rol</div><div class="chart-body">${barChartSVG(roleData,{w:420,h:200})}</div></div>
+  `;
+  document.getElementById('charts-hint').textContent = `${list.length} personas · ${multiCount} en varios proyectos`;
+}
+
+function renderFilteredViews(){ renderPeopleSection(); renderChartsGrid(); renderStatsStrip(); }
+
+// ============================================================
+// PROMPT GENÉRICO (Electron no implementa window.prompt()) — modal propio
+// reutilizando el mismo estilo visual que la ficha de persona.
+// ============================================================
+function promptModal(titleText, placeholder){
+  return new Promise(resolve=>{
+    const slot = document.getElementById('modal-slot');
+    const finish = (value)=>{ slot.innerHTML=''; resolve(value); };
+    slot.innerHTML = `<div class="modal-backdrop" id="prompt-backdrop">
+      <div class="modal-box narrow">
+        <div class="modal-head"><h2>${escapeHtml(titleText)}</h2></div>
+        <input type="text" id="prompt-input" placeholder="${escapeHtml(placeholder||'')}">
+        <div class="btn-row" style="justify-content:flex-end;">
+          <button class="btn ghost" id="prompt-cancel">Cancelar</button>
+          <button class="btn primary" id="prompt-ok">Aceptar</button>
+        </div>
+      </div>
+    </div>`;
+    const input = document.getElementById('prompt-input');
+    input.focus();
+    input.addEventListener('keydown', e=>{ if(e.key==='Enter') document.getElementById('prompt-ok').click(); });
+    document.getElementById('prompt-cancel').addEventListener('click', ()=> finish(null));
+    document.getElementById('prompt-ok').addEventListener('click', ()=> finish(input.value.trim() || null));
+    document.getElementById('prompt-backdrop').addEventListener('click', (e)=>{ if(e.target.id==='prompt-backdrop') finish(null); });
+  });
+}
+
+// ============================================================
+// RENDER — ficha de detalle de persona (modal)
+// ============================================================
+function closePersonModal(){ ui.openPersonId = null; document.getElementById('modal-slot').innerHTML=''; }
+function renderPersonModal(){
+  const slot = document.getElementById('modal-slot');
+  if(!ui.openPersonId){ slot.innerHTML=''; return; }
+  const p = state.people.find(x=>x.id===ui.openPersonId);
+  if(!p){ closePersonModal(); return; }
+  const ESTADO_EFECTIVO_LABEL = { activo:'Activo', pendiente:'Pendiente', baja:'Baja' };
+  const assignHtml = p.asignaciones.map((a,i)=>{
+    const ef = estadoEfectivoAsignacion(a);
+    const salidaNota = a.fechaSalida ? ` · Salida: ${a.fechaSalida}`
+      : (ef!=='baja' && a.fechaSalidaPrevista ? ` · Salida prevista: ${a.fechaSalidaPrevista}` : '');
+    // v0.1.94: si el estado "pendiente"/"baja" viene del calendario del
+    // PROYECTO (no de una fecha propia de esta persona), se explicita cuál
+    // — si no, un pendiente sin "Salida prevista" propia parece un dato
+    // suelto en vez de "este proyecto arranca tal día".
+    const proyectoNota = (ef==='pendiente' && a.proyectoInicio) ? ` · Proyecto arranca: ${a.proyectoInicio}`
+      : (ef==='baja' && !a.fechaSalida && !a.fechaSalidaPrevista && a.proyectoFin) ? ` · Proyecto finalizado: ${a.proyectoFin}`
+      : '';
+    return `
+    <div class="assign-item">
+      <div>
+        <div class="a-main">${escapeHtml(a.proyecto)} — ${escapeHtml(a.rol||'sin rol')}</div>
+        <div class="a-meta">Incorporación: ${a.fechaIncorporacion||'—'} · Estado: <span class="status-pill ${ef}" style="padding:1px 8px; font-size:9.5px;"><span class="dot"></span>${ESTADO_EFECTIVO_LABEL[ef]}</span>${salidaNota}${proyectoNota}</div>
+        ${a.historialRol && a.historialRol.length ? `<div class="role-history">Rol(es) anterior(es): ${a.historialRol.map(h=>`${escapeHtml(h.rol)} (hasta ${h.hasta})`).join(', ')}</div>`:''}
+      </div>
+      <button class="icon-btn" data-remove-assign="${i}" title="Quitar asignación">✕</button>
+    </div>`;
+  }).join('') || '<div class="hint">Sin asignaciones todavía.</div>';
+
+  const testCatalogOptions = state.testCatalog.map(t=>`<option value="${t.id}">${escapeHtml(t.nombre)}</option>`).join('');
+  const testsHtml = (p.resultadosTests||[]).map((r,ri)=>{
+    const def = state.testCatalog.find(t=>t.id===r.testId);
+    if(!def) return '';
+    const axesInputs = def.ejes.map(ax=>`
+      <div class="axis-input-row">
+        <span class="axis-label" style="color:${ax.color}">${escapeHtml(ax.etiqueta)}</span>
+        <input type="range" min="0" max="100" value="${r.valores[ax.clave]||0}" data-axis-input="${ri}|${ax.clave}">
+        <span class="axis-val" id="axis-val-${ri}-${ax.clave}">${r.valores[ax.clave]||0}</span>
+      </div>`).join('');
+    return `<div class="test-block">
+      <div class="test-block-head"><span class="tname">${escapeHtml(def.nombre)}</span><span class="tdate">${r.fecha||''} <button class="icon-btn" data-remove-test="${ri}">✕</button></span></div>
+      ${axesInputs}
+      ${def.tipo==='radar' ? `<div style="margin-top:8px;">${radarDiscSVG(r.valores,150)}</div>` : ''}
+    </div>`;
+  }).join('') || '<div class="hint">Sin tests registrados todavía.</div>';
+
+  const chipList = (arr, field)=> `<div class="chip-list">${(arr||[]).map((v,i)=>`<span class="chip">${escapeHtml(v)}<button data-remove-chip="${field}|${i}">✕</button></span>`).join('')}</div>`;
+  const bonosHtml = (p.manual.bonos||[]).map((b,i)=>`
+    <div class="bono-item">
+      <div>
+        <div class="b-amount">${fmtMoney(b.monto)}</div>
+        <div class="b-meta">${b.desde||'—'} → ${b.hasta||'—'}</div>
+        ${b.motivo?`<div class="b-motivo">${escapeHtml(b.motivo)}</div>`:''}
+      </div>
+      <button class="icon-btn" data-remove-bono="${i}" title="Quitar bono">✕</button>
+    </div>`).join('') || '<div class="hint">Sin bonos registrados.</div>';
+
+  slot.innerHTML = `<div class="modal-backdrop" id="modal-backdrop">
+    <div class="modal-box">
+      <div class="modal-head">
+        <div>
+          <h2>${escapeHtml(p.nombre)}</h2>
+          <div class="sub">${p.dniRaw?escapeHtml(p.dniRaw)+' · ':''}${p.asignaciones.length} asignación(es)</div>
+        </div>
+        <button class="btn ghost" id="modal-close-btn">Cerrar ✕</button>
+      </div>
+      <div class="modal-grid">
+        <div>
+          <div class="detail-section">
+            <h3>Datos de contacto</h3>
+            <div class="field-grid">
+              <div class="field"><label>Nombre</label><input type="text" id="pf-nombre" value="${escapeHtml(p.nombre)}"></div>
+              <div class="field"><label>DNI/NIE</label><input type="text" id="pf-dni" value="${escapeHtml(p.dniRaw||'')}"></div>
+              <div class="field"><label>Email</label><input type="text" id="pf-email" value="${escapeHtml(p.email||'')}"></div>
+              <div class="field"><label>Teléfono</label><input type="text" id="pf-telefono" value="${escapeHtml(p.telefono||'')}"></div>
+            </div>
+          </div>
+          <div class="detail-section">
+            <h3>Asignaciones a proyectos</h3>
+            ${assignHtml}
+          </div>
+          <div class="detail-section">
+            <h3>Datos de RRHH (manuales)</h3>
+            <div class="field-grid">
+              <div class="field"><label>SBA (bruto anual €)</label><input type="number" id="pf-sba" value="${p.manual.sba??''}"></div>
+              <div class="field"><label>Fecha alta empresa</label><input type="date" id="pf-alta" value="${p.manual.fechaAltaEmpresa||''}"></div>
+              <div class="field"><label>Categoría profesional</label><input type="text" id="pf-categoria" value="${escapeHtml(p.manual.categoriaProfesional||'')}"></div>
+              <div class="field"><label>Manager</label><input type="text" id="pf-manager" value="${escapeHtml(p.manual.manager||'')}"></div>
+            </div>
+            <div style="margin-top:10px;">
+              <label>Certificaciones</label>
+              ${chipList(p.manual.certificaciones,'certificaciones')}
+              <div class="chip-add-row"><input type="text" id="pf-add-cert" placeholder="Añadir certificación…"><button class="btn ghost" id="pf-add-cert-btn">+</button></div>
+            </div>
+            <div style="margin-top:10px;">
+              <label>Idiomas</label>
+              ${chipList(p.manual.idiomas,'idiomas')}
+              <div class="chip-add-row"><input type="text" id="pf-add-idioma" placeholder="Añadir idioma…"><button class="btn ghost" id="pf-add-idioma-btn">+</button></div>
+            </div>
+            <div style="margin-top:10px;">
+              <label>Observaciones</label>
+              <textarea id="pf-observaciones" placeholder="Notas libres sobre esta persona…">${escapeHtml(p.manual.observaciones||'')}</textarea>
+            </div>
+          </div>
+        </div>
+        <div>
+          <div class="detail-section">
+            <h3>Tests de personalidad / competencias</h3>
+            ${testsHtml}
+            <div class="btn-row">
+              <select id="pf-add-test-select">${testCatalogOptions}</select>
+              <button class="btn ghost" id="pf-add-test-btn">+ Añadir resultado</button>
+            </div>
+          </div>
+          <div class="detail-section">
+            <h3>Bonos (opcional)</h3>
+            <div class="hint" style="margin-bottom:8px;">Importes puntuales aprobados durante un periodo — no forman parte del SBA.</div>
+            ${bonosHtml}
+            <div class="bono-add-grid">
+              <div class="field"><label>Importe (€)</label><input type="number" id="pf-bono-monto" placeholder="€"></div>
+              <div class="field"><label>Desde</label><input type="date" id="pf-bono-desde"></div>
+              <div class="field"><label>Hasta</label><input type="date" id="pf-bono-hasta"></div>
+              <div class="field field-wide"><label>Motivo (opcional)</label><input type="text" id="pf-bono-motivo" placeholder="Ej. bono por objetivo de cierre…"></div>
+            </div>
+            <div class="btn-row"><button class="btn ghost" id="pf-add-bono-btn">+ Añadir bono</button></div>
+            <div class="modal-alert" id="bono-alert"></div>
+          </div>
+          <div class="detail-section">
+            <h3>% de dedicación por proyecto</h3>
+            ${p.asignaciones.map(a=>`
+              <div class="field-grid" style="margin-bottom:6px;">
+                <div class="field" style="grid-column:1/3;"><label>${escapeHtml(a.proyecto)}</label>
+                  <input type="number" min="0" max="100" data-dedic="${a.proyecto}" value="${p.manual.dedicacion[a.proyecto]??''}" placeholder="%"></div>
+              </div>`).join('')}
+          </div>
+        </div>
+      </div>
+      <div class="modal-alert" id="save-alert"></div>
+      <div class="btn-row" style="justify-content:flex-end; margin-top:6px;">
+        <button class="btn danger" id="pf-delete-person">Eliminar persona</button>
+        <button class="btn primary" id="pf-save-person">Guardar cambios</button>
+      </div>
+    </div>
+  </div>`;
+
+  document.getElementById('modal-close-btn').addEventListener('click', closePersonModal);
+  document.getElementById('modal-backdrop').addEventListener('click', (e)=>{ if(e.target.id==='modal-backdrop') closePersonModal(); });
+  slot.querySelectorAll('[data-remove-assign]').forEach(b=> b.addEventListener('click', async ()=>{
+    p.asignaciones.splice(Number(b.dataset.removeAssign),1);
+    await saveState(); renderPersonModal(); renderFilteredViews();
+  }));
+  slot.querySelectorAll('[data-remove-test]').forEach(b=> b.addEventListener('click', async ()=>{
+    p.resultadosTests.splice(Number(b.dataset.removeTest),1);
+    await saveState(); renderPersonModal(); renderFilteredViews();
+  }));
+  slot.querySelectorAll('[data-remove-chip]').forEach(b=> b.addEventListener('click', async ()=>{
+    const [field, idx] = b.dataset.removeChip.split('|');
+    p.manual[field].splice(Number(idx),1);
+    await saveState(); renderPersonModal();
+  }));
+  slot.querySelectorAll('[data-axis-input]').forEach(inp=> inp.addEventListener('input', ()=>{
+    const [ri, clave] = inp.dataset.axisInput.split('|');
+    p.resultadosTests[Number(ri)].valores[clave] = Number(inp.value);
+    document.getElementById(`axis-val-${ri}-${clave}`).textContent = inp.value;
+  }));
+  slot.querySelectorAll('[data-axis-input]').forEach(inp=> inp.addEventListener('change', async ()=>{
+    await saveState(); renderPersonModal(); renderFilteredViews();
+  }));
+  document.getElementById('pf-add-cert-btn').addEventListener('click', async ()=>{
+    const inp = document.getElementById('pf-add-cert');
+    if(inp.value.trim()){ p.manual.certificaciones.push(inp.value.trim()); await saveState(); renderPersonModal(); }
+  });
+  document.getElementById('pf-add-idioma-btn').addEventListener('click', async ()=>{
+    const inp = document.getElementById('pf-add-idioma');
+    if(inp.value.trim()){ p.manual.idiomas.push(inp.value.trim()); await saveState(); renderPersonModal(); }
+  });
+  slot.querySelectorAll('[data-remove-bono]').forEach(b=> b.addEventListener('click', async ()=>{
+    p.manual.bonos.splice(Number(b.dataset.removeBono),1);
+    await saveState(); renderPersonModal();
+  }));
+  document.getElementById('pf-add-bono-btn').addEventListener('click', async ()=>{
+    const montoInp = document.getElementById('pf-bono-monto');
+    const desdeInp = document.getElementById('pf-bono-desde');
+    const hastaInp = document.getElementById('pf-bono-hasta');
+    const alertBox = document.getElementById('bono-alert');
+    [montoInp, desdeInp, hastaInp].forEach(i=> i.classList.remove('field-invalid'));
+    const faltan = [];
+    if(montoInp.value === '' || Number(montoInp.value) <= 0){ montoInp.classList.add('field-invalid'); faltan.push('Importe'); }
+    if(!desdeInp.value){ desdeInp.classList.add('field-invalid'); faltan.push('Desde'); }
+    if(!hastaInp.value){ hastaInp.classList.add('field-invalid'); faltan.push('Hasta'); }
+    if(hastaInp.value && desdeInp.value && hastaInp.value < desdeInp.value){
+      hastaInp.classList.add('field-invalid'); desdeInp.classList.add('field-invalid');
+      faltan.push('"Hasta" no puede ser anterior a "Desde"');
+    }
+    if(faltan.length){
+      alertBox.textContent = '⚠ Revisa: ' + faltan.join(', ');
+      alertBox.className = 'modal-alert visible';
+      return;
+    }
+    p.manual.bonos.push({ monto: Number(montoInp.value), desde: desdeInp.value, hasta: hastaInp.value, motivo: document.getElementById('pf-bono-motivo').value.trim() });
+    await saveState();
+    renderPersonModal();
+    const newAlert = document.getElementById('bono-alert');
+    if(newAlert){ newAlert.textContent = '✓ Bono añadido.'; newAlert.className = 'modal-alert visible ok'; setTimeout(()=>{ if(newAlert) newAlert.className='modal-alert'; }, 2500); }
+  });
+  document.getElementById('pf-add-test-btn').addEventListener('click', async ()=>{
+    const testId = document.getElementById('pf-add-test-select').value;
+    const def = state.testCatalog.find(t=>t.id===testId);
+    if(!def) return;
+    const valores = {}; def.ejes.forEach(ax=> valores[ax.clave]=0);
+    p.resultadosTests.push({ testId, fecha: new Date().toISOString().slice(0,10), valores });
+    await saveState(); renderPersonModal(); renderFilteredViews();
+  });
+  document.getElementById('pf-delete-person').addEventListener('click', async ()=>{
+    const ok = await psConfirm('¿Eliminar definitivamente a esta persona del directorio? Esta acción no se puede deshacer. (Si sigue en un proyecto activo, la próxima sincronización la volverá a crear.)', { title:'Eliminar persona', confirmLabel:'Eliminar', danger:true });
+    if(!ok) return;
+    state.people = state.people.filter(x=>x.id!==p.id);
+    await saveState(); closePersonModal(); renderFilteredViews(); renderStatsStrip(); renderDupPanel(); renderPartesSection();
+  });
+  document.getElementById('pf-save-person').addEventListener('click', async ()=>{
+    p.nombre = document.getElementById('pf-nombre').value.trim() || p.nombre;
+    p.dniRaw = document.getElementById('pf-dni').value.trim();
+    p.dni = normalizeDni(p.dniRaw);
+    p.email = document.getElementById('pf-email').value.trim();
+    p.telefono = document.getElementById('pf-telefono').value.trim();
+    const sbaVal = document.getElementById('pf-sba').value;
+    p.manual.sba = sbaVal===''? null : Number(sbaVal);
+    p.manual.fechaAltaEmpresa = document.getElementById('pf-alta').value || null;
+    p.manual.categoriaProfesional = document.getElementById('pf-categoria').value.trim();
+    p.manual.manager = document.getElementById('pf-manager').value.trim();
+    p.manual.observaciones = document.getElementById('pf-observaciones').value.trim();
+    slot.querySelectorAll('[data-dedic]').forEach(inp=>{
+      const proj = inp.dataset.dedic;
+      if(inp.value==='') delete p.manual.dedicacion[proj];
+      else p.manual.dedicacion[proj] = Number(inp.value);
+    });
+    await saveState(); renderFilteredViews(); renderFiltersBar(); renderPartesSection();
+    const saveAlert = document.getElementById('save-alert');
+    if(saveAlert){ saveAlert.textContent = '✓ Cambios guardados.'; saveAlert.className = 'modal-alert visible ok'; }
+    setTimeout(closePersonModal, 450);
+  });
+}
+async function addManualPerson(){
+  const nombre = await promptModal('Nombre de la nueva persona', 'p.ej. Nombre Apellido');
+  if(!nombre) return;
+  const p = makeEmptyPerson({ nombre, dni:'' });
+  p.creadoManual = true;
+  state.people.push(p);
+  await saveState(); renderFilteredViews(); renderFiltersBar(); renderPartesSection(); ui.openPersonId = p.id; renderPersonModal();
+}
+
+// ============================================================
+// RENDER — panel de apariencia (tema + logo)
+// ============================================================
+function renderAppearancePanel(){
+  const slot = document.getElementById('appearance-panel-slot');
+  if(!slot) return;
+  if(!ui.appearancePanelOpen){ slot.innerHTML=''; return; }
+  slot.innerHTML = `<div class="appearance-panel">
+    <div class="ap-row">
+      <label>Logo / banner corporativo</label>
+      <input type="file" id="ap-logo-input" accept="image/*" style="display:none;">
+      <button class="btn ghost" id="ap-logo-upload-btn">${state.corporateLogo?'Cambiar imagen':'Subir imagen'}</button>
+      ${state.corporateLogo? `<img src="${state.corporateLogo}" class="ap-logo-preview"><button class="btn ghost" id="ap-logo-remove-btn">Quitar</button>` : `<span class="hint">Aparece en la cabecera del dashboard</span>`}
+    </div>
+    <div class="ap-row">
+      <label>Tema</label>
+      <span class="hint">El tema visual ahora es un ajuste de toda la aplicación — cámbialo desde Configuración → Tema visual en la ventana de Proyectos.</span>
+    </div>
+    <div class="btn-row"><button class="btn ghost" id="ap-close-btn">Cerrar</button></div>
+  </div>`;
+  document.getElementById('ap-close-btn').addEventListener('click', ()=>{ ui.appearancePanelOpen=false; renderAppearancePanel(); });
+  const logoInput = document.getElementById('ap-logo-input');
+  document.getElementById('ap-logo-upload-btn').addEventListener('click', ()=> logoInput.click());
+  logoInput.addEventListener('change', (e)=>{
+    const file = e.target.files[0]; if(!file) return;
+    if(file.size > 800*1024){ showIOFeedback('La imagen pesa mucho (más de 800 KB) — prueba con una más ligera.', false); return; }
+    const reader = new FileReader();
+    reader.onload = async ()=>{ state.corporateLogo = reader.result; await saveState(); renderAppearancePanel(); renderHeaderLogo(); };
+    reader.readAsDataURL(file);
+  });
+  const removeBtn = document.getElementById('ap-logo-remove-btn');
+  if(removeBtn) removeBtn.addEventListener('click', async ()=>{ state.corporateLogo=null; await saveState(); renderAppearancePanel(); renderHeaderLogo(); });
+}
+
+// ============================================================
+// EXPORT del bloque Equipo — CSV / Excel (v0.1.23)
+// ============================================================
+// Mismo patrón que exportBlockCSV()/exportBlockXLSX() del dashboard
+// principal (dashboard/plantilla_dashboard.html) — csvEscape/arrayToCSV/
+// downloadCSV no existían todavía en esta plantilla (solo el export/import
+// de la copia completa en JSON, y el parseo de import de CSV/Excel), así
+// que se portan aquí adaptados a una fila por PERSONA consolidada (no una
+// fila por asignación a proyecto, que es lo que usa el import — aquí el
+// objetivo es la vista ya consolidada del Directorio, la razón de ser de
+// esta herramienta).
+//
+// Exporta la lista FILTRADA (filteredPeople()), no siempre las mismas
+// state.people — así, si se filtra por proyecto/rol/estado antes de
+// exportar, el archivo resultante coincide con lo que se ve en la tabla en
+// ese momento, en vez de exportar siempre todo sin importar los filtros.
+//
+// El SBA respeta el mismo interruptor "👁 Revelar SBA"/"🙈 Ocultar SBA" que
+// ya usa la propia tabla (ui.sbaRevealed) — es un dato de retribución, así
+// que el export no debe destaparlo por su cuenta si en pantalla está
+// oculto; si se quiere en el archivo, basta con revelarlo antes de
+// exportar.
+function csvEscape(val){
+  const s = (val===null || val===undefined) ? '' : String(val);
+  return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
+}
+function arrayToCSV(rows, columns){
+  const header = columns.map(c=>csvEscape(c.label)).join(',');
+  const lines = rows.map(r=> columns.map(c=> csvEscape(c.get(r))).join(','));
+  // "sep=," en la primera línea fuerza a Excel a usar coma como separador
+  // al abrir el archivo directamente (evita que Excel en español lo abra
+  // con punto y coma según la configuración regional) — mismo truco que
+  // usa el dashboard principal.
+  return ['sep=,', header, ...lines].join('\r\n');
+}
+function downloadCSV(filename, csvText){
+  const blob = new Blob(['﻿' + csvText], { type:'text/csv;charset=utf-8;' }); // BOM para que Excel detecte UTF-8
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+const PEOPLE_EXPORT_COLUMNS = [
+  { key:'nombre', label:'Nombre', get:p=> p.nombre },
+  { key:'dni', label:'DNI/NIE', get:p=> p.dniRaw || '' },
+  { key:'email', label:'Email', get:p=> p.email || '' },
+  { key:'telefono', label:'Teléfono', get:p=> p.telefono || '' },
+  { key:'proyectos', label:'Proyectos', get:p=> p.asignaciones.map(a=>a.proyecto).join('; ') },
+  { key:'roles', label:'Rol(es)', get:p=> Array.from(new Set(p.asignaciones.map(a=>a.rol).filter(Boolean))).join(', ') },
+  { key:'estado', label:'Estado', get:p=> personOverallEstado(p) },
+  { key:'disc', label:'DISC dominante', get:p=>{
+      const pair = discDominantPair(p);
+      if(!pair) return '';
+      return pair.secondary ? `${pair.primary}+${pair.secondary}` : pair.primary;
+    } },
+  { key:'sba', label:'SBA', get:p=> ui.sbaRevealed ? (p.manual.sba!=null ? p.manual.sba : '') : (p.manual.sba!=null ? 'oculto' : '') },
+  { key:'antiguedad', label:'Antigüedad (años)', get:p=>{ const a = personAntiguedad(p); return a!==null ? a : ''; } },
+  { key:'categoria', label:'Categoría profesional', get:p=> p.manual.categoriaProfesional || '' },
+  { key:'manager', label:'Manager', get:p=> p.manual.manager || '' },
+  { key:'fechaAlta', label:'Fecha alta empresa (aaaa-mm-dd)', get:p=> p.manual.fechaAltaEmpresa || '' },
+  { key:'certificaciones', label:'Certificaciones', get:p=> (p.manual.certificaciones||[]).join(', ') },
+  { key:'idiomas', label:'Idiomas', get:p=> (p.manual.idiomas||[]).join(', ') },
+  { key:'observaciones', label:'Observaciones', get:p=> p.manual.observaciones || '' }
+];
+function peopleExportFilenameStamp(){
+  const d = new Date();
+  return `${d.toISOString().slice(0,10)}_${d.toTimeString().slice(0,5).replace(':','-')}`;
+}
+function exportPeopleCSV(){
+  const rows = filteredPeople();
+  if(rows.length === 0){
+    showIOFeedback('No hay personas para exportar con los filtros actuales.', false);
+    return;
+  }
+  const csv = arrayToCSV(rows, PEOPLE_EXPORT_COLUMNS);
+  const filename = `DirectorioTalento_equipo_${peopleExportFilenameStamp()}.csv`;
+  downloadCSV(filename, csv);
+  showIOFeedback(`Equipo exportado como "${filename}" — ${rows.length} persona${rows.length===1?'':'s'}.`, true);
+}
+function exportPeopleXLSX(){
+  const rows = filteredPeople();
+  if(rows.length === 0){
+    showIOFeedback('No hay personas para exportar con los filtros actuales.', false);
+    return;
+  }
+  if(typeof XLSX === 'undefined'){
+    showIOFeedback('No se ha podido exportar a Excel: la librería no se ha cargado.', false);
+    return;
+  }
+  const data = rows.map(p => {
+    const obj = {};
+    PEOPLE_EXPORT_COLUMNS.forEach(c => { obj[c.label] = c.get(p); });
+    return obj;
+  });
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Equipo');
+  const filename = `DirectorioTalento_equipo_${peopleExportFilenameStamp()}.xlsx`;
+  XLSX.writeFile(wb, filename);
+  showIOFeedback(`Equipo exportado como "${filename}" — ${rows.length} persona${rows.length===1?'':'s'}.`, true);
+}
+
+// ============================================================
+// EXPORT / IMPORT de copia completa (JSON)
+// ============================================================
+function exportJsonCopy(){
+  const raw = JSON.stringify({ state, exportedAt: new Date().toISOString() });
+  const blob = new Blob([raw], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `DirectorioTalento-backup-${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+  showIOFeedback('Copia exportada.', true);
+}
+async function importJsonCopy(file){
+  try{
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    if(parsed.encrypted || parsed.panoramaEncrypted){
+      showIOFeedback('Este archivo es una copia cifrada de una versión anterior (fuera de la app) — no se puede importar aquí. Usa "Restaurar último backup" desde el menú Proyecto si es un backup de esta misma instalación.', false);
+      return;
+    }
+    if(parsed.state && parsed.state.people){
+      state = parsed.state;
+      // v2.0.27: el tema ya no viaja en el JSON importado -- es un ajuste
+      // global, se queda como está (no se toca aquí).
+      await saveState(); renderAll();
+      showIOFeedback('Copia importada correctamente.', true);
+    } else {
+      showIOFeedback('El archivo no tiene el formato esperado.', false);
+    }
+  }catch(e){
+    showIOFeedback('No se pudo importar el archivo (formato no reconocido o archivo dañado).', false);
+  }
+}
+
+// ============================================================
+// ARRANQUE
+// ============================================================
+function renderHeaderLogo(){
+  const wrap = document.getElementById('corp-logo-wrap');
+  const img = document.getElementById('corp-logo-img');
+  if(!img || !wrap) return;
+  if(state.corporateLogo){ img.src = state.corporateLogo; wrap.style.display='block'; }
+  else { img.removeAttribute('src'); wrap.style.display='none'; }
+}
+// v2.0.38: ver el mismo hideBootLoading() de plantilla_dashboard.html --
+// aquí sin parámetro "immediate" porque esta ventana no tiene una pantalla
+// de error crítico propia que deba verse sin overlay por delante (ver
+// initApp()/DOMContentLoaded más abajo, que igualmente la retira si algo
+// falla antes de llegar a startApp()).
+function hideBootLoading(){
+  const el = document.getElementById('boot-loading');
+  if(!el) return;
+  requestAnimationFrame(() => {
+    el.classList.add('boot-loading-done');
+    setTimeout(() => el.remove(), 320);
+  });
+}
+function startApp(){
+  document.getElementById('main-page').style.display='block';
+  renderDataLoadWarning();
+  if(!state.testCatalog || !state.testCatalog.length) state.testCatalog = defaultTestCatalog();
+  if(!state.dismissedDupPairs) state.dismissedDupPairs = [];
+  // migración defensiva: estados guardados antes de la 0.1.24 no tienen partes mensuales
+  if(!state.partesMensuales) state.partesMensuales = {};
+  if(!state.partesConfig) state.partesConfig = { windowDays: 7 };
+  ui.partesMonthKey = currentMonthKey();
+  // migración defensiva: estados guardados antes de añadir observaciones/bonos no tienen esos campos
+  (state.people||[]).forEach(p=>{
+    if(!p.manual) p.manual = {};
+    if(p.manual.observaciones === undefined) p.manual.observaciones = '';
+    if(!Array.isArray(p.manual.bonos)) p.manual.bonos = [];
+  });
+  ui.view = 'directorio';
+  renderView();
+  renderAll();
+  hideBootLoading();
+  syncFromProjects(true);
+}
+function renderAll(){
+  renderStatsStrip(); renderDupPanel(); renderFiltersBar();
+  renderPeopleSection(); renderPartesSection(); renderChartsGrid(); renderAppearancePanel();
+  renderHeaderLogo();
+}
+
+// v0.1.51: mismo mecanismo de seguridad que el dashboard de proyecto normal tiene desde la 0.1.40
+// (ver dataLoadWarning/resolveProjectIdentity() en plantilla_dashboard.html) — el Directorio de
+// Talento nunca lo había tenido. Causa real encontrada tras un reporte del usuario: en un PC nuevo,
+// recién instalado y apuntado (vía "Cambiar ubicación de los datos...") a una carpeta compartida
+// por Google Drive que YA tenía días de datos reales, la partición de Electron de ESTE proyecto
+// (localStorage, ver webPreferences.partition en main.js) puede no haber terminado de sincronizar
+// todavía en ese primer arranque aunque panorama.sqlite3 ya esté — Drive sincroniza carpeta por
+// carpeta, no todo a la vez. Sin este aviso, ese arranque se veía IGUAL que un Directorio recién
+// estrenado (la lista de Equipo se sigue viendo bien porque syncFromProjects() la reconstruye sola
+// desde los proyectos reales), y seguía guardando backups normales con total tranquilidad — backups
+// SIN los partes, que con el tiempo iban EXPULSANDO a los backups antiguos de verdad (BACKUP_KEEP=15
+// en main.js, por proyecto, sin distinguir de qué PC vienen) hasta que ninguno de los 15 que
+// quedaban tenía ya ninguna marca. No hacía falta ningún error ni ningún cierre brusco: bastaba con
+// dejar la app abierta un rato en el PC nuevo.
+let dataLoadWarning = false;
+function renderDataLoadWarning(){
+  const slot = document.getElementById('data-load-warning-slot');
+  if(!slot) return;
+  if(!dataLoadWarning){ slot.innerHTML = ''; return; }
+  slot.innerHTML = `
+    <div style="max-width:900px; margin:0 0 18px; padding:14px 18px; border-radius:10px; background:rgba(226,89,107,0.12); border:1px solid var(--red); color:var(--ink);">
+      <div style="font-weight:700; color:var(--red); margin-bottom:4px;">⚠ No se han podido cargar los datos guardados del Directorio de Talento (código PS-2001)</div>
+      <div style="font-size:12.5px; line-height:1.5;">
+        Este Directorio tiene copias de seguridad guardadas, pero al abrirlo aquí no se ha
+        encontrado el estado guardado en su sitio habitual — típico cuando se acaba de vincular
+        esta carpeta de datos (por ejemplo, recién instalada la app en un PC nuevo) y todavía no ha
+        terminado de sincronizar del todo. <strong>Esto NO significa que los datos se hayan
+        borrado</strong> — casi seguro siguen intactos en algún backup. Para no arriesgarte a
+        sobrescribir nada: no marques partes ni edites nada aquí todavía. Espera un poco (a que
+        Google Drive/OneDrive termine de sincronizar) y reabre el Directorio, o usa el menú
+        "Proyecto → Restaurar un backup concreto..." para elegir y recuperar la copia que
+        corresponda. Mientras este aviso esté activo, esta ventana NO va a guardar ningún backup
+        nuevo, para no arriesgarse a empujar fuera (por el límite de copias guardadas) los backups
+        reales que sí tienen tus datos.
+      </div>
+    </div>`;
+}
+
+async function initApp(){
+  // v2.0.27: tema visual GLOBAL -- se aplica lo antes posible, antes de
+  // cargar el estado del Directorio (ver vendor/theme.js).
+  await initGlobalTheme((key) => { currentTheme = key; });
+  const raw = await storageGet(STORAGE_KEY);
+  let loadedOk = false;
+  if(raw){
+    try{
+      const parsed = JSON.parse(raw);
+      if(parsed && parsed.state && Array.isArray(parsed.state.people)) { state = parsed.state; loadedOk = true; }
+    }catch(e){ /* estado guardado corrupto o de una versión anterior: se sigue con el estado de fábrica */ }
+  }
+  if(!loadedOk){
+    // No se ha encontrado nada guardado por el camino normal. Puede ser sencillamente un Directorio
+    // recién estrenado y aún sin usar — pero también puede ser el fallo de carga real descrito
+    // arriba. Se distingue preguntando a main.js si este proyecto (id fijo del Directorio de
+    // Talento) tiene backups guardados en la base de datos: si los tiene, aquí SÍ debería haber
+    // datos y no los hay.
+    try{
+      if(window.panoramaBridge && typeof window.panoramaBridge.hasAnyBackup === 'function'){
+        dataLoadWarning = await window.panoramaBridge.hasAnyBackup();
+        if(dataLoadWarning && typeof window.panoramaBridge.logDataWarning === 'function'){
+          window.panoramaBridge.logDataWarning().catch(()=>{});
+        }
+      }
+    }catch(e){ /* si falla la comprobación, no se bloquea el arranque por esto */ }
+  }
+  startApp();
+}
+
+// ============================================================
+// CABLEADO DE EVENTOS GLOBALES
+// ============================================================
+function wireGlobalEvents(){
+  document.getElementById('btn-appearance').addEventListener('click', ()=>{ ui.appearancePanelOpen=!ui.appearancePanelOpen; renderAppearancePanel(); });
+  document.getElementById('btn-sync').addEventListener('click', ()=> syncFromProjects(false));
+  document.getElementById('btn-clear-filters').addEventListener('click', clearFilters);
+  const searchInput = document.getElementById('f-search');
+  let searchDebounce = null;
+  searchInput.addEventListener('input', (e)=>{
+    ui.filters.search = e.target.value;
+    clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(()=> renderFilteredViews(), 150);
+  });
+  document.getElementById('btn-partes-prev-month').addEventListener('click', ()=> shiftPartesMonth(-1));
+  document.getElementById('btn-partes-next-month').addEventListener('click', ()=> shiftPartesMonth(1));
+  document.getElementById('btn-partes-today').addEventListener('click', ()=>{
+    ui.partesMonthKey = currentMonthKey();
+    ui.partesOrder = null; // v2.0.21: mes distinto = orden fresco
+    renderPartesSection();
+  });
+  document.getElementById('btn-export-partes-csv').addEventListener('click', exportPartesCSV);
+  document.getElementById('btn-export-partes-xlsx').addEventListener('click', exportPartesXLSX);
+  document.getElementById('btn-partes-back').addEventListener('click', ()=>{
+    ui.view = 'directorio';
+    renderView();
+  });
+  document.getElementById('btn-export-people-csv').addEventListener('click', exportPeopleCSV);
+  document.getElementById('btn-export-people-xlsx').addEventListener('click', exportPeopleXLSX);
+  document.getElementById('btn-toggle-sba').addEventListener('click', (e)=>{
+    ui.sbaRevealed = !ui.sbaRevealed;
+    e.target.textContent = ui.sbaRevealed ? '🙈 Ocultar SBA' : '👁 Revelar SBA';
+    renderPeopleSection(); renderStatsStrip(); renderChartsGrid();
+  });
+  document.getElementById('btn-add-person').addEventListener('click', addManualPerson);
+  document.getElementById('btn-import').addEventListener('click', ()=> document.getElementById('import-file-input').click());
+  document.getElementById('import-file-input').addEventListener('change', async (e)=>{
+    if(e.target.files.length) await importFiles(Array.from(e.target.files));
+    e.target.value = '';
+  });
+  document.getElementById('btn-export-json').addEventListener('click', exportJsonCopy);
+  document.getElementById('btn-import-json').addEventListener('click', ()=> document.getElementById('import-json-input').click());
+  document.getElementById('import-json-input').addEventListener('change', async (e)=>{
+    if(e.target.files[0]) await importJsonCopy(e.target.files[0]);
+    e.target.value = '';
+  });
+  const scrollBtn = document.getElementById('btn-scroll-top');
+  window.addEventListener('scroll', ()=>{ scrollBtn.classList.toggle('visible', window.scrollY>400); });
+  scrollBtn.addEventListener('click', ()=> window.scrollTo({top:0, behavior:'smooth'}));
+}
+
+document.addEventListener('DOMContentLoaded', ()=>{
+  wireGlobalEvents();
+  // v2.0.38: red de seguridad -- si initApp() falla ANTES de llegar a
+  // startApp() (que es quien normalmente retira #boot-loading), el overlay
+  // se queda pegado en pantalla tapando cualquier error visible en
+  // consola. Mejor quitarlo y dejar ver lo que haya, que un "Cargando…"
+  // fijo para siempre.
+  Promise.resolve(initApp()).catch((err) => {
+    console.error('Error crítico al iniciar el Directorio de Talento:', err);
+    const el = document.getElementById('boot-loading');
+    if(el) el.remove();
+  });
+});
+
+</script>
+
+<!-- ============================================================
+     PUENTE ADITIVO PARA LA APP DE ESCRITORIO (Panorama Desktop)
+     Mismo patrón que dashboard/plantilla_dashboard.html: backup
+     automático a disco vía IPC + botón de salir. Si se abre este
+     archivo fuera de la app, window.panoramaBridge no existe y este
+     bloque no hace nada.
+     ============================================================ -->
+<script>
+(function(){
+  if(!window.panoramaBridge) return;
+
+  // "Partes mensuales" (v0.1.25): entrada de menú nativo entre "Proyecto" y
+  // "Seguridad" (ver buildProjectMenu en main.js, solo se ofrece para esta
+  // ventana — es la del Directorio de Talento) que cambia la vista DENTRO
+  // de esta misma ventana en vez de abrir otra — antes era un panel más
+  // metido entre Equipo y Gráficas y se veía aparatoso. Inofensivo para el
+  // resto de ventanas de proyecto: si nunca llega este IPC, no pasa nada.
+  if(window.panoramaBridge.onShowPartesMensuales){
+    window.panoramaBridge.onShowPartesMensuales(()=>{
+      ui.view = 'partes';
+      ui.partesOrder = null; // v2.0.21: al entrar a la vista, orden fresco
+      renderView();
+    });
+  }
+
+  let lastSerialized = '';
+  function collectLocalStorageDump(){
+    const dump = {};
+    for(let i=0;i<localStorage.length;i++){
+      const k = localStorage.key(i);
+      dump[k] = localStorage.getItem(k);
+    }
+    return dump;
+  }
+  // v0.1.48: devuelve { ok, skipped, error } — lo necesita el botón "Guardar" del encabezado (ver
+  // installHeaderSaveExitButtons más abajo) para saber de verdad si el guardado terminó bien antes
+  // de pintar el check. opts.force salta el atajo de "no ha cambiado nada" — un guardado manual
+  // pedido explícitamente por el usuario debe tocar disco de verdad para poder confirmárselo.
+  // A3.3/Bloque 4: ver el comentario equivalente en plantilla_dashboard.html — un
+  // guardado aplicado pero no verificable detiene la sesión en vez de repetirse.
+  let backupsDetenidos = false;
+  let avisoReinicioMostrado = false;
+  async function maybeBackup(reason, opts){
+    const force = !!(opts && opts.force);
+    if(backupsDetenidos){
+      logBackupAttempt(reason, force, 'skipped', 'sesion-detenida-tras-aplicado-sin-verificar');
+      return { ok:false, skipped:true, why:'requiere-reinicio' };
+    }
+    // v0.1.51: con un aviso de carga fallida activo (ver renderDataLoadWarning/initApp), no se crea
+    // ningún backup nuevo — evitaría guardar una copia del estado vacío de fábrica y, más
+    // importante, no toca en absoluto la lista de backups ya existentes de este proyecto mientras
+    // el problema no se investigue. Los backups reales siguen intactos y accesibles vía "Restaurar".
+    if(dataLoadWarning){
+      logBackupAttempt(reason, force, 'skipped', 'data-load-warning');
+      return { ok:false, skipped:true, why:'data-load-warning' };
+    }
+    try{
+      flushPendingSave();
+      const dump = collectLocalStorageDump();
+      // v0.1.51: mismo candado que ya tiene el dashboard de proyecto normal desde la 0.1.40 — nunca
+      // se guarda un backup que no contenga ni rastro de los datos propios de este proyecto (la
+      // clave dt-directorio-talento-state-v1). Un dump así no representa ningún estado real cargado
+      // (localStorage vacío o todavía sin sincronizar) y guardarlo empujaría hacia fuera, con el
+      // tiempo, los backups buenos anteriores por el límite de copias guardadas (BACKUP_KEEP en
+      // main.js) — que es justo lo que le pasó al usuario que reportó este bug.
+      const hasProjectData = Object.prototype.hasOwnProperty.call(dump, LS_PREFIX + STORAGE_KEY);
+      if(!hasProjectData){
+        logBackupAttempt(reason, force, 'skipped', 'no-data');
+        return { ok:false, skipped:true, why:'no-data' };
+      }
+      const serialized = JSON.stringify(dump);
+      if(!force && serialized === lastSerialized){
+        logBackupAttempt(reason, force, 'skipped', 'unchanged');
+        return { ok:true, skipped:true, why:'unchanged' };
+      }
+      // v0.1.43: antes esta llamada no se esperaba — mismo bug que en el dashboard de proyecto
+      // normal (ver plantilla_dashboard.html y attachFlushOnClose() en main.js): al cerrar rápido
+      // tras un cambio, esta promesa de IPC podía quedar en el aire sin guardarse a tiempo.
+      //
+      // v0.1.62: mismo BUG REAL encontrado y corregido en plantilla_dashboard.html — `lastSerialized`
+      // se actualizaba antes de comprobar si saveBackup() de verdad tuvo éxito, y su resultado ni
+      // siquiera se miraba. Si la escritura fallaba (p.ej. un corte momentáneo de la carpeta
+      // compartida), la app se quedaba creyendo que ya estaba guardado — sin reintentar nunca más
+      // mientras no hubiera un cambio adicional. Ver el comentario largo en plantilla_dashboard.html
+      // para el detalle completo del razonamiento.
+      //
+      // A3.3/Bloque 4: `saveBackup` devuelve el contrato de acción, no un booleano
+      // (ver preload.js). Con un objeto, el viejo `if(!wroteOk)` sería SIEMPRE falso
+      // y cualquier fallo pasaría por éxito — el mismo bug de arriba otra vez. Lo
+      // que manda es `aplicado`.
+      const res = await window.panoramaBridge.saveBackup(serialized, reason || 'auto');
+      if(!res || res.aplicado !== true){
+        logBackupAttempt(reason, force, 'error', 'write-failed', dump);
+        return { ok:false, why:'write-failed', error:(res && res.error) || null, reintentable:!!(res && res.reintentable) };
+      }
+      lastSerialized = serialized;
+      if(res.verificado === false){
+        backupsDetenidos = true;
+        logBackupAttempt(reason, force, 'error', 'aplicado-sin-verificar', dump);
+        if(!avisoReinicioMostrado){
+          avisoReinicioMostrado = true;
+          try{ await psAlert(res.aviso || 'El cambio se guardó pero no se pudo verificar. Cierra la aplicación y vuelve a abrirla.',
+            { title:'Hay que reiniciar la aplicación', danger:true }); }catch(e){}
+        }
+        return { ok:true, aplicado:true, verificado:false, requiereReinicio:true };
+      }
+      logBackupAttempt(reason, force, 'ok', null, dump);
+      return { ok:true, aplicado:true, verificado:true };
+    }catch(e){
+      console.warn('[panoramaBridge] backup fallido:', e);
+      logBackupAttempt(reason, force, 'error', String((e && e.message) || e));
+      return { ok:false, error: e };
+    }
+  }
+  // v0.1.62: ver el comentario del bug de lastSerialized más arriba — deja constancia en app.log de
+  // cada intento de backup (nunca el contenido real), para poder ver la secuencia exacta si hiciera
+  // falta investigar esto mismo aquí.
+  function logBackupAttempt(reason, force, outcome, why, dump){
+    try{
+      if(!window.panoramaBridge || typeof window.panoramaBridge.logBackupDiag !== 'function') return;
+      let peopleCount = null, serializedLength = null;
+      if(dump){
+        try{
+          const raw = dump[LS_PREFIX + STORAGE_KEY];
+          if(raw){
+            const parsed = JSON.parse(raw);
+            peopleCount = Array.isArray(parsed.people) ? parsed.people.length : null;
+          }
+          serializedLength = JSON.stringify(dump).length;
+        }catch(e){ /* no crítico */ }
+      }
+      window.panoramaBridge.logBackupDiag({ reason, force, outcome, why, count1: peopleCount, count1Label: 'personas', serializedLength });
+    }catch(e){ /* no crítico */ }
+  }
+  // v0.1.49: misma comprobación barata que en el dashboard de proyecto (ver
+  // plantilla_dashboard.html) — sin ella, "⏻ Salir" no tiene forma de saber si hace falta preguntar.
+  function hasUnsavedChanges(){
+    if(dataLoadWarning) return false; // maybeBackup tampoco guarda nada mientras este aviso esté activo
+    try{
+      flushPendingSave();
+      const dump = collectLocalStorageDump();
+      const hasProjectData = Object.prototype.hasOwnProperty.call(dump, LS_PREFIX + STORAGE_KEY);
+      if(!hasProjectData) return false; // nada que guardar todavía
+      return JSON.stringify(dump) !== lastSerialized;
+    }catch(e){
+      console.warn('[panoramaBridge] no se pudo comprobar cambios sin guardar:', e);
+      return true; // en caso de duda, mejor preguntar que cerrar en silencio
+    }
+  }
+  setInterval(()=>maybeBackup('interval'), 15000);
+  window.addEventListener('beforeunload', ()=>maybeBackup('beforeunload'));
+  setTimeout(()=>maybeBackup('startup'), 3000);
+  window.panoramaBridge.onRequestBackupNow(()=>maybeBackup('manual'));
+  // v0.1.43: main.js retiene el cierre de esta ventana hasta que esta promesa resuelva (o hasta su
+  // propio tope de tiempo) — ver attachFlushOnClose() en main.js.
+  if(typeof window.panoramaBridge.onFlushBeforeClose === 'function'){
+    // v0.1.62: fuerza el guardado igual que el botón manual — mismo razonamiento que en
+    // plantilla_dashboard.html (ver el comentario largo junto al bug de lastSerialized).
+    window.panoramaBridge.onFlushBeforeClose(()=>maybeBackup('closing', { force:true }));
+  }
+
+  // v0.1.48: el botón "Salir" flotante (círculo rojo abajo a la izquierda) se sustituye por los dos
+  // botones del encabezado (mismo cambio y mismo motivo que en plantilla_dashboard.html — pedido
+  // explícito del usuario, "poco visual", quería algo más "profesional" junto al resto de controles
+  // de arriba). Mismo comportamiento de cierre que antes (pide confirmación, cierra SOLO esta
+  // ventana vía closeWindow).
+  function installHeaderSaveExitButtons(){
+    const saveBtn = document.getElementById('btn-header-save');
+    const exitBtn = document.getElementById('btn-header-exit');
+    if(!saveBtn || !exitBtn) return;
+
+    const SAVE_DEFAULT_HTML = '💾 Guardar';
+    const SAVE_DEFAULT_STYLE = { borderColor:'var(--cyan-dim)', color:'var(--cyan)', background:'var(--cyan-bg)' };
+    let saveResetTimer = null;
+    let saveInFlight = false;
+
+    function setSaveState(html, style){
+      saveBtn.innerHTML = html;
+      Object.assign(saveBtn.style, style);
+    }
+    function resetSaveButtonSoon(delayMs){
+      if(saveResetTimer) clearTimeout(saveResetTimer);
+      saveResetTimer = setTimeout(()=>{ setSaveState(SAVE_DEFAULT_HTML, SAVE_DEFAULT_STYLE); }, delayMs);
+    }
+
+    saveBtn.addEventListener('click', async ()=>{
+      if(saveInFlight) return;
+      saveInFlight = true;
+      if(saveResetTimer) clearTimeout(saveResetTimer);
+      saveBtn.disabled = true;
+      setSaveState('Guardando…', SAVE_DEFAULT_STYLE);
+      let result;
+      try{
+        result = await maybeBackup('manual-button', { force:true });
+      }catch(e){
+        result = { ok:false, error:e };
+      }
+      saveBtn.disabled = false;
+      saveInFlight = false;
+      if(result && result.ok){
+        setSaveState('✓ Guardado', { borderColor:'var(--green)', color:'var(--green)', background:'var(--green-bg)' });
+        resetSaveButtonSoon(2200);
+      } else {
+        setSaveState('✗ No se pudo guardar', { borderColor:'var(--red)', color:'var(--red)', background:'var(--red-bg)' });
+        resetSaveButtonSoon(3500);
+      }
+    });
+
+    exitBtn.addEventListener('click', async ()=>{
+      if(!hasUnsavedChanges()){
+        window.panoramaBridge.closeWindow();
+        return;
+      }
+      const ok = await psConfirm(
+        'Todavía hay cambios sin guardar. Se guardarán solos al cerrar (como ' +
+        'siempre), pero si prefieres comprobarlo antes, cancela y pulsa ' +
+        '"💾 Guardar" primero.\n\n' +
+        'El launcher y el resto de ventanas de proyecto abiertas seguirán ' +
+        'funcionando.',
+        { title:'¿Cerrar el Directorio de Talento?', confirmLabel:'Cerrar' }
+      );
+      if(ok) window.panoramaBridge.closeWindow();
+    });
+  }
+  installHeaderSaveExitButtons();
+})();
+</script>
+<script>
+// ------------------------------------------------------------------
+// v2.0.16 — barra de título y menú propios (ver la nota junto a .titlebar
+// en el <style> de arriba). Todo lo de aquí abajo es NUEVO en esta
+// versión; no toca nada de lo que había antes en este archivo.
+// ------------------------------------------------------------------
+(function(){
+  if (window.winControls) {
+    const btnMin = document.getElementById('tb-minimize');
+    const btnMax = document.getElementById('tb-maximize');
+    const btnClose = document.getElementById('tb-close');
+    const titlebar = document.getElementById('titlebar');
+
+    btnMin.addEventListener('click', () => window.winControls.minimize());
+    btnMax.addEventListener('click', () => window.winControls.toggleMaximize());
+    btnClose.addEventListener('click', () => window.winControls.close());
+    titlebar.addEventListener('dblclick', (e) => {
+      if (e.target.closest('.win-controls')) return;
+      window.winControls.toggleMaximize();
+    });
+    function setMaximizedIcon(isMax) {
+      btnMax.textContent = isMax ? '❐' : '▢';
+      btnMax.title = isMax ? 'Restaurar' : 'Maximizar';
+    }
+    window.winControls.isMaximized().then(setMaximizedIcon).catch(() => {});
+    window.winControls.onMaximizedChanged(setMaximizedIcon);
+  }
+
+  const menubar = document.getElementById('menubar');
+  if (window.panoramaBridge && menubar) {
+    // Los .menu-item con data-menu abren un desplegable; "Partes mensuales"
+    // es un .menu-item SIN desplegable (data-action directo, igual que en
+    // el menú nativo era un botón suelto entre "Proyecto" y "Seguridad") —
+    // se trata aparte, no como los demás.
+    const dropdownTriggers = menubar.querySelectorAll('.menu-item[data-menu]');
+    const dropdowns = {};
+    menubar.querySelectorAll('.menu-dropdown').forEach((el) => { dropdowns[el.dataset.dropdown] = el; });
+
+    function closeAllMenus() {
+      dropdownTriggers.forEach((mi) => mi.classList.remove('open'));
+      Object.values(dropdowns).forEach((dd) => dd.classList.remove('open'));
+    }
+    dropdownTriggers.forEach((mi) => {
+      mi.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const key = mi.dataset.menu;
+        const wasOpen = mi.classList.contains('open');
+        closeAllMenus();
+        if (!wasOpen) {
+          mi.classList.add('open');
+          if (dropdowns[key]) dropdowns[key].classList.add('open');
+        }
+      });
+    });
+    document.addEventListener('click', closeAllMenus);
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAllMenus(); });
+
+    const securityDropdown = dropdowns['seguridad'];
+    menubar.querySelector('[data-menu="seguridad"]').addEventListener('click', async () => {
+      if (!securityDropdown.classList.contains('open')) return;
+      securityDropdown.innerHTML = '';
+      let enabled = false;
+      try { enabled = await window.panoramaBridge.isSecurityEnabled(); } catch (e) {}
+      const items = enabled
+        ? [
+            { action: 'security-change', label: 'Cambiar contraseña…' },
+            { action: 'security-disable', label: 'Desactivar cifrado de backups…' },
+          ]
+        : [{ action: 'security-setup', label: 'Activar cifrado de backups…' }];
+      items.forEach(({ action, label }) => {
+        const btn = document.createElement('button');
+        btn.dataset.action = action;
+        btn.textContent = label;
+        securityDropdown.appendChild(btn);
+      });
+    });
+
+    menubar.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-action]');
+      if (!btn) return;
+      const action = btn.dataset.action;
+      closeAllMenus();
+      switch (action) {
+        case 'editar-deshacer': document.execCommand('undo'); return;
+        case 'editar-rehacer': document.execCommand('redo'); return;
+        case 'editar-cortar': document.execCommand('cut'); return;
+        case 'editar-copiar': document.execCommand('copy'); return;
+        case 'editar-pegar': document.execCommand('paste'); return;
+        case 'editar-todo': document.execCommand('selectAll'); return;
+        default:
+          // archivo-*, proyecto-*, partes-mensuales, security-* — se
+          // resuelven en main.js con las mismas funciones que usaba el
+          // menú nativo (buildProjectMenu).
+          window.panoramaBridge.projectMenuAction(action);
+      }
+    });
+
+    // v2.0.30 — FASE 4: se añaden Ctrl+W (cerrar ventana), Ctrl+S (guardar
+    // backup ahora), Ctrl+1 (volver a la vista Directorio) y Ctrl+2 (ir a
+    // Partes mensuales) -- mismo patrón que Ctrl+N/Ctrl+O de arriba.
+    // Ctrl+1 reproduce exactamente lo que hace el botón "< Volver al
+    // Directorio" dentro de la vista de Partes mensuales (ver
+    // btn-partes-back más arriba); Ctrl+2 dispara la misma acción de menú
+    // que el propio botón "Partes mensuales" para no duplicar lógica.
+    document.addEventListener('keydown', (e) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const k = e.key.toLowerCase();
+      if (k === 'n') { e.preventDefault(); window.panoramaBridge.projectMenuAction('archivo-nuevo'); }
+      else if (k === 'o') { e.preventDefault(); window.panoramaBridge.projectMenuAction('archivo-elegir'); }
+      else if (k === 'w') { e.preventDefault(); if (window.winControls) window.winControls.close(); }
+      else if (k === 's') { e.preventDefault(); window.panoramaBridge.projectMenuAction('proyecto-backup-ahora'); }
+      else if (e.key === '1') { e.preventDefault(); ui.view = 'directorio'; renderView(); }
+      else if (e.key === '2') { e.preventDefault(); window.panoramaBridge.projectMenuAction('partes-mensuales'); }
+    });
+  }
+})();
+</script>
+</body>
+</html>

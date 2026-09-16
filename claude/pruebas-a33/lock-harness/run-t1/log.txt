@@ -1,0 +1,7 @@
+[2026-09-13T12:21:30.258Z] pid=16232 mode=hold requestSingleInstanceLock -> true
+[2026-09-13T12:21:30.373Z] pid=16232 mode=hold whenReady OK (esta instancia tiene el cerrojo)
+[2026-09-13T12:21:30.374Z] pid=16232 mode=hold manteniendo el cerrojo 7s
+[2026-09-13T12:21:32.936Z] pid=16232 mode=hold EVENTO second-instance RECIBIDO
+[2026-09-13T12:21:32.938Z] pid=15440 mode=hold requestSingleInstanceLock -> false
+[2026-09-13T12:21:32.939Z] pid=15440 mode=hold SEGUNDA INSTANCIA: app.exit(0) sin tocar datos
+[2026-09-13T12:21:37.393Z] pid=16232 mode=hold saliendo

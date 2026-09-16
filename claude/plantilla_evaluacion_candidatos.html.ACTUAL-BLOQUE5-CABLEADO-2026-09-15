@@ -1,0 +1,2157 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Evaluación de Candidatos</title>
+<!-- v2.0.28: pedido explícito del usuario tras probar la 2.0.27 ("el tema
+     visual de evaluación de candidatos déjale como estaba que queda
+     horroroso con el oscuro que tengo, me gustaba mucho más antes") --
+     esta ventana dejó de participar del tema visual global.
+     v2.0.44: vuelve a participar, pedido explícito de nuevo -- esta vez con
+     causa real corregida, no solo reintentado a ciegas: la 2.0.27 pintaba
+     cabecera/pestaña activa/botones/tabla con fondo SÓLIDO en --navy/--teal/
+     --red-tx y texto BLANCO FIJO encima. Funciona en los 4 temas claros
+     (ahí esos alias son colores oscuros/saturados) pero en Medianoche son
+     acentos CLAROS (como --cyan) -- texto blanco fijo sobre un acento ya
+     claro es lo que se veía "horroroso". Arreglo real: --navy-ink/--teal-ink/
+     --red-tx-ink nuevos en vendor/theme.js (mismo patrón que --cyan-ink de
+     2.0.37), blanco en los 4 temas claros (cero cambio ahí) y un tinte
+     oscuro en Medianoche. Todas las variables --navy/--teal/--bg-page/
+     --bg-card/--text/--text-muted/etc. de este :root YA COINCIDÍAN de
+     nombre con los alias que vendor/theme.js expone para esta ventana desde
+     que existen (pensados para esto desde el principio, ver cabecera de
+     THEMES en ese archivo) -- no hizo falta reescribir la hoja de estilos,
+     solo cargar el script y corregir los contrastes rotos. -->
+<script src="../vendor/theme.js"></script>
+<!-- v2.0.45: tipografía compartida (Inter + JetBrains Mono) -- el color ya
+     seguía el tema desde 2.0.44, pero la ventana seguía sintiéndose "de otra
+     app" al lado de dashboard/directorio: Arial en vez de Inter para el
+     texto normal, y ninguna de las etiquetas/botones/cabeceras de sección
+     en mayúsculas+monoespaciada que SÍ usa el resto de la app (ver
+     .eyebrow/.panel h2/.stat .label en dashboard). Sin esto, iguales
+     colores no bastan para que se sienta como la misma aplicación -- ver
+     comentario largo junto a --mono/--sans más abajo. -->
+<link rel="stylesheet" href="../vendor/fonts/fonts.css">
+<!-- v2.0.47: barra de título/controles de ventana compartidos -- ver el
+     comentario junto a --mono/--sans más abajo. -->
+<link rel="stylesheet" href="../vendor/window-chrome.css">
+<!-- v2.0.29: transiciones y movimiento (Fase 3), ver vendor/motion.css --
+     esto SÍ se aplica aquí (es independiente del tema de color de arriba):
+     entrada suave de ventana, hover en botones/tarjetas, fundido en el
+     cambio de pestaña. -->
+<link rel="stylesheet" href="../vendor/motion.css">
+<style>
+  :root {
+    --navy: #1D4ED8;
+    --navy-dark: #1E3A8A;
+    --teal: #0D9488;
+    --teal-dark: #0F766E;
+    --amber: #F59E0B;
+    --amber-dark: #92400E;
+    --green-bg: #BBF7D0;
+    --green-tx: #15803D;
+    --red-bg: #FECACA;
+    --red-tx: #B91C1C;
+    --input-bg: #FEF3C7;
+    --border: #D6DEE8;
+    --bg-page: #F1F5F9;
+    --bg-card: #FFFFFF;
+    --text: #1E293B;
+    --text-muted: #64748B;
+    /* v2.0.44: valores de reserva antes de que theme.js aplique el tema real
+       guardado -- mismos valores que ya usaba esta ventana (blanco), para
+       que no haya ni un parpadeo de color al cargar con el tema por defecto. */
+    --navy-ink: #FFFFFF;
+    --teal-ink: #FFFFFF;
+    --red-tx-ink: #FFFFFF;
+    --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 8px 20px rgba(0,0,0,0.06);
+    /* v2.0.45: mismos dos nombres de variable que ya usa dashboard/
+       directorio para lo mismo (--sans para texto normal, --mono para
+       etiquetas/botones/cabeceras de sección en mayúsculas) -- no viven en
+       vendor/theme.js porque no son color, son tipografía, pero comparten
+       el mismo archivo de fuentes (vendor/fonts/fonts.css) y los mismos
+       nombres para que un ojo entrenado en el resto de la app reconozca el
+       mismo lenguaje visual aquí. */
+    --mono: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+    --sans: 'Inter', system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  /* v2.0.26: scrollbar propia (paleta clara de esta plantilla, distinta
+     del resto de la app -- ver mismo comentario en
+     dashboard/plantilla_dashboard.html sobre por qué). */
+  ::-webkit-scrollbar{ width:10px; height:10px; }
+  ::-webkit-scrollbar-track{ background:var(--bg-page); }
+  ::-webkit-scrollbar-thumb{ background:var(--border); border-radius:99px; border:2px solid var(--bg-page); background-clip:padding-box; }
+  ::-webkit-scrollbar-thumb:hover{ background:var(--text-muted); background-clip:padding-box; }
+  ::-webkit-scrollbar-corner{ background:var(--bg-page); }
+  body {
+    margin: 0;
+    font-family: var(--sans);
+    background: var(--bg-page);
+    color: var(--text);
+  }
+  /* v2.0.47: restructurado -- antes un banner sólido navy/navy-dark de
+     pared a pared. El resto de la app (dashboard/directorio) NUNCA pinta
+     un bloque grande de color sólido, ni para la cabecera ni para las
+     tarjetas -- usa panel oscuro/claro según tema + un acento PEQUEÑO
+     (un cuadradito de 6-7px, un borde). Con colores de tema reales
+     (Medianoche: navy/teal son acentos CLAROS pensados para resaltar
+     sobre fondo oscuro, no para rellenar un bloque entero), esta cabecera
+     seguía leyéndose como "de otra aplicación" aun con la tipografía ya
+     correcta (2.0.45). Ahora es un panel más, con el acento reducido a un
+     cuadradito junto al título -- mismo patrón que .panel h2::before del
+     dashboard. */
+  header.topbar {
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    padding: 18px 28px;
+  }
+  /* v2.0.50: pedido explícito -- "mejora los títulos que sean azules como
+     el de reuniones". El título en sí (h1, más abajo) ya era blanco a
+     propósito en TODAS las ventanas (dashboard/directorio también lo son) --
+     lo que sí comparten dashboard/directorio/Preparación de Reunión y le
+     faltaba a esta ventana es el ".eyebrow": una línea corta en mayúsculas,
+     CYAN, encima del título (ver dashboard "LIVE SERVICE DASHBOARD",
+     directorio "DIRECTORIO DE TALENTO", Preparación de Reunión "PANORAMA DEL
+     SERVICIO · HERRAMIENTA COMPLEMENTARIA") -- ese acento cian es
+     probablemente lo que el usuario recuerda como "el título en azul".
+     Mismo texto y patrón que Preparación de Reunión, la ventana más parecida
+     (herramienta complementaria abierta desde el mismo menú "Proyecto" del
+     dashboard, no un hub propio). */
+  .eyebrow {
+    font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .18em;
+    text-transform: uppercase; color: var(--cyan); margin-bottom: 6px;
+  }
+  header.topbar h1 {
+    margin: 0 0 4px 0; font-size: 20px; font-family: var(--mono); font-weight: 700; letter-spacing: -.01em;
+    color: var(--text); display: flex; align-items: center; gap: 9px;
+  }
+  header.topbar h1::before { content: ''; display: inline-block; width: 7px; height: 7px; background: var(--cyan); flex-shrink: 0; }
+  header.topbar .sub { font-size: 11px; font-family: var(--mono); text-transform: uppercase; letter-spacing: .1em; color: var(--text-muted); }
+  /* v0.1.86: buscador de texto plano + botón Salir, fijos en la
+     cabecera (visibles en las 3 pestañas, a petición del usuario). Es
+     UN solo cuadro compartido; al escribir se filtran las 3 pestañas a
+     la vez, cada una con su propio contenido (ver
+     applyPuestosFilter/applyEvalFilter/applyResultadosFilter) — no es
+     una búsqueda global cruzada entre pestañas. */
+  .topbar-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+  .topbar-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  /* v0.1.89: botón "×" para borrar el texto del buscador de un solo
+     clic, y el buscador se vacía solo al cambiar de pestaña (antes se
+     quedaba con el texto de la pestaña anterior, confundía). */
+  .search-wrap { position: relative; display: inline-flex; align-items: center; }
+  .search-input {
+    border: 1px solid var(--border); border-radius: 6px; padding: 7px 28px 7px 10px; font-size: 13px;
+    background: var(--bg-page); color: var(--text); font-family: inherit;
+    min-width: 220px;
+  }
+  .search-input::placeholder { color: var(--text-muted); }
+  .search-clear-btn {
+    position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+    width: 20px; height: 20px; border: none; border-radius: 50%; cursor: pointer;
+    background: var(--border); color: var(--text-muted); font-size: 13px; line-height: 1;
+    display: flex; align-items: center; justify-content: center; padding: 0;
+    font-family: inherit;
+  }
+  .search-clear-btn:hover { background: var(--text-muted); color: var(--bg-card); }
+  /* el "display: flex" de arriba (misma especificidad que la regla
+     [hidden] del navegador) gana por ser CSS de autor y deja el botón
+     visible aunque tenga el atributo hidden puesto — este selector,
+     con una especificidad mayor, es el que de verdad lo oculta. */
+  .search-clear-btn[hidden] { display: none; }
+  /* v0.1.87: rojo para que se distinga de un botón de acción normal —
+     el usuario vio el gris translúcido original poco claro como botón
+     de salir.
+     v2.0.47: rojo SÓLIDO -> rojo con tinte (fondo/borde var(--red-bg)/
+     var(--red-tx), mismo patrón que usa el propio botón "Salir" del
+     dashboard) -- sigue distinguiéndose claramente de un botón normal
+     (que es lo que pidió el usuario en 0.1.87), sin ser un bloque sólido
+     que hoy desentona con el resto de botones ya retocados. */
+  .btn-header-exit {
+    background: var(--red-bg); color: var(--red); border: 1.5px solid var(--red-border);
+    border-radius: 8px; padding: 7px 16px; font-weight: bold; font-size: 12.5px;
+    cursor: pointer; font-family: inherit;
+  }
+  .btn-header-exit:hover { background: var(--red); color: #fff; }
+  .btn-header-exit:active { transform: translateY(1px); }
+  .top-fields {
+    display: flex; gap: 24px; margin-top: 12px; flex-wrap: wrap; align-items: flex-end;
+  }
+  /* v2.0.51: segunda vuelta -- "los títulos candidato, puesto... todos que
+     sean azul". La 2.0.50 los puso en --text (blanco) siguiendo "más
+     blancos que antes" al pie de la letra; el usuario ahora pide algo más
+     directo -- el mismo --cyan que ya lleva el .eyebrow de la cabecera y
+     que domina el resto de la app como color de acento. --text-muted (el
+     tono apagado original) queda descartado del todo para estas etiquetas. */
+  .top-fields label {
+    font-size: 10.5px; display: block; margin-bottom: 4px; color: var(--cyan);
+    font-family: var(--mono); text-transform: uppercase; letter-spacing: .06em;
+  }
+  /* v2.0.48: --surface-2 (no --bg-page) -- el mismo fondo de input exacto
+     que ya usa dashboard (.settings-row input/select), variable global
+     de vendor/theme.js disponible aquí igual que en cualquier otra
+     ventana desde que esta plantilla carga ese script (2.0.44). */
+  .top-fields input {
+    border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; font-size: 13px;
+    background: var(--surface-2); color: var(--text); font-weight: bold;
+    font-family: var(--mono);
+  }
+  .top-fields .project-name {
+    font-size: 16px; font-weight: bold; padding: 6px 0; font-family: var(--mono); color: var(--text);
+  }
+  nav.tabs {
+    display: flex; gap: 6px; background: var(--bg-card); padding: 10px 24px 0 24px;
+    border-bottom: 3px solid var(--border);
+  }
+  nav.tabs button {
+    border: none; border-bottom: 2px solid transparent; background: transparent; color: var(--text-muted); font-weight: 650;
+    padding: 10px 18px; cursor: pointer; font-size: 11px;
+    font-family: var(--mono); text-transform: uppercase; letter-spacing: .06em;
+  }
+  /* v2.0.47: pestaña activa -- antes fondo teal sólido de pared a pared.
+     v2.0.48: el borde inferior a secas se veía demasiado apagado ("mete
+     más colorido" fue el pedido explícito) -- se le suma un fondo con
+     TINTE de --cyan (--cyan-bg, la misma variable que ya usa .btn-add) y
+     el texto en --cyan, en vez de --navy -- unifica con el acento
+     principal de toda la app en vez del alias propio de esta ventana,
+     y da más presencia sin volver a ser un bloque sólido. */
+  nav.tabs button.active { background: var(--cyan-bg); border-bottom-color: var(--cyan); color: var(--cyan); }
+  main { padding: 22px 28px 60px 28px; max-width: 1100px; margin: 0 auto; }
+  .tabpanel { display: none; }
+  /* v2.0.29: antes el cambio de pestaña era un salto instantáneo
+     (display:none -> block). app-tab-in viene de vendor/motion.css --
+     se reproduce solo porque el navegador no anima nada mientras
+     display:none, así que no hace falta tocar el JS del cambio de
+     pestaña para que se dispare cada vez. */
+  .tabpanel.active { display: block; animation: app-tab-in .18s ease-out both; }
+  .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 10px; }
+  /* v2.0.47: botones restructurados -- antes cada variante era un bloque
+     SÓLIDO saturado (teal/gris/rojo) con texto blanco fijo.
+     v2.0.48: ajuste fino tras comparar botón a botón contra dashboard --
+     ya no bastaba con "tinte, no bloque sólido" en abstracto, tenían que
+     ser las MISMAS variables que usa dashboard .btn/.btn.primary/
+     .btn.danger, no un tinte parecido con nombres propios de esta
+     plantilla. --surface-2/--ink-soft/--border para el botón neutro,
+     --cyan-bg/--cyan-dim/--cyan para la acción primaria (igual que
+     .btn.primary), --red-bg/--red-border/--red para peligro (igual que
+     .btn.danger) -- las cuatro son variables GLOBALES de vendor/theme.js,
+     no alias propios de esta ventana, así que el color es literalmente
+     el mismo que pintan los botones equivalentes del dashboard. */
+  .btn {
+    border: 1px solid var(--border); border-radius: 8px; padding: 10px 16px; font-weight: 650; font-size: 11px;
+    cursor: pointer; background: var(--surface-2); color: var(--ink-soft);
+    font-family: var(--mono); text-transform: uppercase; letter-spacing: .04em;
+  }
+  .btn:hover { color: var(--text); border-color: var(--text-muted); }
+  .btn:active { transform: translateY(1px); }
+  .btn-add { background: var(--cyan-bg); color: var(--cyan); border-color: var(--cyan-dim); }
+  .btn-add:hover { background: var(--cyan); color: var(--cyan-ink); border-color: var(--cyan); }
+  .btn-secondary { background: var(--surface-2); color: var(--text-muted); border-color: var(--border); }
+  .btn-secondary:hover { color: var(--text); border-color: var(--text-muted); }
+  .btn-danger { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); padding: 6px 10px; font-size: 10px; }
+  .btn-danger:hover { background: var(--red); color: #fff; border-color: var(--red); }
+  .btn-ghost { background: transparent; color: var(--text-muted); border: 1.5px solid var(--border); padding: 6px 10px; font-size: 10px; }
+  .btn-ghost:hover { border-color: var(--text-muted); color: var(--text); }
+  /* v2.0.51: bug real reportado -- "no se aprecian los diferentes bloques de
+     perfiles". El fondo de la tarjeta (--bg-card, mapeado a la MISMA
+     variable de tema que el fondo de página --bg-page en Medianoche
+     únicamente un escalón más claro, #121821 sobre #0a0e13) se notaba
+     demasiado poco distinto del fondo de la propia herramienta -- incluso
+     con la separación de `margin-bottom`, un bloque se fundía visualmente
+     con el siguiente y con la página. Mismo truco que ya usa dashboard en
+     `.panel` (`color-mix` con blanco al 6-8%, ver ese archivo) para que el
+     panel quede perceptiblemente más claro que la página sin salirse de la
+     paleta del tema -- aplicado aquí también a .card-header (mismo tono
+     PLANO, no degradado, para que cabecera y cuerpo de la tarjeta no dejen
+     una costura de color entre los dos). En temas claros el efecto es
+     mínimo (el fondo ya es blanco/casi blanco) -- no hay regresión ahí. */
+  .card {
+    background: color-mix(in srgb, var(--bg-card) 100%, white 6%); border-radius: 12px; box-shadow: var(--shadow);
+    border: 1px solid var(--border); margin-bottom: 18px; overflow: hidden;
+  }
+  /* v2.0.47: cabecera de tarjeta -- antes fondo teal sólido de pared a
+     pared (mismo problema que header.topbar, ver comentario de arriba).
+     Ahora una fila de panel normal con un cuadradito de acento junto al
+     nombre, igual que .panel h2::before del dashboard -- el nombre real
+     del candidato/puesto es CONTENIDO, no interfaz, así que se queda en
+     --text normal (nunca en mayúsculas ni con el color de marca). */
+  .card-header {
+    background: color-mix(in srgb, var(--bg-card) 100%, white 6%); border-bottom: 1px solid var(--border); color: var(--text); padding: 12px 18px; display: flex;
+    justify-content: space-between; align-items: center; gap: 10px;
+  }
+  .card-header .name { font-weight: bold; font-size: 15px; display: flex; align-items: center; gap: 9px; }
+  .card-header .name::before { content: ''; display: inline-block; width: 7px; height: 7px; background: var(--cyan); flex-shrink: 0; }
+  /* v0.1.88: la 0.1.87 dejaba el nombre como un input SIEMPRE editable
+     (con lápiz decorativo al lado). El usuario pidió que el lápiz sea
+     el que ABRE la edición, y que al editar aparezcan botones
+     Aceptar/Cancelar explícitos — en vez de guardar solo con perder el
+     foco. Ahora hay dos modos: en reposo se ve un <span> de texto (con
+     resaltado de la búsqueda, ver mark.search-hit) + botón de lápiz;
+     al pulsar el lápiz se sustituye por un <input> real + botón ✓
+     (Aceptar) + botón ✕ (Cancelar). */
+  .card-header .name-edit-wrap { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+  .card-header .name-display { font-weight: bold; font-size: 15px; }
+  .card-header .name-edit-icon-btn {
+    background: transparent; border: none; color: var(--text-muted); opacity: 0.85; cursor: pointer;
+    font-size: 13px; padding: 3px 6px; border-radius: 5px; line-height: 1; font-family: inherit;
+  }
+  .card-header .name-edit-icon-btn:hover { opacity: 1; color: var(--text); background: var(--bg-page); }
+  .card-header .name-edit-input {
+    background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font-weight: bold;
+    font-size: 14px; font-family: inherit; padding: 5px 8px; border-radius: 5px;
+    width: 240px; max-width: 40vw;
+  }
+  .card-header .name-edit-input:focus { outline: 2px solid var(--navy); }
+  .card-header .btn-name-ok, .card-header .btn-name-cancel {
+    border: 1px solid transparent; border-radius: 5px; padding: 5px 9px; font-weight: bold; cursor: pointer;
+    font-size: 13px; line-height: 1; font-family: inherit;
+  }
+  .card-header .btn-name-ok { background: var(--green-bg); color: var(--green); border-color: var(--green); }
+  .card-header .btn-name-ok:hover { background: var(--green); color: #fff; }
+  .card-header .btn-name-cancel { background: var(--surface-2); color: var(--text-muted); border-color: var(--border); }
+  .card-header .btn-name-cancel:hover { background: var(--border); color: var(--text); }
+  /* v0.1.88 marcaba además la tarjeta/fila entera con un contorno azul
+     (.search-match) cuando el término estaba en algún campo suyo que
+     no se podía resaltar letra a letra (un <input>). El usuario dijo
+     claro en 0.1.90 que no quiere ese contorno — quiere el TEXTO
+     resaltado, y si no se puede resaltar texto en un campo concreto
+     (sigue siendo la limitación real: no se puede meter un <mark>
+     dentro del value de un <input>), prefiere que no se marque nada
+     de más ahí antes que un bloque azul. Se quita `.search-match` del
+     todo (CSS y las llamadas que la activaban) — la tarjeta que
+     coincide solo se distingue por seguir visible mientras las que no
+     coinciden se ocultan, y mark.search-hit resalta el texto real
+     donde SÍ es texto plano: el nombre del puesto en Puestos, y
+     candidato/puesto/TAP/Manager en la tabla de Resultados. */
+  mark.search-hit { background: #FDE047; color: #1F2937; padding: 0 1px; border-radius: 2px; }
+  /* v0.1.91: el usuario pidió que la búsqueda encuentre "TODOSSS LOS
+     TEXTOS" — incluidos los campos que son <input>/<textarea>, donde NO
+     se puede insertar un <mark> dentro del value (sigue siendo la misma
+     limitación real de HTML explicada en 0.1.90, no ha cambiado). En vez
+     de volver al contorno de tarjeta/fila entera que el usuario rechazó
+     explícitamente en 0.1.90 ("no quiero contorno en azul"), aquí se
+     resalta el CAMPO CONCRETO que coincide, con el mismo amarillo que
+     mark.search-hit. Con !important a propósito: hay reglas por tipo de
+     input (.field input[type=text], table.tasks input, etc.) que ya
+     pintan un fondo ámbar por defecto, y iban a hacer falta selectores
+     igual de específicos para cada contexto (campo suelto, tabla de
+     tareas de Puestos, tabla de tareas de Evaluaciones) para ganarles —
+     el bug de especificidad de .search-clear-btn en 0.1.89 fue
+     precisamente por confiar en la especificidad en vez de forzar el
+     resultado que se necesitaba. */
+  .field-search-hit {
+    background: #FDE047 !important;
+    color: #1F2937 !important;
+    border: 1.5px solid #CA8A04 !important;
+  }
+  .card-header .actions { display: flex; gap: 6px; align-items: center; }
+  .badge {
+    display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 10px; font-weight: 700;
+    font-family: var(--mono); text-transform: uppercase; letter-spacing: .05em;
+  }
+  .badge-ok { background: var(--green-bg); color: var(--green); }
+  .badge-warn { background: var(--amber-bg); color: var(--amber-dark); }
+  .badge-pending { background: var(--bg-page); color: var(--text-muted); }
+  .badge-apto { background: var(--green-bg); color: var(--green); }
+  .badge-noapto { background: var(--red-bg); color: var(--red); }
+  .card-body { padding: 16px 18px; }
+  table.tasks { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.tasks th {
+    text-align: left; font-size: 10px; color: var(--teal-dark); border-bottom: 2px solid var(--border);
+    padding: 6px 8px; font-family: var(--mono); text-transform: uppercase; letter-spacing: .05em;
+  }
+  table.tasks td { padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  table.tasks input[type=text], table.tasks input[type=number], table.tasks textarea, select {
+    width: 100%; border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 13px;
+    font-family: inherit; background: var(--surface-2); color: var(--text);
+  }
+  table.tasks input[type=number] { max-width: 80px; }
+  /* v0.1.78: guía libre por tarea (a petición del usuario, más útil que una
+     guía única por puesto porque se ve al lado de cada tarea concreta al
+     puntuar en Evaluaciones — ver .eval-task-guide más abajo). Fila propia
+     bajo la de nombre/peso, sin su propio borde inferior repetido (se deja
+     solo en la fila de la tarea siguiente, para que visualmente parezcan
+     un único bloque "tarea + su guía"). */
+  tr.task-guide-row td { border-bottom: 1px solid var(--border); padding-top: 0; }
+  .task-guide-label {
+    display: block; font-size: 9.5px; color: var(--text-muted); margin-bottom: 3px;
+    font-family: var(--mono); text-transform: uppercase; letter-spacing: .05em;
+  }
+  textarea.task-guide { min-height: 44px; resize: vertical; font-size: 12.5px; }
+  /* Misma guía, en modo solo-lectura, bajo el nombre de la tarea al puntuar
+     en Evaluaciones — se edita únicamente desde Puestos, aquí es solo
+     consulta mientras se entrevista.
+     v0.1.80: antes era un párrafo plano siempre visible (el usuario lo vio
+     largo y poco visual al pegar guías reales) — ahora va dentro de un
+     <details> plegado por defecto (0 JS, nativo del navegador), y el texto
+     se pinta con renderGuideRich() reconociendo líneas "- " como lista y
+     líneas cortas acabadas en ":" como mini-titular, en vez de un único
+     bloque de texto sin jerarquía. */
+  .eval-guide-details { margin-top: 4px; }
+  .eval-guide-details summary {
+    cursor: pointer; font-size: 11px; color: var(--teal-dark); font-weight: bold;
+    list-style: none; display: inline-flex; align-items: center; gap: 4px; user-select: none;
+  }
+  .eval-guide-details summary::-webkit-details-marker { display: none; }
+  .eval-guide-details summary::before { content: '▸'; font-size: 9px; }
+  .eval-guide-details[open] summary::before { content: '▾'; }
+  .eval-task-guide { font-size: 11.5px; color: var(--text-muted); margin-top: 6px; }
+  .eval-task-guide p { margin: 0 0 6px; }
+  .eval-task-guide .guide-h { font-weight: bold; color: var(--teal-dark); margin: 8px 0 3px; }
+  .eval-task-guide ul { margin: 0 0 6px; padding-left: 16px; }
+  .eval-task-guide li { margin-bottom: 3px; }
+  .row-flex { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 10px; }
+  .field { flex: 1; min-width: 180px; }
+  /* v2.0.50: pedido explícito -- "los títulos de los campos blancos como en
+     los proyectos". Antes en --text-muted (mismo tono que el texto de
+     ayuda/secundario) igual que la propia etiqueta ".min-hint" de abajo --
+     nada distinguía la etiqueta del campo del texto secundario que la
+     acompaña. --text (blanco/--ink real del tema) para la etiqueta en sí;
+     .min-hint se queda en --text-muted a propósito, para que el texto
+     "(mínimo del puesto: ...)" siga leyéndose como aclaración secundaria. */
+  .field label {
+    display: block; font-size: 10px; color: var(--cyan); font-weight: 650; margin-bottom: 4px;
+    font-family: var(--mono); text-transform: uppercase; letter-spacing: .05em;
+  }
+  .field input, .field select { width: 100%; border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; font-size: 13px; font-family: inherit; }
+  .field input[type=text], .field input[type=date], .field input[type=tel], .field input[type=number] { background: var(--surface-2); color: var(--text); }
+  /* v0.1.80: "mínimo del puesto" junto a la etiqueta de Formación/Años de
+     experiencia del candidato, y aviso si años de experiencia no llega al
+     mínimo — ver renderEvaluaciones(). Formación es texto libre, así que
+     NO se compara en automático (ver conversación: comparar texto daría
+     falsa seguridad); años sí es un número, se compara sin riesgo. */
+  .field label .min-hint { font-weight: normal; color: var(--text-muted); font-size: 10.5px; }
+  .min-warning {
+    display: inline-block; margin-top: 5px; font-size: 9.5px; font-weight: 700;
+    color: var(--amber-dark); background: var(--amber-bg); border-radius: 999px; padding: 2px 8px;
+    font-family: var(--mono); text-transform: uppercase; letter-spacing: .04em;
+  }
+  .cv-row { margin-bottom: 14px; }
+  .cv-row > label {
+    display: block; font-size: 10px; color: var(--cyan); font-weight: 650; margin-bottom: 5px;
+    font-family: var(--mono); text-transform: uppercase; letter-spacing: .05em;
+  }
+  .cv-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .cv-filename { font-size: 13px; color: var(--text); background: var(--bg-page); border-radius: 6px; padding: 6px 10px; }
+  .add-task-row { margin-top: 10px; }
+  .add-task-row button { font-size: 12px; padding: 7px 12px; }
+  .empty-hint { color: var(--text-muted); font-size: 13px; font-style: italic; padding: 20px; text-align: center; }
+  .feedback-box { margin-top: 12px; }
+  .feedback-box textarea {
+    width: 100%; min-height: 90px; border: 1px solid var(--border); border-radius: 8px; padding: 10px;
+    font-family: inherit; font-size: 12.5px; background: var(--bg-page); color: var(--text); resize: vertical;
+  }
+  .feedback-actions { margin-top: 6px; display: flex; gap: 8px; align-items: center; }
+  .copy-note { font-size: 11.5px; color: var(--text-muted); }
+  table.results { width: 100%; border-collapse: collapse; background: var(--bg-card); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); }
+  table.results th {
+    background: transparent; color: var(--navy); padding: 10px 12px; text-align: left; font-size: 10.5px;
+    font-family: var(--mono); text-transform: uppercase; letter-spacing: .05em; border-bottom: 2px solid var(--border);
+  }
+  table.results td { padding: 9px 12px; border-bottom: 1px solid var(--border); font-size: 13px; color: var(--text); }
+  table.results tr:nth-child(even) td { background: var(--bg-page); }
+  .summary-bar { display: flex; gap: 18px; margin: 16px 0; flex-wrap: wrap; }
+  /* v2.0.48: acento de color de 3px a la izquierda + número en color, sin
+     teñir el bloque -- mismo patrón que .stat/.stat::before del dashboard.
+     v2.0.50: pedido explícito de nuevo -- "que sean como los KPIs de
+     resumen ejecutivo de los proyectos que tienen color", comparando con el
+     panel "ESTADO EJECUTIVO" del dashboard (.exec-kpi/.exec-kpi.rojo/.ambar/
+     .verde, ver dashboard/plantilla_dashboard.html): ahí el acento de color
+     no es solo el borde, es un TINTE de fondo completo (--red-bg/--amber-bg/
+     --green-bg) a juego con el número. Mismo tratamiento aquí, variables
+     globales idénticas (no alias propios de esta ventana). */
+  .summary-card {
+    background: var(--cyan-bg); border-radius: 10px; padding: 14px 20px 14px 17px; box-shadow: var(--shadow);
+    border: 1px solid var(--border); border-left: 3px solid var(--cyan); text-align: center; min-width: 120px;
+  }
+  .summary-card .num { font-size: 24px; font-weight: bold; font-family: var(--mono); color: var(--cyan); }
+  .summary-card .lbl {
+    font-size: 9.5px; color: var(--text-muted);
+    font-family: var(--mono); text-transform: uppercase; letter-spacing: .06em;
+  }
+  .summary-card.apto { border-left-color: var(--green); background: var(--green-bg); }
+  .summary-card.noapto { border-left-color: var(--red); background: var(--red-bg); }
+  .summary-card.apto .num { color: var(--green); }
+  .summary-card.noapto .num { color: var(--red); }
+  footer.appfoot {
+    display: flex; justify-content: space-between; align-items: center; padding: 14px 28px; font-size: 10.5px;
+    color: var(--text-muted); border-top: 1px solid var(--border); background: var(--bg-card);
+    flex-wrap: wrap; gap: 10px; font-family: var(--mono);
+  }
+  footer.appfoot .actions { display: flex; gap: 8px; }
+  footer.appfoot button { font-size: 10.5px; padding: 7px 12px; }
+  input[type=file] { display: none; }
+  #loadingScreen {
+    position: fixed; inset: 0; background: var(--bg-page); display: flex;
+    align-items: center; justify-content: center; font-size: 14px; color: var(--text-muted); z-index: 2000;
+  }
+
+  /* Modal */
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(15,23,42,0.55); display: none;
+    align-items: center; justify-content: center; z-index: 999;
+  }
+  .modal-overlay.open { display: flex; }
+  /* v2.0.51: bug real reportado -- "al añadir evaluación o puesto la
+     ventana y campo que se abre es diferente también". Este modal
+     (askText/askConfirm, usado para "+ Añadir puesto"/"+ Añadir
+     evaluación"/"+ Añadir tarea") es un prompt propio de esta ventana,
+     nunca migrado al mismo lenguaje visual que el resto del archivo --
+     título en --navy (alias suelto de antes de la 2.0.44, no el --cyan que
+     ya usa el resto), fondo plano igual que la página en vez de un tono
+     más claro (mismo bug que .card, ver comentario de arriba), e input sin
+     etiqueta ni el estilo de .field input (fondo/borde propios). Ajustado
+     a juego: título en --cyan, fondo con el mismo tratamiento que .card,
+     input con el mismo fondo/borde que .field input. */
+  .modal-box {
+    background: color-mix(in srgb, var(--bg-card) 100%, white 6%); border-radius: 12px; padding: 22px 24px; width: 380px; max-width: 90vw;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.25); border: 1px solid var(--border);
+  }
+  .modal-box h3 { margin: 0 0 6px 0; font-size: 16px; color: var(--cyan); font-family: var(--mono); }
+  .modal-box p { margin: 0 0 12px 0; font-size: 13px; color: var(--text-muted); }
+  .modal-box input[type=text] {
+    width: 100%; padding: 9px 11px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px;
+    margin-bottom: 16px; font-family: inherit; background: var(--surface-2); color: var(--text);
+  }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .toast {
+    position: fixed; bottom: 18px; right: 18px; background: var(--navy-dark); color: var(--navy-ink);
+    padding: 10px 16px; border-radius: 8px; font-size: 12.5px; opacity: 0; pointer-events: none;
+    /* v2.0.29: antes solo el fundido de SALIDA tenía transición (opacity);
+       la entrada aparecía de golpe con opacity:1 en cuanto se añadía
+       .show. Se añade transform para que entre con un pequeño deslizamiento
+       hacia arriba, no solo un fundido. */
+    transform: translateY(8px);
+    transition: opacity 0.25s, transform 0.25s;
+    z-index: 1000;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.error { background: var(--red-tx); color: var(--red-tx-ink); }
+
+  /* v2.0.16 — barra de título propia, sin fila de menú (esta ventana nunca
+     tuvo menú).
+     v2.0.47: la barra en sí (antes fija en gris "Windows claro" con hex
+     sueltos, ni siquiera compartía vendor/window-chrome.css con el resto
+     de la app) ahora carga ese mismo archivo -- ver el <link> más abajo.
+     Los nombres de variable ya coincidían (--surface/--ink/--border), así
+     que no hizo falta tocar nada más para que encajara con el tema activo. */
+</style>
+</head>
+<body>
+
+<div class="titlebar" id="titlebar">
+  <img src="../assets/icon-256.png" alt="" />
+  <span class="tb-title">Evaluación de Candidatos</span>
+  <span class="tb-spacer"></span>
+  <div class="win-controls">
+    <button id="tb-minimize" title="Minimizar">─</button>
+    <button id="tb-maximize" title="Maximizar">▢</button>
+    <button id="tb-close" class="close" title="Cerrar">✕</button>
+  </div>
+</div>
+<div id="loadingScreen">Cargando datos del proyecto…</div>
+
+<header class="topbar">
+  <div class="topbar-head">
+    <div class="topbar-title">
+      <div class="eyebrow">Panorama del Servicio · Herramienta complementaria</div>
+      <h1>Evaluación de Candidatos</h1>
+      <div class="sub">Puestos, entrevistas y resultados de este proyecto en un mismo sitio.</div>
+    </div>
+    <div class="topbar-actions">
+      <div class="search-wrap">
+        <input type="text" id="searchBox" class="search-input" placeholder="Buscar en esta pestaña…">
+        <button type="button" class="search-clear-btn" id="btnClearSearch" title="Borrar búsqueda" aria-label="Borrar búsqueda" hidden>✕</button>
+      </div>
+      <button type="button" class="btn-header-exit" id="btnSalir">Salir</button>
+    </div>
+  </div>
+  <div class="top-fields">
+    <div>
+      <label>Proyecto</label>
+      <div class="project-name" id="projectNameLabel"></div>
+    </div>
+    <div>
+      <label>Umbral para "APTO" (1-5)</label>
+      <input type="number" id="threshold" min="1" max="5" step="0.1" style="width:80px">
+    </div>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button data-tab="puestos" class="active">1. Puestos</button>
+  <button data-tab="evaluaciones">2. Evaluaciones</button>
+  <button data-tab="resultados">3. Resultados</button>
+</nav>
+
+<main>
+  <section id="tab-puestos" class="tabpanel active">
+    <div class="toolbar">
+      <div style="font-size:13px;color:var(--text-muted)">Da de alta cada puesto abierto y desglosa sus tareas, asignando a cada una un peso de 0 a 5 según su importancia.</div>
+      <button class="btn btn-add" id="btnAddPuesto">+ Añadir puesto</button>
+    </div>
+    <div id="puestosList"></div>
+  </section>
+
+  <section id="tab-evaluaciones" class="tabpanel">
+    <div class="toolbar">
+      <div style="font-size:13px;color:var(--text-muted)">Elige el puesto de cada entrevista — sus tareas y pesos se cargan solos.</div>
+      <button class="btn btn-add" id="btnAddEval">+ Añadir evaluación</button>
+    </div>
+    <div id="evalList"></div>
+  </section>
+
+  <section id="tab-resultados" class="tabpanel">
+    <div class="summary-bar" id="summaryBar"></div>
+    <div style="overflow-x:auto">
+      <table class="results" id="resultsTable">
+        <thead><tr><th>Candidato</th><th>Puesto</th><th>TAP</th><th>Manager</th><th>Fecha</th><th>Nota final</th><th>Veredicto</th></tr></thead>
+        <tbody id="resultsBody"></tbody>
+      </table>
+    </div>
+    <div class="toolbar" style="margin-top:16px">
+      <button class="btn btn-secondary" id="btnExportCsv">Exportar resultados (CSV)</button>
+    </div>
+  </section>
+</main>
+
+<footer class="appfoot">
+  <div>Los datos se guardan en la carpeta de este proyecto, igual que los backups. Usa "Exportar" solo si quieres una copia aparte.</div>
+  <div class="actions">
+    <button class="btn btn-ghost" id="btnExportJson">Exportar datos (.json)</button>
+    <label class="btn btn-ghost" for="fileImport" style="cursor:pointer">Importar datos (.json)</label>
+    <input type="file" id="fileImport" accept="application/json">
+  </div>
+</footer>
+
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal-box">
+    <h3 id="modalTitle">Título</h3>
+    <p id="modalDesc"></p>
+    <input type="text" id="modalInput">
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="modalCancel">Cancelar</button>
+      <button class="btn btn-add" id="modalConfirm">Crear</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="confirmOverlay">
+  <div class="modal-box">
+    <h3 id="confirmTitle">¿Seguro?</h3>
+    <p id="confirmDesc"></p>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="confirmCancel">Cancelar</button>
+      <button class="btn btn-danger" id="confirmOk" style="padding:11px 18px">Sí, eliminar</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+const NOTA_OPTS = [1,2,3,4,5];
+
+function uid() { return 'id' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36); }
+
+// Proyecto nuevo (sin datos guardados todavía): arranca vacío — esto es un
+// proyecto real, no una plantilla de ejemplo.
+function emptyState() {
+  return { threshold: 3.5, puestos: [], evaluaciones: [] };
+}
+
+let state = emptyState();
+
+// v0.1.82: qué tarjetas de evaluación tienen la tabla de tareas
+// desplegada — estado puramente de interfaz (no se guarda en disco, no
+// forma parte de state/saveState). Por defecto TODO plegado (solo se ven
+// los campos de arriba + CV + este botón), para que la lista no se vea
+// tan larga con varios candidatos evaluados; se guarda aquí para que
+// sobreviva a los re-render forzados por otras acciones de la misma
+// tarjeta (elegir puesto, puntuar una tarea…), que si no, la volverían a
+// plegar en mitad de rellenar las notas.
+let expandedEvalIds = new Set();
+
+// v0.1.83: mismo mecanismo, pero para la tabla de tareas de cada PUESTO en
+// la pestaña Puestos (Tarea/Peso/guía) — plegada por defecto para no ver
+// tan largo un puesto ya configurado con varias tareas y guías. Un puesto
+// se añade aquí solo/a al crearlo o al añadirle una tarea nueva (para que
+// se vea al momento lo que se acaba de crear), nunca se quita solo/a.
+let expandedPuestoIds = new Set();
+
+// v0.1.86: buscador de texto plano en la cabecera (visible en las 3
+// pestañas). Estado puramente de interfaz (no se guarda en disco). Cada
+// pestaña se filtra de forma INDEPENDIENTE con el mismo texto — no es
+// una búsqueda global que salte de pestaña sola, cada una mira solo su
+// propio contenido (ver applyPuestosFilter/applyEvalFilter/
+// applyResultadosFilter).
+let searchQuery = '';
+
+// v0.1.88: id del ÚNICO puesto cuyo nombre se está editando ahora mismo
+// (null = ninguno). El nombre del puesto ya no es un input siempre
+// editable (0.1.86/0.1.87) — se ve como texto y solo se convierte en
+// input al pulsar el lápiz, con botones Aceptar/Cancelar explícitos.
+let editingPuestoNameId = null;
+
+// ---------- Persistencia vía IPC (candidateEval:get / candidateEval:save
+// en main.js) — nada de localStorage: los datos viven en la carpeta de
+// backups de este proyecto, como el resto de la app. ----------
+async function loadState() {
+  try {
+    const res = await window.panoramaBridge.getCandidateEvalData();
+    if (res && res.ok) {
+      if (res.payload && Array.isArray(res.payload.puestos) && Array.isArray(res.payload.evaluaciones)) {
+        state = res.payload;
+      } else {
+        state = emptyState();
+      }
+    } else {
+      showError((res && res.error) || 'No se pudieron cargar los datos guardados.');
+    }
+  } catch (e) {
+    showError('No se pudieron cargar los datos guardados: ' + ((e && e.message) || String(e)));
+  }
+}
+
+let saveTimer = null;
+// A3.3/Bloque 4 — CONTRATO DE ACCIÓN. `saveCandidateEvalData` devuelve
+// `{ok, aplicado, verificado, reintentable, …}` (ver preload.js). Lo que
+// decide si está guardado es `aplicado`, NO `ok`: la forma "aplicado pero sin
+// verificar" también trae `ok:true`, y enseñar "Guardado" ahí dejaría al
+// usuario siguiendo con una sesión que ya no puede escribir.
+let guardadosDetenidos = false;
+let avisoReinicioMostrado = false;
+
+// A3.3/BLOQUE 5 — §4.9. `saveState(true)` tiene que PROPAGAR el contrato, y
+// para eso `doSaveNow()` tiene que DEVOLVERLO en todas sus ramas. Con solo
+// `return doSaveNow()` arriba no bastaba: `doSaveNow` es async y no devolvía
+// nada, así que `await saveState(true)` resolvía a `undefined` y quien llamara
+// lo leería como "no aplicado" — un falso negativo que además hacía pasar las
+// pruebas por el motivo equivocado.
+//
+// Esto es lo que permite que quitar o cambiar un CV borre el archivo SOLO
+// cuando el estado quedó confirmado y verificado.
+const CONTRATO_SESION_DETENIDA = Object.freeze({
+  ok: false, aplicado: false, reintentable: false,
+  error: 'Esta sesión ya no puede guardar: cierra Panorama del Servicio y vuelve a abrirlo.',
+});
+const CONTRATO_RESPUESTA_VACIA = Object.freeze({
+  ok: false, aplicado: false, reintentable: true,
+  error: 'respuesta vacía del proceso principal',
+});
+function saveState(immediate) {
+  clearTimeout(saveTimer);
+  if (guardadosDetenidos) return Promise.resolve(CONTRATO_SESION_DETENIDA);
+  if (immediate) return doSaveNow();
+  saveTimer = setTimeout(doSaveNow, 400);
+  // El autoguardado diferido no tiene contrato que devolver todavía: quien
+  // necesita decidir sobre un archivo usa SIEMPRE la vía inmediata.
+  return Promise.resolve(null);
+}
+async function doSaveNow() {
+  clearTimeout(saveTimer);
+  if (guardadosDetenidos) return CONTRATO_SESION_DETENIDA;
+  try {
+    const res = await window.panoramaBridge.saveCandidateEvalData(JSON.stringify(state));
+    if (!res || res.aplicado !== true) {
+      showError((res && res.error) || 'No se pudo guardar.');
+      return res || CONTRATO_RESPUESTA_VACIA;
+    }
+    if (res.verificado === false) {
+      // Se aplicó: NO se repite. Pero la sesión no puede seguir guardando.
+      guardadosDetenidos = true;
+      clearTimeout(saveTimer);
+      const aviso = res.aviso || 'Se guardó, pero no se pudo verificar. Cierra la aplicación y vuelve a abrirla.';
+      // Banner FIJO, no el toast de 4,5 s: mientras esta ventana siga abierta
+      // el usuario tiene que ver que sus cambios nuevos ya no se guardan.
+      mostrarAvisoPersistente(AVISO_SESION_DETENIDA);
+      if (!avisoReinicioMostrado) {
+        avisoReinicioMostrado = true;
+        if (typeof psAlert === 'function') {
+          try { await psAlert(aviso, { title: 'Hay que reiniciar la aplicación', danger: true }); } catch (e) {}
+        }
+      }
+      return res;
+    }
+    showToast('Guardado');
+    return res;
+  } catch (e) {
+    showError('No se pudo guardar: ' + ((e && e.message) || String(e)));
+    return { ok: false, aplicado: false, reintentable: true, error: String((e && e.message) || e) };
+  }
+}
+// Mejor esfuerzo al cerrar la ventana: si quedaba un guardado pendiente por
+// el pequeño retardo (400ms), lo lanza ya mismo. No hay garantía de que
+// termine antes de que la ventana se cierre del todo (Electron no espera
+// promesas en beforeunload), pero cubre el caso normal de cerrar unos
+// segundos después de escribir, no justo al momento.
+window.addEventListener('beforeunload', () => {
+  if (saveTimer) doSaveNow();
+});
+
+let toastTimer = null;
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.className = 'toast show';
+  el.textContent = msg;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 1400);
+}
+function showError(msg) {
+  const el = document.getElementById('toast');
+  el.className = 'toast show error';
+  el.textContent = msg;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 4500);
+}
+
+// ------------------------------------------------------------------
+// A3.3/Bloque 4 — SESIÓN DETENIDA (forma 3 del contrato de acción).
+//
+// El toast dura 4,5 s y luego desaparece: no sirve para esto. Si tras
+// "aplicado:true / verificado:false" el aviso se esfuma y la ventana sigue
+// editable, el usuario puede seguir trabajando durante minutos creyendo que
+// se guarda — y no se guarda. Aquí el aviso es un banner FIJO que no se va
+// mientras la ventana siga abierta.
+//
+// Y no basta con bloquear el guardado: TODA mutación queda congelada, porque
+// algunas escriben en disco por su cuenta (los CV) y dejarlas pasar produce
+// justo la incoherencia archivo↔estado que este bloque existe para evitar.
+function mostrarAvisoPersistente(texto) {
+  let el = document.getElementById('avisoSesionDetenida');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'avisoSesionDetenida';
+    el.setAttribute('role', 'alert');
+    el.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:99999;padding:12px 16px;' +
+      'background:#7f1d1d;color:#fff;font-weight:600;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.4);';
+    document.body.appendChild(el);
+    document.body.style.paddingTop = '48px';
+  }
+  el.textContent = texto || AVISO_SESION_DETENIDA;
+}
+const AVISO_SESION_DETENIDA =
+  'El último cambio se guardó. Esta sesión debe reiniciarse: cierra Panorama del Servicio y vuelve a ' +
+  'abrirlo. Los cambios nuevos NO se guardarán.';
+
+// Guarda ÚNICA para todas las acciones que cambian `state` o tocan archivos.
+// Va SIEMPRE antes de llamar a ningún IPC: no vale hacer el IPC y descubrir
+// después que no se puede guardar el estado.
+function mutacionesPermitidas() {
+  if (!guardadosDetenidos) return true;
+  mostrarAvisoPersistente();
+  return false;
+}
+// Acciones que NO cambian ni `state` ni ningún archivo: siguen permitidas con
+// la sesión detenida. Todo lo demás pasa por `mutacionesPermitidas()`.
+// OJO con `task-guide`: NO va aquí. Es el <textarea> editable de la guía de
+// una tarea y su manejador hace `task.guide = t.value` — dejarla pasar
+// permitía escribir con la sesión detenida, `saveState()` no guardaba, y ese
+// texto se perdía al cerrar sin que nada lo avisara.
+const ACCIONES_SOLO_LECTURA = new Set([
+  'toggle-puesto-tasks', 'toggle-tasks',
+  'export-eval', 'copy-feedback', 'ver-cv', 'cancel-puesto-name',
+]);
+function accionPermitida(action) {
+  if (!action) return true;
+  if (ACCIONES_SOLO_LECTURA.has(action)) return true;
+  return mutacionesPermitidas();
+}
+
+// ---------- Modal genérico de texto ----------
+function askText(title, desc, placeholder, onConfirm) {
+  const overlay = document.getElementById('modalOverlay');
+  document.getElementById('modalTitle').textContent = title;
+  document.getElementById('modalDesc').textContent = desc;
+  const input = document.getElementById('modalInput');
+  input.value = '';
+  input.placeholder = placeholder;
+  overlay.classList.add('open');
+  setTimeout(() => input.focus(), 50);
+
+  function cleanup() {
+    overlay.classList.remove('open');
+    document.getElementById('modalConfirm').removeEventListener('click', onOk);
+    document.getElementById('modalCancel').removeEventListener('click', onCancel);
+    input.removeEventListener('keydown', onKey);
+  }
+  function onOk() {
+    const val = input.value.trim();
+    if (!val) { input.focus(); return; }
+    cleanup();
+    onConfirm(val);
+  }
+  function onCancel() { cleanup(); }
+  function onKey(e) { if (e.key === 'Enter') onOk(); if (e.key === 'Escape') onCancel(); }
+  document.getElementById('modalConfirm').addEventListener('click', onOk);
+  document.getElementById('modalCancel').addEventListener('click', onCancel);
+  input.addEventListener('keydown', onKey);
+}
+
+function askConfirm(title, desc, onConfirm) {
+  const overlay = document.getElementById('confirmOverlay');
+  document.getElementById('confirmTitle').textContent = title;
+  document.getElementById('confirmDesc').textContent = desc;
+  overlay.classList.add('open');
+  function cleanup() {
+    overlay.classList.remove('open');
+    document.getElementById('confirmOk').removeEventListener('click', onOk);
+    document.getElementById('confirmCancel').removeEventListener('click', onCancel);
+  }
+  function onOk() { cleanup(); onConfirm(); }
+  function onCancel() { cleanup(); }
+  document.getElementById('confirmOk').addEventListener('click', onOk);
+  document.getElementById('confirmCancel').addEventListener('click', onCancel);
+}
+
+// ---------- Cálculos ----------
+function puestoById(id) { return state.puestos.find(p => p.id === id); }
+function totalWeight(puesto) { return puesto.tasks.reduce((s, t) => s + (Number(t.weight) || 0), 0); }
+
+function evalStatus(ev) {
+  const puesto = puestoById(ev.puestoId);
+  if (!puesto || puesto.tasks.length === 0) return { state: 'sinpuesto' };
+  let sumW = 0, sumWN = 0, rated = 0;
+  puesto.tasks.forEach(t => {
+    const w = Number(t.weight) || 0;
+    sumW += w;
+    const n = ev.notas[t.id] && ev.notas[t.id].nota;
+    if (n) { sumWN += w * n; rated++; }
+  });
+  if (sumW === 0) return { state: 'sinpeso' };
+  if (rated < puesto.tasks.length) return { state: 'pendiente', rated, total: puesto.tasks.length };
+  const score = sumWN / sumW;
+  const verdict = score >= Number(state.threshold || 3.5) ? 'APTO' : 'NO APTO';
+  return { state: 'completo', score, verdict };
+}
+
+// v0.1.83: junta una lista de tareas empatadas al estilo español ("X",
+// "X e Y", "X, Y y Z") -- usa "e" en vez de "y" delante de un nombre que
+// empieza por "i"/"hi" (pero no "hie"), como corresponde en español.
+// v0.1.84: cada nombre va entre comillas -- un nombre de tarea que ya
+// tiene comas dentro (p.ej. "Gestión de logs, rsyslog, ELK…") se leía
+// como si fueran varias tareas sueltas al juntarlo con las demás
+// separado también por comas. Las comillas marcan dónde empieza y acaba
+// cada nombre, tenga o no comas dentro.
+// v0.1.85: en vez de la coletilla "aunque con menos peso en la
+// ponderación de este puesto" repetida igual para todo el grupo (el
+// usuario la vio repetitiva y poco clara — no decía CUÁNTO menos), cada
+// tarea muestra su propio peso entre paréntesis, igual que ya se hace
+// con la tarea principal — el lector compara el número directamente,
+// sin frase genérica.
+function joinTareasConPeso(rows) {
+  if (rows.length === 0) return '';
+  const formatted = rows.map(r => `"${r.name}" (peso ${r.weight})`);
+  if (formatted.length === 1) return formatted[0];
+  const lastName = rows[rows.length - 1].name;
+  const conj = /^(i|hi)/i.test(lastName) && !/^hie/i.test(lastName) ? 'e' : 'y';
+  return formatted.slice(0, -1).join(', ') + ` ${conj} ` + formatted[formatted.length - 1];
+}
+
+function feedbackDraft(ev) {
+  const puesto = puestoById(ev.puestoId);
+  if (!puesto) return 'Elige un puesto para generar el borrador de feedback automáticamente.';
+  const st = evalStatus(ev);
+  if (st.state !== 'completo') return 'Rellena las notas de todas las tareas para generar el borrador de feedback automáticamente.';
+  const rows = puesto.tasks.map(t => ({ name: t.name, nota: ev.notas[t.id].nota, weight: Number(t.weight) || 0, comentario: (ev.notas[t.id].comentario || '').trim() }));
+  const maxN = Math.max(...rows.map(r => r.nota));
+  const minN = Math.min(...rows.map(r => r.nota));
+  const fechaTxt = ev.fecha ? `, realizada el ${formatDateEs(ev.fecha)}` : '';
+  let text = `Entrevista a ${ev.candidato || '(sin nombre)'} para el perfil de ${puesto.name}${fechaTxt}. `;
+  text += `Resultado ponderado: ${st.score.toFixed(1)}/5 → ${st.verdict}. `;
+  if (maxN === minN) {
+    text += `Todas las tareas evaluadas obtuvieron una valoración homogénea de ${maxN}/5. `;
+  } else {
+    // v0.1.83 — bug reportado: cuando varias tareas empatan en la nota
+    // máxima (o mínima), antes se quedaba solo con la PRIMERA que
+    // encontraba (Array.find), ignorando las demás en silencio. Ahora, si
+    // hay empate, se elige como principal la de MAYOR peso (la que más
+    // cuenta en la nota ponderada final) y se mencionan también las demás
+    // que empataron, sin descartarlas.
+    const strongRows = rows.filter(r => r.nota === maxN).sort((a, b) => b.weight - a.weight);
+    const weakRows = rows.filter(r => r.nota === minN).sort((a, b) => b.weight - a.weight);
+    const bestPrimary = strongRows[0];
+    const bestRest = strongRows.slice(1);
+    const worstPrimary = weakRows[0];
+    const worstRest = weakRows.slice(1);
+
+    text += `El punto más fuerte detectado fue "${bestPrimary.name.toLowerCase()}" (nota ${maxN}/5, peso ${bestPrimary.weight}${bestPrimary.comentario ? ': ' + bestPrimary.comentario : ''}). `;
+    if (bestRest.length > 0) {
+      const restRows = bestRest.map(r => ({ name: r.name.toLowerCase(), weight: r.weight }));
+      text += `También obtuvo la nota máxima en ${joinTareasConPeso(restRows)}. `;
+    }
+
+    text += `El área con más margen de mejora fue "${worstPrimary.name.toLowerCase()}" (nota ${minN}/5, peso ${worstPrimary.weight}${worstPrimary.comentario ? ': ' + worstPrimary.comentario : ''}). `;
+    if (worstRest.length > 0) {
+      const restRows = worstRest.map(r => ({ name: r.name.toLowerCase(), weight: r.weight }));
+      text += `También obtuvo la nota mínima en ${joinTareasConPeso(restRows)}. `;
+    }
+  }
+  text += st.verdict === 'APTO'
+    ? 'En conjunto, el perfil cubre de forma adecuada las tareas ponderadas del puesto.'
+    : 'En conjunto, el perfil no alcanza el nivel mínimo requerido para las tareas ponderadas del puesto.';
+  return text;
+}
+
+function formatDateEs(iso) {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-');
+  return `${d}/${m}/${y}`;
+}
+
+// v2.0.2: informe de un candidato en texto plano -- candidato + tareas con
+// su comentario + borrador de feedback, todo en un único archivo
+// descargable (botón "Exportar informe (.txt)" en la cabecera de su
+// tarjeta, pestaña Evaluaciones). Sin librería nueva: mismo patrón Blob +
+// <a download> que ya usan "Exportar resultados (CSV)" y "Exportar datos
+// (.json)" más abajo -- solo cambia el contenido/tipo del Blob.
+function buildCandidateReportText(ev) {
+  const puesto = puestoById(ev.puestoId);
+  const st = evalStatus(ev);
+  const line = (label, value) => `${label}: ${value && String(value).trim() ? value : '—'}`;
+  const parts = [];
+  parts.push('EVALUACIÓN DE CANDIDATO');
+  parts.push('========================');
+  parts.push('');
+  parts.push(line('Candidato', ev.candidato));
+  parts.push(line('Puesto', puesto ? puesto.name : ''));
+  parts.push(line('TAP', ev.tap));
+  parts.push(line('Manager', ev.manager));
+  parts.push(line('Entrevistador', ev.entrevistador));
+  parts.push(line('Teléfono', ev.telefono));
+  parts.push(line('Fecha entrevista', ev.fecha ? formatDateEs(ev.fecha) : ''));
+  parts.push(line('Formación', ev.formacion));
+  parts.push(line('Años de experiencia', ev.aniosExperiencia));
+  parts.push(line('SBA valorado (cambio)', ev.sba));
+  parts.push('');
+  if (st.state === 'completo') {
+    parts.push(`RESULTADO: ${st.score.toFixed(1)}/5 → ${st.verdict}`);
+  } else if (st.state === 'pendiente') {
+    parts.push(`RESULTADO: Pendiente — faltan ${st.total - st.rated} nota(s) por puntuar`);
+  } else if (st.state === 'sinpeso') {
+    parts.push('RESULTADO: el puesto no tiene ningún peso asignado a sus tareas todavía.');
+  } else if (!puesto) {
+    parts.push('RESULTADO: sin puesto asignado todavía.');
+  } else {
+    parts.push('RESULTADO: el puesto elegido todavía no tiene tareas.');
+  }
+  parts.push('');
+  if (puesto && puesto.tasks.length > 0) {
+    parts.push('TAREAS EVALUADAS');
+    parts.push('-----------------');
+    puesto.tasks.forEach(t => {
+      const n = ev.notas[t.id] || {};
+      const notaTxt = n.nota != null && n.nota !== '' ? `${n.nota}/5` : 'sin puntuar';
+      const comentario = (n.comentario || '').trim();
+      parts.push(`- ${t.name} (peso ${t.weight}) — nota ${notaTxt}${comentario ? ` — ${comentario}` : ''}`);
+    });
+    parts.push('');
+  }
+  parts.push('BORRADOR DE FEEDBACK');
+  parts.push('---------------------');
+  parts.push(ev.feedbackEdited != null ? ev.feedbackEdited : feedbackDraft(ev));
+  parts.push('');
+  return parts.join('\n');
+}
+
+// v0.1.88: HTML de la cabecera del nombre de un puesto — dos modos.
+// En reposo: texto (con resaltado de búsqueda) + botón de lápiz que
+// abre la edición. Editando: input real + botón Aceptar (✓) + botón
+// Cancelar (✕), explícitos, en vez de guardar solo al perder el foco.
+function puestoNameWrapHtml(puesto) {
+  if (editingPuestoNameId === puesto.id) {
+    return `
+        <div class="name-edit-wrap editing">
+          <input type="text" class="name-edit-input" value="${escapeAttr(puesto.name)}" data-puesto="${puesto.id}">
+          <button type="button" class="btn-name-ok" data-action="save-puesto-name" data-id="${puesto.id}" title="Aceptar">✓</button>
+          <button type="button" class="btn-name-cancel" data-action="cancel-puesto-name" data-id="${puesto.id}" title="Cancelar">✕</button>
+        </div>`;
+  }
+  return `
+        <div class="name-edit-wrap">
+          <span class="name-display">${highlightMatches(puesto.name)}</span>
+          <button type="button" class="name-edit-icon-btn" data-action="edit-puesto-name" data-id="${puesto.id}" title="Editar nombre del puesto" aria-label="Editar nombre del puesto">✎</button>
+        </div>`;
+}
+
+// Sustituye SOLO el bloque del nombre dentro de la cabecera de la
+// tarjeta de ese puesto, sin volver a pintar el resto de la tarjeta
+// (mismo patrón de actualización dirigida del DOM usado desde 0.1.81
+// para no perder lo que se estuviera editando en otro campo).
+function refreshPuestoNameWrap(puesto) {
+  const card = document.querySelector(`.card[data-puesto-card="${puesto.id}"]`);
+  if (!card) return;
+  const oldWrap = card.querySelector('.name-edit-wrap');
+  if (!oldWrap) return;
+  oldWrap.outerHTML = puestoNameWrapHtml(puesto);
+  if (editingPuestoNameId === puesto.id) {
+    const input = card.querySelector('.name-edit-input');
+    if (input) { input.focus(); input.select(); }
+  }
+}
+
+// ---------- Render: Puestos ----------
+function renderPuestos() {
+  const list = document.getElementById('puestosList');
+  list.innerHTML = '';
+  if (state.puestos.length === 0) {
+    list.innerHTML = '<div class="empty-hint">Todavía no hay puestos. Pulsa "+ Añadir puesto" para crear el primero.</div>';
+    return;
+  }
+  state.puestos.forEach(puesto => {
+    const tw = totalWeight(puesto);
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.dataset.puestoCard = puesto.id;
+    const okBadge = puesto.tasks.length === 0
+      ? '<span class="badge badge-pending">Sin tareas</span>'
+      : (tw === 0 ? '<span class="badge badge-warn">⚠ Sin peso asignado</span>' : '<span class="badge badge-ok">✓ Pesos asignados</span>');
+    card.innerHTML = `
+      <div class="card-header">
+        ${puestoNameWrapHtml(puesto)}
+        <div class="actions">
+          ${okBadge}
+          <button class="btn btn-danger" data-action="del-puesto" data-id="${puesto.id}">Eliminar</button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="row-flex">
+          <div class="field"><label>Formación mínima</label><input type="text" placeholder="Ej: FP Superior" value="${escapeAttr(puesto.formacionMinima)}" data-action="puesto-field" data-field="formacionMinima" data-puesto="${puesto.id}"></div>
+          <div class="field"><label>Años mínimos</label><input type="number" min="0" step="1" placeholder="Ej: 5" value="${escapeAttr(puesto.aniosMinimos)}" data-action="puesto-field" data-field="aniosMinimos" data-puesto="${puesto.id}"></div>
+          <div class="field"><label>SBA de referencia</label><input type="text" placeholder="Ej: 40.000 - 45.000 € brutos/año" value="${escapeAttr(puesto.sbaReferencia)}" data-action="puesto-field" data-field="sbaReferencia" data-puesto="${puesto.id}"></div>
+        </div>
+        ${puesto.tasks.length === 0 ? '<div class="empty-hint">Sin tareas todavía.</div>' : `
+        <div style="margin-bottom:6px">
+          <button type="button" class="btn btn-ghost" data-action="toggle-puesto-tasks" data-id="${puesto.id}" style="font-size:11px;padding:4px 9px">${expandedPuestoIds.has(puesto.id) ? 'Ocultar tareas' : 'Ver tareas'}</button>
+        </div>
+        <div class="puesto-tasks-wrap" data-id="${puesto.id}"${expandedPuestoIds.has(puesto.id) ? '' : ' hidden'}>
+        <table class="tasks">
+          <thead><tr><th style="width:55%">Tarea</th><th style="width:20%">Peso (0-5)</th><th></th></tr></thead>
+          <tbody>
+            ${puesto.tasks.map(t => `
+              <tr>
+                <td><input type="text" value="${escapeAttr(t.name)}" data-action="task-name" data-puesto="${puesto.id}" data-task="${t.id}"></td>
+                <td><input type="number" min="0" max="5" step="1" value="${t.weight}" data-action="task-weight" data-puesto="${puesto.id}" data-task="${t.id}"></td>
+                <td><button class="btn btn-danger" data-action="del-task" data-puesto="${puesto.id}" data-task="${t.id}">✕</button></td>
+              </tr>
+              <tr class="task-guide-row">
+                <td colspan="3">
+                  <label class="task-guide-label">Guía de esta tarea (qué preguntar, qué mirar — se ve también al puntuar en Evaluaciones)</label>
+                  <textarea class="task-guide" placeholder="Ej: preguntar por experiencia con systemd, revisar journalctl, pedir que explique un incidente real de disco lleno…" data-action="task-guide" data-puesto="${puesto.id}" data-task="${t.id}">${escapeHtml(t.guide || '')}</textarea>
+                </td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+        </div>`}
+        <div class="add-task-row">
+          <button class="btn btn-secondary" data-action="add-task" data-puesto="${puesto.id}">+ Añadir tarea</button>
+        </div>
+      </div>`;
+    list.appendChild(card);
+  });
+  applyPuestosFilter();
+}
+
+// v2.0.3: orden por fecha de entrevista (ascendente) para la pestaña
+// Evaluaciones, la tabla de Resultados y su exportación CSV -- antes las
+// tres mostraban a los candidatos en el orden en que se habían dado de
+// alta, sin relación con su fecha real (mismo criterio ya aplicado a los
+// entregables del informe ejecutivo del dashboard, ver v0.1.96). Los
+// candidatos sin fecha todavía puesta se quedan al final (no hay fecha con
+// la que ordenarlos), conservando entre ellos el orden de alta original —
+// Array.prototype.sort es estable, así que basta con no tocar su posición
+// relativa cuando ninguno de los dos tiene fecha.
+function sortedEvaluacionesByFecha() {
+  return state.evaluaciones.slice().sort((a, b) => {
+    if (!a.fecha && !b.fecha) return 0;
+    if (!a.fecha) return 1;
+    if (!b.fecha) return -1;
+    return a.fecha.localeCompare(b.fecha);
+  });
+}
+
+// ---------- Render: Evaluaciones ----------
+function renderEvaluaciones() {
+  const list = document.getElementById('evalList');
+  list.innerHTML = '';
+  if (state.evaluaciones.length === 0) {
+    list.innerHTML = '<div class="empty-hint">Todavía no hay evaluaciones. Pulsa "+ Añadir evaluación" para registrar la primera entrevista.</div>';
+    return;
+  }
+  sortedEvaluacionesByFecha().forEach(ev => {
+    const st = evalStatus(ev);
+    const puesto = puestoById(ev.puestoId);
+    let badge = '<span class="badge badge-pending">Sin puesto</span>';
+    if (st.state === 'pendiente') badge = `<span class="badge badge-pending">Faltan ${st.total - st.rated} nota(s)</span>`;
+    if (st.state === 'completo') badge = st.verdict === 'APTO'
+      ? `<span class="badge badge-apto">APTO — ${st.score.toFixed(1)}/5</span>`
+      : `<span class="badge badge-noapto">NO APTO — ${st.score.toFixed(1)}/5</span>`;
+
+    const puestoOptions = ['<option value="">-- elige puesto --</option>']
+      .concat(state.puestos.map(p => `<option value="${p.id}" ${p.id === ev.puestoId ? 'selected' : ''}>${escapeHtml(p.name)}</option>`)).join('');
+
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.dataset.evalCard = ev.id;
+    card.innerHTML = `
+      <div class="card-header">
+        <span class="name">${escapeHtml(ev.candidato || '(sin nombre)')}</span>
+        <div class="actions">${badge}<button class="btn btn-secondary" data-action="export-eval" data-id="${ev.id}" title="Exportar candidato, tareas con comentarios y borrador de feedback en un único archivo">Exportar informe (.txt)</button><button class="btn btn-danger" data-action="del-eval" data-id="${ev.id}">Eliminar</button></div>
+      </div>
+      <div class="card-body">
+        <div class="row-flex">
+          <div class="field"><label>Candidato</label><input type="text" value="${escapeAttr(ev.candidato)}" data-action="ev-field" data-field="candidato" data-id="${ev.id}"></div>
+          <div class="field"><label>Puesto</label><select data-action="ev-puesto" data-id="${ev.id}">${puestoOptions}</select></div>
+          <div class="field"><label>Fecha entrevista</label><input type="date" value="${ev.fecha || ''}" data-action="ev-field" data-field="fecha" data-id="${ev.id}"></div>
+        </div>
+        <div class="row-flex">
+          <div class="field">
+            <label>Formación${puesto && puesto.formacionMinima ? ` <span class="min-hint">(mínimo del puesto: ${escapeHtml(puesto.formacionMinima)})</span>` : ''}</label>
+            <input type="text" placeholder="Ej: FP Superior, Ingeniería Informática…" value="${escapeAttr(ev.formacion)}" data-action="ev-field" data-field="formacion" data-id="${ev.id}">
+          </div>
+          <div class="field">
+            <label>Años de experiencia${puesto && puesto.aniosMinimos !== '' && puesto.aniosMinimos != null ? ` <span class="min-hint">(mínimo del puesto: ${escapeHtml(puesto.aniosMinimos)})</span>` : ''}</label>
+            <input type="number" min="0" step="1" placeholder="Ej: 6" value="${escapeAttr(ev.aniosExperiencia)}" data-action="ev-field" data-field="aniosExperiencia" data-id="${ev.id}">
+            ${puesto && puesto.aniosMinimos !== '' && puesto.aniosMinimos != null && ev.aniosExperiencia !== '' && ev.aniosExperiencia != null && Number(ev.aniosExperiencia) < Number(puesto.aniosMinimos) ? '<div class="min-warning">⚠ Por debajo del mínimo</div>' : ''}
+          </div>
+        </div>
+        <div class="row-flex">
+          <div class="field"><label>TAP</label><input type="text" value="${escapeAttr(ev.tap)}" data-action="ev-field" data-field="tap" data-id="${ev.id}"></div>
+          <div class="field"><label>Manager</label><input type="text" value="${escapeAttr(ev.manager)}" data-action="ev-field" data-field="manager" data-id="${ev.id}"></div>
+          <div class="field"><label>Entrevistador</label><input type="text" value="${escapeAttr(ev.entrevistador)}" data-action="ev-field" data-field="entrevistador" data-id="${ev.id}"></div>
+          <div class="field"><label>Teléfono</label><input type="tel" value="${escapeAttr(ev.telefono)}" data-action="ev-field" data-field="telefono" data-id="${ev.id}"></div>
+        </div>
+        <div class="row-flex">
+          <div class="field">
+            <label>SBA valorado (cambio)${puesto && puesto.sbaReferencia ? ` <span class="min-hint">(referencia del puesto: ${escapeHtml(puesto.sbaReferencia)})</span>` : ''}</label>
+            <input type="text" placeholder="Ej: 42.000 € brutos/año" value="${escapeAttr(ev.sba)}" data-action="ev-field" data-field="sba" data-id="${ev.id}">
+          </div>
+        </div>
+        <div class="cv-row">
+          <label>CV</label>
+          <div class="cv-controls">
+            ${ev.cvFileName ? `
+              <span class="cv-filename">📄 ${escapeHtml(ev.cvFileName)}</span>
+              <button class="btn btn-secondary" data-action="ver-cv" data-id="${ev.id}">Ver CV</button>
+              <button class="btn btn-secondary" data-action="cambiar-cv" data-id="${ev.id}">Cambiar</button>
+              <button class="btn btn-danger" data-action="quitar-cv" data-id="${ev.id}">Quitar</button>
+            ` : `
+              <button class="btn btn-secondary" data-action="adjuntar-cv" data-id="${ev.id}">+ Adjuntar CV</button>
+            `}
+          </div>
+        </div>
+        ${!puesto ? '<div class="empty-hint">Elige un puesto para cargar sus tareas.</div>' :
+          (puesto.tasks.length === 0 ? '<div class="empty-hint">Ese puesto todavía no tiene tareas — añádelas en la pestaña Puestos.</div>' : `
+        <div style="margin-bottom:6px">
+          <button type="button" class="btn btn-ghost" data-action="toggle-tasks" data-id="${ev.id}" style="font-size:11px;padding:4px 9px">${expandedEvalIds.has(ev.id) ? 'Ocultar tareas' : 'Ver tareas'}</button>
+        </div>
+        <div class="eval-tasks-wrap" data-id="${ev.id}"${expandedEvalIds.has(ev.id) ? '' : ' hidden'}>
+        <table class="tasks">
+          <thead><tr><th style="width:34%">Tarea</th><th style="width:10%">Peso (0-5)</th><th style="width:10%">Nota</th><th>Comentario</th></tr></thead>
+          <tbody>
+            ${puesto.tasks.map(t => {
+              const n = ev.notas[t.id] || {};
+              return `<tr>
+                <td><span class="task-name-display" data-task-name="${t.id}">${escapeHtml(t.name)}</span>${t.guide ? `
+                  <details class="eval-guide-details">
+                    <summary>Ver guía</summary>
+                    <div class="eval-task-guide">${renderGuideRich(t.guide)}</div>
+                  </details>` : ''}</td>
+                <td>${t.weight}</td>
+                <td><select data-action="ev-nota" data-id="${ev.id}" data-task="${t.id}">
+                  <option value="">-</option>
+                  ${NOTA_OPTS.map(v => `<option value="${v}" ${Number(n.nota) === v ? 'selected' : ''}>${v}</option>`).join('')}
+                </select></td>
+                <td><input type="text" value="${escapeAttr(n.comentario || '')}" data-action="ev-comentario" data-id="${ev.id}" data-task="${t.id}"></td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+        </div>`)}
+        <div class="feedback-box">
+          <label style="font-size:11.5px;color:var(--cyan);font-weight:bold">Borrador de feedback (editable)</label>
+          <textarea data-action="ev-feedback" data-id="${ev.id}">${escapeHtml(ev.feedbackEdited != null ? ev.feedbackEdited : feedbackDraft(ev))}</textarea>
+          <div class="feedback-actions">
+            <button class="btn btn-secondary" data-action="copy-feedback" data-id="${ev.id}">Copiar</button>
+            <button class="btn btn-ghost" data-action="reset-feedback" data-id="${ev.id}">Regenerar automático</button>
+            <span class="copy-note" id="copyNote-${ev.id}"></span>
+          </div>
+        </div>
+      </div>`;
+    list.appendChild(card);
+  });
+  applyEvalFilter();
+}
+
+// ---------- Render: Resultados ----------
+function renderResultados() {
+  const body = document.getElementById('resultsBody');
+  const summary = document.getElementById('summaryBar');
+  body.innerHTML = '';
+  let aptos = 0, noaptos = 0, evaluados = 0;
+  sortedEvaluacionesByFecha().forEach(ev => {
+    const st = evalStatus(ev);
+    const puesto = puestoById(ev.puestoId);
+    const tr = document.createElement('tr');
+    tr.dataset.evalRow = ev.id;
+    let notaTxt = '—', veredictoTxt = '<span class="badge badge-pending">Pendiente</span>';
+    if (st.state === 'completo') {
+      evaluados++;
+      notaTxt = st.score.toFixed(1);
+      if (st.verdict === 'APTO') { aptos++; veredictoTxt = '<span class="badge badge-apto">APTO</span>'; }
+      else { noaptos++; veredictoTxt = '<span class="badge badge-noapto">NO APTO</span>'; }
+    }
+    tr.innerHTML = `<td>${escapeHtml(ev.candidato || '—')}</td><td>${escapeHtml(puesto ? puesto.name : '—')}</td>
+      <td>${escapeHtml(ev.tap || '—')}</td><td>${escapeHtml(ev.manager || '—')}</td>
+      <td>${ev.fecha ? formatDateEs(ev.fecha) : '—'}</td><td>${notaTxt}</td><td>${veredictoTxt}</td>`;
+    body.appendChild(tr);
+  });
+  // v0.1.86: el resumen de arriba (Candidatos registrados/Aptos/No aptos)
+  // muestra siempre los TOTALES reales, sin filtrar por la búsqueda —
+  // solo se filtran las filas de la tabla. Mezclar un resumen filtrado
+  // con totales reales habría sido más confuso que útil.
+  summary.innerHTML = `
+    <div class="summary-card total"><div class="num">${state.evaluaciones.length}</div><div class="lbl">Candidatos registrados</div></div>
+    <div class="summary-card progreso"><div class="num">${evaluados}</div><div class="lbl">Evaluados por completo</div></div>
+    <div class="summary-card apto"><div class="num">${aptos}</div><div class="lbl">Aptos</div></div>
+    <div class="summary-card noapto"><div class="num">${noaptos}</div><div class="lbl">No aptos</div></div>`;
+  applyResultadosFilter();
+}
+
+// ---------- Búsqueda (texto plano, independiente por pestaña) ----------
+// v0.1.86: cada función de abajo filtra SOLO su propia lista (Puestos,
+// Evaluaciones o Resultados), leyendo directamente de `state` en vez del
+// texto ya pintado en pantalla — así encuentra coincidencias aunque
+// estén dentro de un <textarea> de guía o un campo que no se ve entero.
+// Se llaman al final de cada render (arriba) para que el filtro
+// sobreviva a cualquier re-render, y también al escribir en el buscador.
+// v0.1.87: la 0.1.86 comparaba texto plano tal cual, sin normalizar
+// acentos — un usuario buscando "tecnico" no encontraba "Técnico"
+// porque la tilde no coincidía carácter a carácter, y eso parecía "el
+// buscador no funciona". normalizeSearchText quita tildes/diéresis
+// (NFD + strip de marcas combinantes) y pasa a minúsculas, y se aplica
+// por igual al texto del cuadro y a cada campo comparado.
+function normalizeSearchText(s) {
+  return String(s || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
+function matchesSearch(...parts) {
+  if (!searchQuery) return true;
+  return parts.some(p => normalizeSearchText(p).includes(searchQuery));
+}
+
+// v0.1.88: devuelve el texto ESCAPADO con el fragmento que coincide con
+// la búsqueda envuelto en <mark> — para que se vea claramente "esto es
+// lo que encontró". Compara sobre una versión normalizada (sin acentos,
+// en minúsculas) carácter a carácter, guardando en `map` a qué índice
+// del texto ORIGINAL corresponde cada carácter normalizado, así el
+// recorte que se resalta conserva mayúsculas/tildes reales del dato.
+function highlightMatches(text) {
+  const str = String(text || '');
+  if (!searchQuery) return escapeHtml(str);
+  let comparable = '';
+  const map = [];
+  for (let i = 0; i < str.length; i++) {
+    const norm = str[i].normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    for (let k = 0; k < norm.length; k++) { comparable += norm[k]; map.push(i); }
+  }
+  let result = '';
+  let cursor = 0;
+  let from = 0;
+  while (true) {
+    const idx = comparable.indexOf(searchQuery, from);
+    if (idx === -1) break;
+    const startOrig = map[idx];
+    const endOrig = map[idx + searchQuery.length - 1] + 1;
+    result += escapeHtml(str.slice(cursor, startOrig));
+    result += '<mark class="search-hit">' + escapeHtml(str.slice(startOrig, endOrig)) + '</mark>';
+    cursor = endOrig;
+    from = idx + searchQuery.length;
+  }
+  result += escapeHtml(str.slice(cursor));
+  return result;
+}
+
+// v0.1.91: comprueba si UN valor concreto coincide con la búsqueda —
+// distinto de matchesSearch (que es un "algún campo de esta lista
+// coincide" para decidir si la tarjeta se oculta o no). Aquí hace falta
+// saber, campo a campo, cuál de ellos es el que coincide de verdad para
+// poder marcarlo.
+function fieldMatches(value) {
+  return !!searchQuery && normalizeSearchText(value).includes(searchQuery);
+}
+
+// Marca (o quita la marca) un <input>/<textarea> concreto como
+// coincidencia de búsqueda con la clase .field-search-hit (ver CSS). Es
+// el reemplazo campo a campo del contorno de tarjeta que se quitó en
+// 0.1.90 — no toca el value ni el foco del campo, así que es seguro
+// llamarlo aunque el usuario esté escribiendo en otro campo de la misma
+// tarjeta en ese momento.
+function markFieldMatch(el, value) {
+  if (!el) return;
+  el.classList.toggle('field-search-hit', fieldMatches(value));
+}
+
+// Si hay una coincidencia dentro de una sección de tareas plegada
+// (Puestos o Evaluaciones), la despliega sola — si no, el usuario ve la
+// tarjeta visible por el filtro pero cree que "no encuentra nada" al no
+// ver ningún resaltado porque está oculto tras "Ver tareas".
+function autoExpandTasksIfMatch(card, wrapSelector, toggleSelector, id, expandedSet) {
+  if (expandedSet.has(id)) return;
+  const wrap = card.querySelector(wrapSelector);
+  if (!wrap || !wrap.hidden) return;
+  wrap.hidden = false;
+  expandedSet.add(id);
+  const toggleBtn = card.querySelector(toggleSelector);
+  if (toggleBtn) toggleBtn.textContent = 'Ocultar tareas';
+}
+
+function updateSearchEmptyHint(container, show) {
+  let hint = container.querySelector('.search-empty-hint');
+  if (show) {
+    if (!hint) {
+      hint = document.createElement('div');
+      hint.className = 'empty-hint search-empty-hint';
+      container.appendChild(hint);
+    }
+    hint.textContent = `No se encontró nada con "${searchQuery}" en esta pestaña.`;
+  } else if (hint) {
+    hint.remove();
+  }
+}
+
+function applyPuestosFilter() {
+  const list = document.getElementById('puestosList');
+  const cards = list.querySelectorAll('.card[data-puesto-card]');
+  let anyVisible = false;
+  cards.forEach(card => {
+    const puesto = puestoById(card.dataset.puestoCard);
+    const match = !puesto || matchesSearch(
+      puesto.name, puesto.formacionMinima, puesto.aniosMinimos, puesto.sbaReferencia,
+      ...puesto.tasks.map(t => t.name), ...puesto.tasks.map(t => t.guide)
+    );
+    card.hidden = !match;
+    if (!puesto) return;
+    // v0.1.90: se quitó la marca de contorno azul de la tarjeta entera
+    // (el usuario la pidió fuera) — el nombre resalta el texto real si
+    // no se está editando ahora mismo (en modo edición el nombre es un
+    // <input>, no se puede resaltar texto dentro de un input).
+    if (editingPuestoNameId !== puesto.id) {
+      const nameDisplay = card.querySelector('.name-display');
+      if (nameDisplay) nameDisplay.innerHTML = highlightMatches(puesto.name);
+    }
+    // v0.1.91: Formación mínima / Años mínimos / SBA de referencia son
+    // <input> — se resalta el CAMPO (ver .field-search-hit) en vez del
+    // texto exacto, que es imposible de insertar dentro de un value.
+    markFieldMatch(card.querySelector('input[data-action="puesto-field"][data-field="formacionMinima"]'), puesto.formacionMinima);
+    markFieldMatch(card.querySelector('input[data-action="puesto-field"][data-field="aniosMinimos"]'), puesto.aniosMinimos);
+    markFieldMatch(card.querySelector('input[data-action="puesto-field"][data-field="sbaReferencia"]'), puesto.sbaReferencia);
+    // Nombre y guía de cada tarea — el nombre es un <input> (se resalta
+    // el campo) y la guía es un <textarea> (igual, campo entero).
+    let anyTaskMatch = false;
+    puesto.tasks.forEach(t => {
+      const nameInput = card.querySelector(`input[data-action="task-name"][data-task="${t.id}"]`);
+      const guideTextarea = card.querySelector(`textarea[data-action="task-guide"][data-task="${t.id}"]`);
+      markFieldMatch(nameInput, t.name);
+      markFieldMatch(guideTextarea, t.guide);
+      if (fieldMatches(t.name) || fieldMatches(t.guide)) anyTaskMatch = true;
+    });
+    if (anyTaskMatch) {
+      autoExpandTasksIfMatch(card, '.puesto-tasks-wrap', '[data-action="toggle-puesto-tasks"]', puesto.id, expandedPuestoIds);
+    }
+    if (match) anyVisible = true;
+  });
+  updateSearchEmptyHint(list, cards.length > 0 && !anyVisible);
+}
+
+function applyEvalFilter() {
+  const list = document.getElementById('evalList');
+  const cards = list.querySelectorAll('.card[data-eval-card]');
+  let anyVisible = false;
+  cards.forEach(card => {
+    const ev = state.evaluaciones.find(e => e.id === card.dataset.evalCard);
+    if (!ev) { card.hidden = true; return; }
+    const puesto = puestoById(ev.puestoId);
+    // v0.1.91: se añaden teléfono y los comentarios/nombres de tarea de
+    // esta evaluación — antes no formaban parte de la búsqueda ("TODOS
+    // los textos" también los incluye a ellos).
+    const taskNames = puesto ? puesto.tasks.map(t => t.name) : [];
+    const comentarios = puesto ? puesto.tasks.map(t => (ev.notas[t.id] && ev.notas[t.id].comentario) || '') : [];
+    const match = matchesSearch(
+      ev.candidato, puesto ? puesto.name : '', ev.tap, ev.manager, ev.entrevistador,
+      ev.formacion, ev.sba, ev.aniosExperiencia, ev.telefono,
+      ...taskNames, ...comentarios
+    );
+    card.hidden = !match;
+
+    // v0.1.91: el nombre del candidato en la CABECERA es texto plano
+    // (span, no input) — se puede resaltar letra a letra igual que en
+    // Puestos/Resultados.
+    const nameSpan = card.querySelector('.card-header .name');
+    if (nameSpan) nameSpan.innerHTML = highlightMatches(ev.candidato || '(sin nombre)');
+
+    // El resto de campos de esta tarjeta son <input> — se resalta el
+    // CAMPO entero (ver .field-search-hit), no se puede insertar <mark>
+    // dentro de un value.
+    markFieldMatch(card.querySelector('input[data-action="ev-field"][data-field="candidato"]'), ev.candidato);
+    markFieldMatch(card.querySelector('input[data-action="ev-field"][data-field="formacion"]'), ev.formacion);
+    markFieldMatch(card.querySelector('input[data-action="ev-field"][data-field="aniosExperiencia"]'), ev.aniosExperiencia);
+    markFieldMatch(card.querySelector('input[data-action="ev-field"][data-field="tap"]'), ev.tap);
+    markFieldMatch(card.querySelector('input[data-action="ev-field"][data-field="manager"]'), ev.manager);
+    markFieldMatch(card.querySelector('input[data-action="ev-field"][data-field="entrevistador"]'), ev.entrevistador);
+    markFieldMatch(card.querySelector('input[data-action="ev-field"][data-field="telefono"]'), ev.telefono);
+    markFieldMatch(card.querySelector('input[data-action="ev-field"][data-field="sba"]'), ev.sba);
+
+    // Tabla de tareas propia de esta evaluación: el nombre de la tarea
+    // es texto plano (span, se resalta letra a letra) y el comentario es
+    // un <input> (se resalta el campo).
+    let anyTaskMatch = false;
+    if (puesto) {
+      puesto.tasks.forEach(t => {
+        const n = ev.notas[t.id] || {};
+        const nameSpanTask = card.querySelector(`span[data-task-name="${t.id}"]`);
+        if (nameSpanTask) nameSpanTask.innerHTML = highlightMatches(t.name);
+        const comentarioInput = card.querySelector(`input[data-action="ev-comentario"][data-task="${t.id}"]`);
+        markFieldMatch(comentarioInput, n.comentario || '');
+        if (fieldMatches(t.name) || fieldMatches(n.comentario || '')) anyTaskMatch = true;
+      });
+    }
+    if (anyTaskMatch) {
+      autoExpandTasksIfMatch(card, '.eval-tasks-wrap', '[data-action="toggle-tasks"]', ev.id, expandedEvalIds);
+    }
+
+    if (match) anyVisible = true;
+  });
+  updateSearchEmptyHint(list, cards.length > 0 && !anyVisible);
+}
+
+function applyResultadosFilter() {
+  const body = document.getElementById('resultsBody');
+  const rows = body.querySelectorAll('tr[data-eval-row]');
+  rows.forEach(row => {
+    const ev = state.evaluaciones.find(e => e.id === row.dataset.evalRow);
+    if (!ev) { row.hidden = true; return; }
+    const puesto = puestoById(ev.puestoId);
+    const match = matchesSearch(ev.candidato, puesto ? puesto.name : '', ev.tap, ev.manager);
+    row.hidden = !match;
+    // v0.1.88: aquí SÍ son celdas de texto plano (no inputs), así que
+    // se resalta el fragmento encontrado carácter a carácter.
+    if (match) {
+      const cells = row.querySelectorAll('td');
+      if (cells[0]) cells[0].innerHTML = highlightMatches(ev.candidato || '—');
+      if (cells[1]) cells[1].innerHTML = highlightMatches(puesto ? puesto.name : '—');
+      if (cells[2]) cells[2].innerHTML = highlightMatches(ev.tap || '—');
+      if (cells[3]) cells[3].innerHTML = highlightMatches(ev.manager || '—');
+    }
+  });
+}
+
+function renderAll() {
+  document.getElementById('projectNameLabel').textContent = window.panoramaBridge.projectName || '(proyecto sin nombre)';
+  document.getElementById('threshold').value = state.threshold;
+  renderPuestos();
+  renderEvaluaciones();
+  renderResultados();
+}
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function escapeAttr(s) { return escapeHtml(s); }
+
+// v0.1.80: renderizado "enriquecido" de la guía de una tarea para la vista
+// de solo lectura en Evaluaciones — el campo sigue siendo texto libre (no
+// se toca el modelo de datos ni lo que ya se pegó en Puestos), pero aquí se
+// reconocen líneas que empiezan por "- " como lista con viñetas, y líneas
+// cortas acabadas en ":" (sin acabar en . ? !) como mini-titular — el resto
+// son párrafos sueltos. Todo el texto pasa por escapeHtml antes de montar
+// las etiquetas, para que no se pueda inyectar HTML desde el propio texto.
+function renderGuideRich(text) {
+  const lineas = String(text || '').split(/\r?\n/);
+  const bloques = [];
+  let listaActual = null;
+  lineas.forEach(raw => {
+    const linea = raw.trim();
+    if (!linea) { listaActual = null; return; }
+    if (/^[-•]\s+/.test(linea)) {
+      const item = linea.replace(/^[-•]\s+/, '');
+      if (!listaActual) { listaActual = []; bloques.push({ tipo: 'lista', items: listaActual }); }
+      listaActual.push(item);
+    } else {
+      listaActual = null;
+      const esTitular = linea.length <= 70 && /:$/.test(linea) && !/[.?!]$/.test(linea);
+      bloques.push({ tipo: esTitular ? 'titular' : 'parrafo', texto: linea });
+    }
+  });
+  return bloques.map(b => {
+    if (b.tipo === 'lista') return `<ul>${b.items.map(i => `<li>${escapeHtml(i)}</li>`).join('')}</ul>`;
+    if (b.tipo === 'titular') return `<div class="guide-h">${escapeHtml(b.texto)}</div>`;
+    return `<p>${escapeHtml(b.texto)}</p>`;
+  }).join('');
+}
+
+// v0.1.81 — actualiza en caliente el aviso "Por debajo del mínimo" del
+// campo Años de experiencia sin reconstruir toda la tarjeta (ver por qué en
+// el listener de 'ev-field' más abajo). inputEl es el propio <input
+// type=number>, cuyo .field contenedor es donde vive (o debe vivir) el
+// <div class="min-warning">.
+function updateAniosWarning(inputEl, ev) {
+  const puesto = puestoById(ev.puestoId);
+  const field = inputEl.closest('.field');
+  if (!field) return;
+  let warn = field.querySelector('.min-warning');
+  const show = !!(puesto && puesto.aniosMinimos !== '' && puesto.aniosMinimos != null &&
+    ev.aniosExperiencia !== '' && ev.aniosExperiencia != null &&
+    Number(ev.aniosExperiencia) < Number(puesto.aniosMinimos));
+  if (show && !warn) {
+    warn = document.createElement('div');
+    warn.className = 'min-warning';
+    warn.textContent = '⚠ Por debajo del mínimo';
+    field.appendChild(warn);
+  } else if (!show && warn) {
+    warn.remove();
+  }
+}
+
+// ---------- Eventos ----------
+// v0.1.89: aplica el filtro a las 3 pestañas de golpe y muestra/oculta
+// el botón "×" de borrar según si hay texto — un único punto para no
+// repetir las 3 llamadas + el toggle del botón en cada sitio que toca
+// tocar la búsqueda (escribir, borrar con la ×, cambiar de pestaña).
+function applyAllSearchFilters() {
+  applyPuestosFilter();
+  applyEvalFilter();
+  applyResultadosFilter();
+  document.getElementById('btnClearSearch').hidden = !searchQuery;
+}
+
+// v0.1.89: vacía el cuadro de búsqueda y su estado — se usa al pulsar
+// la "×" y al cambiar de pestaña (el usuario pidió que la búsqueda NO
+// se arrastre de una pestaña a otra, para no confundir con resultados
+// de una búsqueda que ya no pintan nada en la pestaña nueva).
+function clearSearch() {
+  document.getElementById('searchBox').value = '';
+  searchQuery = '';
+  applyAllSearchFilters();
+}
+
+document.querySelectorAll('nav.tabs button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('nav.tabs button').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tabpanel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    // v0.1.89: la búsqueda se vacía al cambiar de pestaña — antes se
+    // quedaba con el texto de la pestaña anterior, y como cada pestaña
+    // busca en campos distintos, ese texto "heredado" no pintaba nada
+    // en la pestaña nueva y parecía que la búsqueda estaba rota.
+    clearSearch();
+    if (btn.dataset.tab === 'resultados') renderResultados();
+    // v0.1.78: refresca también al entrar en Evaluaciones, para que una
+    // guía (o un nombre/peso de tarea) recién editada en Puestos se vea
+    // correcta sin tener que tocar nada más — antes solo se refrescaba
+    // como efecto colateral de otras acciones.
+    if (btn.dataset.tab === 'evaluaciones') renderEvaluaciones();
+  });
+});
+
+document.getElementById('threshold').addEventListener('input', e => {
+  if (!mutacionesPermitidas()) return;   // A3.3/Bloque 4
+  const v = parseFloat(e.target.value);
+  state.threshold = isNaN(v) ? 3.5 : v;
+  saveState(); renderEvaluaciones(); renderResultados();
+});
+
+// v0.1.86: buscador de texto plano, fijo en la cabecera, visible en las
+// 3 pestañas — filtra cada pestaña con su propio contenido (Puestos,
+// Evaluaciones y Resultados), sin necesitar pulsar nada más.
+document.getElementById('searchBox').addEventListener('input', e => {
+  // v0.1.87: mismo normalizeSearchText que usa matchesSearch, para que
+  // "tecnico" (sin tilde) encuentre "Técnico" (con tilde) — antes se
+  // comparaba con .toLowerCase() a secas y una tilde de diferencia
+  // dejaba la búsqueda sin ningún resultado.
+  searchQuery = normalizeSearchText(e.target.value.trim());
+  applyAllSearchFilters();
+});
+
+// v0.1.89: botón "×" para borrar el texto de un solo clic, sin tener
+// que seleccionar todo y darle a Suprimir.
+document.getElementById('btnClearSearch').addEventListener('click', () => {
+  clearSearch();
+  document.getElementById('searchBox').focus();
+});
+
+// v0.1.86: cierra esta ventana (equivalente a la X nativa) — el guardado
+// pendiente ya se cubre con el listener de beforeunload existente, que
+// se dispara igual venga la orden de cerrar de aquí o de la X.
+document.getElementById('btnSalir').addEventListener('click', () => {
+  window.close();
+});
+
+document.getElementById('btnAddPuesto').addEventListener('click', () => {
+  if (!mutacionesPermitidas()) return;   // A3.3/Bloque 4
+  askText('Nuevo puesto', 'Escribe el nombre del puesto — el bloque se crea al momento.', 'Ej: Consultora SAP MM', (name) => {
+    const id = uid();
+    state.puestos.push({ id, name, tasks: [], formacionMinima: '', aniosMinimos: '', sbaReferencia: '' });
+    // v0.1.83: un puesto recién creado arranca con sus tareas
+    // "desplegadas" — no tiene ninguna todavía, pero así, en cuanto se le
+    // añada la primera con "+ Añadir tarea", se ve al momento sin tener
+    // que pulsar "Ver tareas" aparte.
+    expandedPuestoIds.add(id);
+    saveState(true); renderPuestos(); renderEvaluaciones();
+  });
+});
+
+document.getElementById('btnAddEval').addEventListener('click', () => {
+  if (!mutacionesPermitidas()) return;   // A3.3/Bloque 4
+  if (state.puestos.length === 0) {
+    askConfirm('Todavía no hay puestos', 'Crea primero al menos un puesto en la pestaña Puestos. ¿Quieres ir allí ahora?', () => {
+      document.querySelector('nav.tabs button[data-tab="puestos"]').click();
+    });
+    return;
+  }
+  askText('Nueva evaluación', 'Escribe el nombre del candidato — el bloque se crea al momento.', 'Ej: Marta Gómez López', (name) => {
+    state.evaluaciones.push({
+      id: uid(), candidato: name, puestoId: '', tap: '', manager: '', entrevistador: '', telefono: '', fecha: '',
+      formacion: '', aniosExperiencia: '', sba: '',
+      cvFileName: null, cvStoredName: null, notas: {}, feedbackEdited: null,
+    });
+    saveState(true); renderEvaluaciones(); renderResultados();
+  });
+});
+
+document.getElementById('puestosList').addEventListener('click', e => {
+  const t = e.target;
+  const action = t.dataset.action;
+  if (!accionPermitida(action)) return;   // A3.3/Bloque 4: sesion detenida
+  if (action === 'add-task') {
+    askText('Nueva tarea', 'Escribe el nombre de la tarea — luego ajustas su peso (0 a 5, según su importancia).', 'Ej: Soporte post-arranque', (name) => {
+      const puesto = puestoById(t.dataset.puesto);
+      puesto.tasks.push({ id: uid(), name, weight: 0, guide: '' });
+      // v0.1.83: al añadir una tarea, ese puesto se despliega si no lo
+      // estaba ya — para ver al momento la tarea recién creada, en vez de
+      // que se quede oculta detrás de "Ver tareas".
+      expandedPuestoIds.add(puesto.id);
+      saveState(true); renderPuestos(); renderEvaluaciones();
+    });
+  } else if (action === 'del-task') {
+    askConfirm('Eliminar tarea', '¿Seguro que quieres eliminar esta tarea? Las evaluaciones que ya la tenían puntuada perderán esa nota.', () => {
+      const puesto = puestoById(t.dataset.puesto);
+      puesto.tasks = puesto.tasks.filter(tk => tk.id !== t.dataset.task);
+      saveState(true); renderPuestos(); renderEvaluaciones();
+    });
+  } else if (action === 'del-puesto') {
+    const puesto = puestoById(t.dataset.id);
+    const afectadas = state.evaluaciones.filter(ev => ev.puestoId === puesto.id).length;
+    const extra = afectadas > 0 ? ` Tiene ${afectadas} evaluación(es) asociada(s); si lo eliminas, esas evaluaciones se quedarán sin puesto asignado.` : '';
+    askConfirm('Eliminar puesto', `¿Seguro que quieres eliminar "${puesto.name}"?${extra}`, () => {
+      state.evaluaciones.forEach(ev => { if (ev.puestoId === puesto.id) { ev.puestoId = ''; ev.notas = {}; } });
+      state.puestos = state.puestos.filter(p => p.id !== puesto.id);
+      saveState(true); renderPuestos(); renderEvaluaciones(); renderResultados();
+    });
+  } else if (action === 'toggle-puesto-tasks') {
+    // v0.1.83: mismo patrón que "Ver tareas"/"Ocultar tareas" de
+    // Evaluaciones (0.1.82), aquí para la tabla de tareas de un puesto.
+    // DOM directo, sin renderPuestos(), para no perder lo que se
+    // estuviera editando en otro campo de la misma tarjeta.
+    const id = t.dataset.id;
+    const wrap = document.querySelector(`.puesto-tasks-wrap[data-id="${id}"]`);
+    if (!wrap) return;
+    const willExpand = wrap.hidden;
+    wrap.hidden = !willExpand;
+    if (willExpand) expandedPuestoIds.add(id); else expandedPuestoIds.delete(id);
+    t.textContent = willExpand ? 'Ocultar tareas' : 'Ver tareas';
+  } else if (action === 'edit-puesto-name') {
+    // v0.1.88: el lápiz abre la edición del nombre (antes el input ya
+    // estaba siempre editable) — actualización dirigida, solo el
+    // bloque del nombre de esta tarjeta.
+    const puesto = puestoById(t.dataset.id);
+    if (!puesto) return;
+    editingPuestoNameId = puesto.id;
+    refreshPuestoNameWrap(puesto);
+  } else if (action === 'save-puesto-name') {
+    const puesto = puestoById(t.dataset.id);
+    if (!puesto) return;
+    const card = document.querySelector(`.card[data-puesto-card="${puesto.id}"]`);
+    const input = card ? card.querySelector('.name-edit-input') : null;
+    const val = input ? input.value.trim() : '';
+    if (val) { puesto.name = val; saveState(true); }
+    editingPuestoNameId = null;
+    refreshPuestoNameWrap(puesto);
+    applyPuestosFilter();
+  } else if (action === 'cancel-puesto-name') {
+    const puesto = puestoById(t.dataset.id);
+    if (!puesto) return;
+    editingPuestoNameId = null;
+    refreshPuestoNameWrap(puesto);
+  }
+});
+
+// v0.1.88: Enter acepta el nombre en edición, Escape lo cancela — para
+// no depender solo de pulsar los botones ✓/✕ con el ratón.
+document.getElementById('puestosList').addEventListener('keydown', e => {
+  if (!e.target.classList.contains('name-edit-input')) return;
+  const puesto = puestoById(e.target.dataset.puesto);
+  if (!puesto) return;
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    // A3.3/Bloque 4: este manejador NO pasa por el listener de `click` de
+    // puestosList, así que necesita su propia guarda. Sin ella, Enter cambiaba
+    // `puesto.name` en memoria con la sesión detenida y el cambio se perdía al
+    // cerrar. Escape sigue permitido: solo cancela la edición, no toca datos.
+    if (!mutacionesPermitidas()) return;
+    const val = e.target.value.trim();
+    if (val) { puesto.name = val; saveState(true); }
+    editingPuestoNameId = null;
+    refreshPuestoNameWrap(puesto);
+    applyPuestosFilter();
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    editingPuestoNameId = null;
+    refreshPuestoNameWrap(puesto);
+  }
+});
+
+document.getElementById('puestosList').addEventListener('input', e => {
+  const t = e.target;
+  const action = t.dataset.action;
+  if (!accionPermitida(action)) return;   // A3.3/Bloque 4: sesion detenida
+  if (action === 'task-name' || action === 'task-weight' || action === 'task-guide') {
+    const puesto = puestoById(t.dataset.puesto);
+    const task = puesto.tasks.find(tk => tk.id === t.dataset.task);
+    if (action === 'task-name') task.name = t.value;
+    else if (action === 'task-guide') task.guide = t.value;
+    else task.weight = Math.max(0, Math.min(5, Number(t.value) || 0));
+    saveState();
+    if (action === 'task-weight') { renderPuestos(); renderEvaluaciones(); }
+  } else if (action === 'puesto-field') {
+    // v0.1.80: Formación mínima / Años mínimos del puesto (piden del pliego).
+    // Se refleja junto al campo del candidato en Evaluaciones — como ese
+    // refresco ya ocurre solo al entrar en esa pestaña (ver v0.1.78), aquí
+    // basta con guardar, sin forzar un re-render en cada tecla.
+    const puesto = puestoById(t.dataset.puesto);
+    puesto[t.dataset.field] = t.value;
+    saveState();
+  }
+});
+
+document.getElementById('evalList').addEventListener('click', e => {
+  const t = e.target;
+  const action = t.dataset.action;
+  if (!accionPermitida(action)) return;   // A3.3/Bloque 4: sesion detenida
+  if (action === 'del-eval') {
+    const ev = state.evaluaciones.find(x => x.id === t.dataset.id);
+    askConfirm('Eliminar evaluación', `¿Seguro que quieres eliminar la evaluación de "${ev.candidato || '(sin nombre)'}"? Esta acción no se puede deshacer.`, () => {
+      state.evaluaciones = state.evaluaciones.filter(x => x.id !== t.dataset.id);
+      saveState(true); renderEvaluaciones(); renderResultados();
+    });
+  } else if (action === 'export-eval') {
+    const ev = state.evaluaciones.find(x => x.id === t.dataset.id);
+    const text = buildCandidateReportText(ev);
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const safeName = (ev.candidato || 'candidato').trim().replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '') || 'candidato';
+    a.href = url; a.download = `evaluacion_${safeName}.txt`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  } else if (action === 'copy-feedback') {
+    const ta = document.querySelector(`textarea[data-action="ev-feedback"][data-id="${t.dataset.id}"]`);
+    const note = document.getElementById('copyNote-' + t.dataset.id);
+    const text = ta.value;
+    const done = () => { note.textContent = '✓ Copiado'; setTimeout(() => note.textContent = '', 1800); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(() => { ta.select(); note.textContent = 'Selecciona y pulsa Ctrl+C'; });
+    } else { ta.select(); note.textContent = 'Selecciona y pulsa Ctrl+C'; }
+  } else if (action === 'reset-feedback') {
+    const ev = state.evaluaciones.find(x => x.id === t.dataset.id);
+    ev.feedbackEdited = null;
+    saveState(true); renderEvaluaciones();
+  } else if (action === 'adjuntar-cv' || action === 'cambiar-cv') {
+    // A3.3/Bloque 4: la guarda va ANTES del IPC. Adjuntar copia un archivo a
+    // disco y luego guarda el estado; si el estado ya no se puede guardar,
+    // quedaría un CV huérfano que nada referencia.
+    if (!mutacionesPermitidas()) return;
+    const ev = state.evaluaciones.find(x => x.id === t.dataset.id);
+    // A3.3/BLOQUE 5 — D4b. El nuevo se copia PRIMERO, con nonce, y el viejo no
+    // se toca (main.js ya no lo borra al elegir). Solo se retira el viejo
+    // cuando el estado queda confirmado Y verificado.
+    window.panoramaBridge.pickCandidateCv(ev.id).then(async res => {
+      if (!res || res.canceled) return;
+      if (!res.ok) { showError(res.error || 'No se pudo adjuntar el CV.'); return; }
+      const viejoStored = ev.cvStoredName || null;
+      const viejoName = ev.cvFileName || null;
+      ev.cvFileName = res.fileName;
+      ev.cvStoredName = res.storedName;
+      const g = await saveState(true);
+      renderEvaluaciones();
+      if (!g || g.aplicado !== true) {
+        // No aplicado: se vuelve al viejo (que sigue intacto) y se retira el
+        // nuevo, que nada referencia.
+        ev.cvFileName = viejoName; ev.cvStoredName = viejoStored;
+        renderEvaluaciones();
+        window.panoramaBridge.removeCandidateCv(res.storedName).catch(() => {});
+        return;
+      }
+      if (g.verificado === false) {
+        // Aplicado sin verificar: QUEDAN LOS DOS. No se destruye nada.
+        showToast('CV adjuntado — hay que reiniciar');
+        return;
+      }
+      if (viejoStored && viejoStored !== res.storedName) {
+        window.panoramaBridge.removeCandidateCv(viejoStored).catch(() => {});
+      }
+      showToast('CV adjuntado');
+    }).catch(e => showError('No se pudo adjuntar el CV: ' + ((e && e.message) || String(e))));
+  } else if (action === 'ver-cv') {
+    const ev = state.evaluaciones.find(x => x.id === t.dataset.id);
+    if (!ev.cvStoredName) return;
+    window.panoramaBridge.openCandidateCv(ev.cvStoredName).then(res => {
+      if (!res || !res.ok) showError((res && res.error) || 'No se pudo abrir el CV.');
+    }).catch(e => showError('No se pudo abrir el CV: ' + ((e && e.message) || String(e))));
+  } else if (action === 'quitar-cv') {
+    // A3.3/Bloque 4: EL CASO GRAVE. `saveState(true)` sería un no-op con la
+    // sesión detenida, pero `removeCandidateCv()` SÍ borra el archivo físico:
+    // quedaría un estado.json confirmado apuntando a un CV que ya no existe.
+    // Por eso la guarda va antes incluso de preguntar.
+    if (!mutacionesPermitidas()) return;
+    const ev = state.evaluaciones.find(x => x.id === t.dataset.id);
+    askConfirm('Quitar CV', `¿Seguro que quieres quitar el CV adjuntado a "${ev.candidato || '(sin nombre)'}"? El archivo se borrará de la carpeta de backups de este proyecto.`, async () => {
+      // A3.3/BLOQUE 5 — D4a. El archivo se borra SOLO después de que el estado
+      // quede confirmado y verificado. Antes se llamaba a `removeCandidateCv()`
+      // sin esperar a nada: con la sesión detenida `saveState(true)` era un
+      // no-op pero el borrado SÍ ocurría, y quedaba un estado.json confirmado
+      // apuntando a un CV que ya no existía.
+      const storedName = ev.cvStoredName;
+      const fileName = ev.cvFileName;
+      ev.cvFileName = null; ev.cvStoredName = null;
+      const g = await saveState(true);
+      renderEvaluaciones();
+      if (!g || g.aplicado !== true) {
+        // No aplicado: el estado vuelve a referenciar el CV, que sigue en disco.
+        ev.cvFileName = fileName; ev.cvStoredName = storedName;
+        renderEvaluaciones();
+        return;
+      }
+      if (g.verificado === false) {
+        // Aplicado sin verificar: el estado ya no lo referencia, pero el
+        // archivo SE CONSERVA. Se prefiere un huérfano a una pérdida.
+        showToast('CV quitado — hay que reiniciar');
+        return;
+      }
+      if (storedName) window.panoramaBridge.removeCandidateCv(storedName).catch(() => {});
+    });
+  } else if (action === 'toggle-tasks') {
+    // v0.1.82: pliega/despliega la tabla ENTERA de tareas (Tarea/Peso/
+    // Nota/Comentario, con su formato de siempre, sin tocar nada de eso)
+    // de esta evaluación — es lo que pidió el usuario para que la lista
+    // de evaluaciones no se vea tan larga cuando hay varios candidatos.
+    // No confundir con las guías por tarea (eso ya iba bien y no se
+    // toca): esto pliega la sección completa, guías incluidas dentro.
+    // DOM directo, sin renderEvaluaciones(), para no perder nada que se
+    // estuviera editando en otros campos de la misma tarjeta.
+    const id = t.dataset.id;
+    const wrap = document.querySelector(`.eval-tasks-wrap[data-id="${id}"]`);
+    if (!wrap) return;
+    const willExpand = wrap.hidden;
+    wrap.hidden = !willExpand;
+    if (willExpand) expandedEvalIds.add(id); else expandedEvalIds.delete(id);
+    t.textContent = willExpand ? 'Ocultar tareas' : 'Ver tareas';
+  }
+});
+
+document.getElementById('evalList').addEventListener('change', e => {
+  const t = e.target;
+  const action = t.dataset.action;
+  if (!accionPermitida(action)) return;   // A3.3/Bloque 4: sesion detenida
+  if (action === 'ev-puesto') {
+    const ev = state.evaluaciones.find(x => x.id === t.dataset.id);
+    ev.puestoId = t.value; ev.notas = {}; ev.feedbackEdited = null;
+    saveState(true); renderEvaluaciones(); renderResultados();
+  } else if (action === 'ev-nota') {
+    const ev = state.evaluaciones.find(x => x.id === t.dataset.id);
+    if (!ev.notas[t.dataset.task]) ev.notas[t.dataset.task] = {};
+    ev.notas[t.dataset.task].nota = t.value ? Number(t.value) : null;
+    ev.feedbackEdited = null;
+    saveState(true); renderEvaluaciones(); renderResultados();
+  }
+});
+
+document.getElementById('evalList').addEventListener('input', e => {
+  const t = e.target;
+  const action = t.dataset.action;
+  if (!accionPermitida(action)) return;   // A3.3/Bloque 4: sesion detenida
+  const ev = t.dataset.id ? state.evaluaciones.find(x => x.id === t.dataset.id) : null;
+  if (action === 'ev-field') {
+    ev[t.dataset.field] = t.value;
+    saveState();
+    if (t.dataset.field === 'candidato') {
+      const header = t.closest('.card').querySelector('.card-header .name');
+      header.textContent = t.value || '(sin nombre)';
+    } else if (t.dataset.field === 'aniosExperiencia') {
+      // v0.1.81 — fix: antes el aviso "Por debajo del mínimo" solo se
+      // recalculaba si algo más forzaba un renderEvaluaciones() completo
+      // (cambiar de pestaña, tocar el peso de una tarea…), así que escribir
+      // los años en caliente no lo actualizaba. No se puede llamar aquí a
+      // renderEvaluaciones() a secas: eso reconstruye TODO el HTML de la
+      // pestaña mientras el usuario sigue escribiendo en este mismo campo
+      // number, y le hace perder el foco a media cifra. En vez de eso, se
+      // actualiza solo el aviso de esta tarjeta con DOM directo.
+      updateAniosWarning(t, ev);
+    }
+  } else if (action === 'ev-comentario') {
+    if (!ev.notas[t.dataset.task]) ev.notas[t.dataset.task] = {};
+    ev.notas[t.dataset.task].comentario = t.value;
+    ev.feedbackEdited = null;
+    saveState();
+    const ta = t.closest('.card-body').querySelector('textarea[data-action="ev-feedback"]');
+    if (ta) ta.value = feedbackDraft(ev);
+  } else if (action === 'ev-feedback') {
+    ev.feedbackEdited = t.value;
+    saveState();
+  }
+});
+
+document.getElementById('btnExportJson').addEventListener('click', () => {
+  const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const safe = (window.panoramaBridge.projectName || 'evaluacion').replace(/[^a-z0-9]+/gi, '_');
+  a.href = url; a.download = `evaluacion_candidatos_${safe}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+});
+
+document.getElementById('fileImport').addEventListener('change', e => {
+  if (!mutacionesPermitidas()) { e.target.value = ''; return; }   // A3.3/Bloque 4
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const parsed = JSON.parse(reader.result);
+      if (!parsed || !Array.isArray(parsed.puestos) || !Array.isArray(parsed.evaluaciones)) throw new Error('formato inválido');
+      askConfirm('Importar datos', 'Esto reemplaza todos los datos actuales de este proyecto por los del archivo. ¿Continuar?', () => {
+        state = parsed;
+        if (typeof state.threshold !== 'number') state.threshold = 3.5;
+        saveState(true); renderAll();
+      });
+    } catch (err) {
+      askConfirm('Archivo no válido', 'El archivo no tiene un formato válido para importar.', () => {});
+    }
+    e.target.value = '';
+  };
+  reader.readAsText(file);
+});
+
+function csvEscape(v) {
+  const s = String(v == null ? '' : v);
+  return /[",\n;]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+document.getElementById('btnExportCsv').addEventListener('click', () => {
+  const header = ['Candidato', 'Puesto', 'TAP', 'Manager', 'Entrevistador', 'Teléfono', 'Fecha', 'Nota final', 'Veredicto'];
+  const rows = sortedEvaluacionesByFecha().map(ev => {
+    const st = evalStatus(ev);
+    const puesto = puestoById(ev.puestoId);
+    return [
+      ev.candidato || '', puesto ? puesto.name : '', ev.tap || '', ev.manager || '', ev.entrevistador || '', ev.telefono || '',
+      ev.fecha ? formatDateEs(ev.fecha) : '',
+      st.state === 'completo' ? st.score.toFixed(1) : '',
+      st.state === 'completo' ? st.verdict : 'Pendiente',
+    ];
+  });
+  const csv = [header, ...rows].map(r => r.map(csvEscape).join(';')).join('\r\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const safe = (window.panoramaBridge.projectName || 'evaluacion').replace(/[^a-z0-9]+/gi, '_');
+  a.href = url; a.download = `resultados_${safe}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+});
+
+// v0.1.77: atajo "N entrevista(s) pendiente(s)" desde la tarjeta del
+// launcher — cambia a la pestaña Evaluaciones, sea al arrancar (ventana
+// nueva, ver panoramaBridge.initialTab) o en caliente si la ventana ya
+// estaba abierta (main.js manda el IPC candidateEval:focusEvaluaciones).
+function focusEvaluacionesTab() {
+  const btn = document.querySelector('nav.tabs button[data-tab="evaluaciones"]');
+  if (btn) btn.click();
+}
+if (window.panoramaBridge.onFocusEvaluaciones) {
+  window.panoramaBridge.onFocusEvaluaciones(focusEvaluacionesTab);
+}
+
+(async function init() {
+  // v2.0.44: vuelve a seguir el tema visual global -- ver el comentario
+  // grande junto al <title> más arriba (causa real del fallo de 2.0.27
+  // corregida con --navy-ink/--teal-ink/--red-tx-ink en vendor/theme.js,
+  // no un reintento a ciegas). Se aplica lo antes posible, igual que hace
+  // dashboard/directorio, para no pintar un primer frame con el blanco fijo
+  // de siempre y luego "saltar" al tema real guardado.
+  await initGlobalTheme();
+  await loadState();
+  renderAll();
+  if (window.panoramaBridge.initialTab === 'evaluaciones') focusEvaluacionesTab();
+  document.getElementById('loadingScreen').remove();
+})();
+</script>
+<script>
+// v2.0.16 — barra de título propia (ver el <style> de arriba). Nuevo en
+// esta versión, no toca nada de lo que había antes.
+(function(){
+  const tbTitle = document.querySelector('#titlebar .tb-title');
+  if (tbTitle && window.panoramaBridge && window.panoramaBridge.projectName) {
+    tbTitle.textContent = 'Evaluación de Candidatos — ' + window.panoramaBridge.projectName;
+  }
+  if (window.winControls) {
+    const btnMin = document.getElementById('tb-minimize');
+    const btnMax = document.getElementById('tb-maximize');
+    const btnClose = document.getElementById('tb-close');
+    const titlebar = document.getElementById('titlebar');
+    btnMin.addEventListener('click', () => window.winControls.minimize());
+    btnMax.addEventListener('click', () => window.winControls.toggleMaximize());
+    btnClose.addEventListener('click', () => window.winControls.close());
+    titlebar.addEventListener('dblclick', (e) => {
+      if (e.target.closest('.win-controls')) return;
+      window.winControls.toggleMaximize();
+    });
+    function setMaximizedIcon(isMax) {
+      btnMax.textContent = isMax ? '❐' : '▢';
+      btnMax.title = isMax ? 'Restaurar' : 'Maximizar';
+    }
+    window.winControls.isMaximized().then(setMaximizedIcon).catch(() => {});
+    window.winControls.onMaximizedChanged(setMaximizedIcon);
+  }
+})();
+
+// v2.0.30 — FASE 4: atajos de teclado. Esta ventana nunca tuvo menú propio
+// (ver openCandidateEvalWindow en main.js), así que no hay acelerador nativo
+// que reimplementar -- se añaden a mano, mismo patrón que el Ctrl+N del
+// launcher (launcher/renderer.js). Ctrl+1/2/3 reutilizan el propio botón de
+// pestaña vía .click() (mismo mecanismo que ya usaba el código existente en
+// focusEvaluaciones e initTabs, líneas más arriba) en vez de duplicar la
+// lógica de cambio de pestaña.
+document.addEventListener('keydown', (e) => {
+  if (!(e.ctrlKey || e.metaKey)) return;
+  if (e.key === 'w' || e.key === 'W') {
+    e.preventDefault();
+    if (window.winControls) window.winControls.close();
+    return;
+  }
+  const tabByDigit = { '1': 'puestos', '2': 'evaluaciones', '3': 'resultados' };
+  if (tabByDigit[e.key]) {
+    e.preventDefault();
+    const btn = document.querySelector(`nav.tabs button[data-tab="${tabByDigit[e.key]}"]`);
+    if (btn) btn.click();
+  }
+});
+</script>
+</body>
+</html>

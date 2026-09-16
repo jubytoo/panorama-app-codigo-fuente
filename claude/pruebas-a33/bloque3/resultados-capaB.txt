@@ -1,0 +1,97 @@
+﻿RUTAS DE PRUEBA
+  raiz:                C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque3-PRUEBAS
+  ubicacion real det.: (no configurada / no legible)
+  carpeta por defecto: C:\Users\admin.jlopezr\AppData\Roaming\panorama-app
+
+=== EXC. EXCLUSIVA DE OPERACION ===
+  OK    EXC-0) sin exclusiva, estadoExclusiva() es null
+  OK    EXC-1) tomarExclusiva devuelve token y etiqueta
+  OK       estadoExclusiva() la refleja
+  OK    EXC-2) una segunda toma lanza "ocupado"
+  OK    EXC-3) run() sin token lanza "ocupado"
+  OK       y NO escribe nada
+  OK       el error dice QUE operacion bloquea
+  OK    EXC-4) vacuum() sin token tambien queda fuera
+  OK       y el archivo sigue igual
+  OK    EXC-5) get() sigue funcionando durante la exclusiva
+  OK       all() tambien
+  OK    EXC-6) escribirMultiple CON token si escribe
+  OK       la fila esta en la BD
+  OK       y el archivo de disco cambio
+  OK    EXC-7) un token ajeno NO entra
+  OK       P0 sigue ahi
+  OK    EXC-8) soltarExclusiva con token ajeno NO la suelta
+  OK    EXC-9) soltarExclusiva con el token correcto
+  OK       estadoExclusiva() vuelve a null
+  OK       soltar otra vez es inocuo
+  OK    EXC-10) tras soltarla, run() vuelve a funcionar
+  OK    EXC-11) un latch irreversible gana INCLUSO con el token
+
+=== XCB. exigirCommitBase — los 5 estados RAM/disco ===
+  OK    XCB-1) RAM X / disco X -> confirma
+  OK       el commit avanzo
+  OK       el .gen apunta al commit nuevo y su padre es X
+  OK       integrity_check ok / disco valido
+  OK    XCB-2) el "otro equipo" publico Y descendiente de X
+  OK       se RECHAZA con base-cambiada
+  OK       el error identifica la recarga como motivo
+  OK       CERO ESCRITURA: el .sqlite3 es identico
+  OK       CERO ESCRITURA: el .gen es identico
+  OK       NO se adopto: la memoria sigue en X
+  OK       no se latcheo nada
+  OK       sin exigirCommitBase el comportamiento anterior SE CONSERVA (adopta)
+  OK    XCB-3) sibling -> conflicto (no base-cambiada)
+  OK       CERO ESCRITURA
+  OK       queda latcheado como conflicto
+  OK    XCB-4) caso 8 -> conflicto
+  OK       CERO ESCRITURA
+  OK       la fila del otro equipo sigue en disco
+  OK    XCB-5) disco no verificable -> lanza sin escribir
+  OK       se identifica como no verificable
+  OK       la "carpeta impostora" sigue vacia (no se escribio dentro)
+  OK       el .gen no cambio
+
+=== POST. `commit` dentro de ErrorDb(io-tras-confirmar) ===
+  OK    POST-1) el fallo posterior a confirmar da io-tras-confirmar
+  OK       aplicado === true
+  OK       el error LLEVA el commit confirmado
+  OK       el latch queda en desincronizada
+  OK       el cambio SI esta en el archivo de disco
+  OK       y el commit del archivo es EXACTAMENTE el del error
+
+=== CB. alCambiarImagenEnMemoria — TODOS los caminos ===
+  OK    CB-1) apertura de una BD con identidad -> 1 aviso
+  OK       motivo "apertura"
+  OK       de=null, a=X
+  OK    CB-2) una creacion nueva avisa con motivo "bootstrap"
+  OK       de=null (no habia imagen), a=commit raiz
+  OK       la "apertura" NO avisa (cMem seguia siendo null)
+  OK    CB-3) un run() normal avisa una vez
+  OK       motivo "commit-propio"
+  OK       de=X, a=commit nuevo
+  OK    CB-4) la adopcion silenciosa SI avisa
+  OK       de=X, a=Y
+  OK       y despues llega el commit propio
+  OK    CB-5) el fallo PRE-confirmacion da io con aplicado:false
+  OK       la memoria volvio a X
+  OK       restaurarUltimaImagenConfirmada() NO avisa (el commit no cambio)
+  OK       la fila descartada no esta en memoria
+  OK    CB-6) la adopcion fallida lanza
+  OK       la BD legada NO se toco
+  OK       NO hay ningun aviso (cMem nunca cambio de null)
+  OK    CB-7) alCambiarImagenEnMemoria(null) lo desinstala
+  OK    CB-8) un callback que lanza no rompe el run()
+  OK       la fila se guardo igualmente
+  OK    CB-9) _resetParaPruebas suelta la exclusiva
+  OK       y quita el callback (no hay avisos acumulados)
+
+=== PRODUCCION NO TOCADA ===
+  OK    la huella de produccion es IDENTICA antes y despues
+    C:\Users\admin.jlopezr\AppData\Roaming\panorama-app\panorama.sqlite3
+      antes:   f71f4140e7fd68504cbf65c1d930bc4a244554d7bfb013a70557a30ccf74f501 (57344 B)
+      despues: f71f4140e7fd68504cbf65c1d930bc4a244554d7bfb013a70557a30ccf74f501 (57344 B)
+
+==================================================================
+  BLOQUE 3 / CAPA B — primitivas de db.js: 75 OK, 0 FALLOS
+==================================================================
+  carpetas de prueba borradas: true

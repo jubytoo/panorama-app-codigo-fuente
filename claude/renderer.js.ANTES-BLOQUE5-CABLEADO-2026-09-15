@@ -1,0 +1,780 @@
+const gridEl = document.getElementById('grid');
+const emptyEl = document.getElementById('empty');
+const statusEl = document.getElementById('status');
+const backdrop = document.getElementById('modal-backdrop');
+const inputName = document.getElementById('input-name');
+const inputClient = document.getElementById('input-client');
+const inputStart = document.getElementById('input-start');
+const inputJson = document.getElementById('input-json');
+const inputJsonBtn = document.getElementById('input-json-btn');
+const inputJsonName = document.getElementById('input-json-name');
+const inputJsonClear = document.getElementById('input-json-clear');
+const inputNameLabel = document.getElementById('input-name-label');
+const inputStartLabel = document.getElementById('input-start-label');
+const modalError = document.getElementById('modal-error');
+const modalCreateBtn = document.getElementById('modal-create');
+
+function setStatus(msg) {
+  statusEl.textContent = msg || '';
+}
+
+function fmtDateTime(iso) {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString('es-ES', { dateStyle: 'medium', timeStyle: 'short' });
+  } catch (e) {
+    return iso;
+  }
+}
+
+// Semáforo de urgencia (v0.1.26): 'rojo'|'naranja'|'amarillo'|null, ya
+// calculado en main.js (ver computeProjectSemaforo) a partir del último
+// backup de cada proyecto — aquí solo se traduce a una clase CSS.
+const SEMAFORO_CLASS = {
+  rojo: 'sem-rojo',
+  naranja: 'sem-naranja',
+  amarillo: 'sem-amarillo',
+  'amarillo-claro': 'sem-amarillo-claro', // v0.1.28: cuarto escalón, más pálido
+};
+
+// v0.1.76: "N entrevista(s) pendiente(s)" como texto de color en la propia
+// tarjeta (a petición del usuario, en vez de mezclarlo con los hitos del
+// dashboard — ver pendingInterviewsCount/Level en main.js, calculado a
+// partir del archivo de Evaluación de Candidatos de cada proyecto). Mismos
+// nombres de nivel que el semáforo de arriba, pero como color de TEXTO, no
+// de borde — ver clases .txt-* en index.html.
+const INTERVIEW_TEXT_CLASS = {
+  rojo: 'txt-rojo',
+  naranja: 'txt-naranja',
+  amarillo: 'txt-amarillo',
+  'amarillo-claro': 'txt-amarillo-claro',
+  'proximo-inicio': 'txt-info',
+};
+
+// v2.0.53: bug real reportado -- "cuando pone Staffing IT y Servicio activo
+// está bien alineado, pero cuando pone Staffing IT y Servicio finaliza en
+// X días no está alineado". Las dos líneas de la tarjeta empiezan con un
+// glifo distinto (✓/⚠/📅/🔴/🚀/⏳/🛑) y cada uno se renderiza con un ancho
+// de fuente distinto -- "✓ " es más estrecho que "⏳ ", así que el TEXTO que
+// sigue no arranca en la misma columna de una línea a otra. Envolver el
+// glifo en un <span> de ancho fijo hace que el texto de después siempre
+// empiece en el mismo punto, sea cual sea el icono de esa línea concreta.
+function metaIcon(icon) {
+  return `<span class="meta-icon">${icon}</span>`;
+}
+
+// ------------------------------------------------------------------
+// v2.0.56 — rediseño de tarjeta + vista de lista + resumen de salud de
+// cartera, a partir de tres referencias visuales que trajo el usuario.
+// Los dos "pill" de abajo sustituyen el HTML que antes se montaba a mano
+// dentro de refresh() (misma lógica exacta de niveles/iconos/textos que
+// ya existía desde la 2.0.49-2.0.53 — solo cambia el envoltorio visual de
+// "línea de texto en .meta" a "píldora con tinte", y se comparten entre
+// las 3 vistas en vez de vivir solo en la tarjeta).
+// ------------------------------------------------------------------
+const PILL_LEVEL_CLASS = {
+  rojo: 'pill-rojo',
+  naranja: 'pill-naranja',
+  amarillo: 'pill-amarillo',
+  'amarillo-claro': 'pill-amarillo',
+  'proximo-inicio': 'pill-info',
+};
+function staffingPill(p) {
+  if (p.serviceEndLevel === 'rojo') {
+    return `<span class="pill pill-rojo" data-act="open" data-id="${p.id}" data-clickable title="Servicio finalizado — abrir el proyecto">${metaIcon('🛑')} Servicio finalizado</span>`;
+  }
+  if (p.pendingInterviewsCount > 0) {
+    return `<span class="pill ${PILL_LEVEL_CLASS[p.pendingInterviewsLevel] || 'pill-naranja'}" data-act="openEval" data-id="${p.id}" data-clickable title="Abrir Evaluación de Candidatos">${metaIcon('📅')} ${p.pendingInterviewsCount} ${p.pendingInterviewsCount === 1 ? 'entrevista pendiente' : 'entrevistas pendientes'}</span>`;
+  }
+  if (p.unfilledPositionsCount > 0) {
+    return `<span class="pill pill-rojo" data-act="open" data-id="${p.id}" data-clickable title="Abrir el proyecto">${metaIcon('⚠')} ${p.unfilledPositionsCount} ${p.unfilledPositionsCount === 1 ? 'puesto sin cubrir' : 'puestos sin cubrir'}</span>`;
+  }
+  return `<span class="pill pill-ok" data-act="openEval" data-id="${p.id}" data-clickable title="Abrir Evaluación de Candidatos">${metaIcon('✓')} Staffing IT</span>`;
+}
+function serviceEndPill(p) {
+  if (p.serviceEndLevel) {
+    const icon = p.serviceEndLevel === 'rojo' ? '🔴' : p.serviceEndLevel === 'proximo-inicio' ? '🚀' : '⏳';
+    return `<span class="pill ${PILL_LEVEL_CLASS[p.serviceEndLevel] || 'pill-info'}" title="${escapeHtml(p.serviceEndMessage || '')}">${metaIcon(icon)} ${escapeHtml(p.serviceEndMessage || '')}</span>`;
+  }
+  return `<span class="pill pill-ok">${metaIcon('✓')} Servicio activo</span>`;
+}
+
+// ------------------------------------------------------------------
+// Estado de las 3 vistas (Tarjetas/Lista/Resumen) — se recuerda entre
+// aperturas del lanzador (localStorage, per-usuario/per-máquina, igual
+// que el resto de preferencias solo-de-pantalla de esta app).
+// ------------------------------------------------------------------
+let currentView = 'cards';
+try { currentView = localStorage.getItem('panorama_launcher_view') || 'cards'; } catch (e) { /* localStorage puede fallar en un iframe/sandbox raro -- se queda en 'cards' */ }
+let allProjects = [];
+let selectedListId = null;
+const HEADER_TITLES = {
+  cards: 'Panorama del Servicio — Proyectos',
+  list: 'Panorama del Servicio — Vista de Lista',
+  summary: 'Panorama del Servicio — Resumen de Salud de Cartera',
+};
+function setView(view) {
+  currentView = view;
+  try { localStorage.setItem('panorama_launcher_view', view); } catch (e) { /* ver comentario de arriba */ }
+  document.querySelectorAll('#view-switch button').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
+  gridEl.style.display = view === 'cards' ? '' : 'none';
+  document.getElementById('view-list').style.display = view === 'list' ? 'flex' : 'none';
+  document.getElementById('view-summary').style.display = view === 'summary' ? 'block' : 'none';
+  emptyEl.style.display = (view === 'cards' && allProjects.length === 0) ? 'block' : 'none';
+  const titleEl = document.getElementById('header-title-text');
+  if (titleEl) titleEl.textContent = HEADER_TITLES[view];
+  if (view === 'summary') loadSummary();
+}
+
+// ------------------------------------------------------------------
+// Mini-gráficos propios para el Resumen de Salud de Cartera — mismo
+// patrón de <svg> a mano + <title> nativo que ya usa Directorio de
+// Talento (donutSVG/histogramSVG en plantilla_directorio.html), pero
+// duplicado aquí en vez de compartido: cada ventana de esta app dibuja
+// sus propios gráficos sueltos desde siempre (ver también
+// computeServiceEndWarning, duplicado entre main.js y el dashboard) — no
+// es una regresión de este cambio, es la convención ya establecida.
+// ------------------------------------------------------------------
+function timelineBarSVG(bands, w, h) {
+  w = w || 260; h = h || 90;
+  const padL = 4, padR = 4, padT = 6, padB = 16;
+  const maxVal = Math.max(1, ...bands.map((b) => b.events + b.vacancies));
+  const chartW = w - padL - padR, chartH = h - padT - padB;
+  const bw = chartW / bands.length;
+  let bars = '';
+  bands.forEach((b, i) => {
+    const x = padL + i * bw;
+    let y = padT + chartH;
+    if (b.events > 0) {
+      const hgt = (b.events / maxVal) * chartH;
+      y -= hgt;
+      bars += `<rect x="${x + 3}" y="${y}" width="${Math.max(1, bw - 6)}" height="${hgt}" fill="var(--sem-naranja)" opacity="0.85"><title>${b.from}-${b.to} días: ${b.events} arranque(s)/cierre(s)</title></rect>`;
+    }
+    if (b.vacancies > 0) {
+      const hgt = (b.vacancies / maxVal) * chartH;
+      y -= hgt;
+      bars += `<rect x="${x + 3}" y="${y}" width="${Math.max(1, bw - 6)}" height="${hgt}" fill="var(--red)" opacity="0.85"><title>${b.from}-${b.to} días: ${b.vacancies} vacante(s)</title></rect>`;
+    }
+    bars += `<text x="${x + bw / 2}" y="${h - 4}" text-anchor="middle" font-family="var(--mono)" font-size="8.5" fill="var(--ink-faint)">${b.to}</text>`;
+  });
+  bars += `<line x1="${padL}" y1="${padT + chartH}" x2="${w - padR}" y2="${padT + chartH}" stroke="var(--border)" stroke-width="1"/>`;
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" style="max-width:${w}px">${bars}</svg>`;
+}
+
+async function refresh() {
+  const projects = await window.launcherAPI.listProjects();
+  gridEl.innerHTML = '';
+  emptyEl.style.display = projects.length === 0 ? 'block' : 'none';
+  projects.forEach((p) => {
+    const card = document.createElement('div');
+    card.className = 'card' + (SEMAFORO_CLASS[p.semaforo] ? ' ' + SEMAFORO_CLASS[p.semaforo] : '');
+    card.draggable = true;
+    card.dataset.id = p.id;
+    card.innerHTML = `
+      <h3>${escapeHtml(p.name)}</h3>
+      <div class="client">${escapeHtml(p.client || 'Sin cliente asociado')}</div>
+      <div class="meta">
+        <span>Creado: ${fmtDateTime(p.created_at)}</span>
+        <span>Última actividad: ${fmtDateTime(p.updated_at)}</span>
+        <span><span class="badge">${p.backup_count} backup(s)</span> ${p.last_backup ? '· último ' + fmtDateTime(p.last_backup) : ''}</span>
+        ${
+          // v2.0.49: "Sin entrevistas pendientes" (2.0.48) daba por hecho que
+          // ausencia de entrevistas EN CURSO significaba equipo completo --
+          // pedido explícito del usuario: verificar de VERDAD si hay puestos
+          // abiertos sin ningún candidato apto, no solo si algo está a
+          // medias. Con eso puede haber una vacante totalmente parada (ni
+          // una entrevista concertada) que antes se leía como "todo bien".
+          // Ver computeCandidateTeamCoverage en main.js -- unfilledPositionsCount
+          // es 0 tanto si está todo cubierto como si el proyecto no usa esta
+          // herramienta en absoluto (no hay "puestos" que evaluar). v2.0.50:
+          // ahora suma también las plazas "en búsqueda de candidato" del
+          // equipo del dashboard (state.team[].pendingCandidate) cuando el
+          // servicio ya ha empezado -- por eso el clic ya no abre siempre
+          // Evaluación de Candidatos (esa vacante puede no existir ahí en
+          // absoluto, caso real de MEFPD) sino el propio proyecto, donde el
+          // panel "ESTADO EJECUTIVO" y el botón 🔍 de cada perfil pendiente
+          // ya explican y resuelven el aviso.
+          // v2.0.52: si el servicio ya ha FINALIZADO (serviceEndLevel==='rojo'),
+          // el estado de staffing deja de ser relevante -- "3 puestos sin
+          // cubrir" o "Staffing IT" al lado de un contrato ya cerrado lee
+          // como si aún hubiera algo que resolver. Un aviso de stop
+          // sustituye esta línea entera en vez de calcular nada de equipo.
+          p.serviceEndLevel === 'rojo'
+            ? `<span class="interview-pending txt-rojo" data-act="open" data-id="${p.id}" title="Servicio finalizado — abrir el proyecto">${metaIcon('🛑')} Servicio finalizado</span>`
+            : p.pendingInterviewsCount > 0
+              ? `<span class="interview-pending ${INTERVIEW_TEXT_CLASS[p.pendingInterviewsLevel] || ''}" data-act="openEval" data-id="${p.id}" title="Abrir Evaluación de Candidatos">${metaIcon('📅')} ${p.pendingInterviewsCount} ${p.pendingInterviewsCount === 1 ? 'entrevista pendiente' : 'entrevistas pendientes'}</span>`
+              : p.unfilledPositionsCount > 0
+                ? `<span class="interview-pending txt-rojo" data-act="open" data-id="${p.id}" title="Abrir el proyecto">${metaIcon('⚠')} ${p.unfilledPositionsCount} ${p.unfilledPositionsCount === 1 ? 'puesto sin cubrir' : 'puestos sin cubrir'}</span>`
+                : `<span class="interview-pending txt-ok" data-act="openEval" data-id="${p.id}" title="Abrir Evaluación de Candidatos">${metaIcon('✓')} Staffing IT</span>`
+        }
+        ${p.serviceEndLevel
+          ? `<span class="service-end-warning ${INTERVIEW_TEXT_CLASS[p.serviceEndLevel] || ''}" title="${escapeHtml(p.serviceEndMessage || '')}">${metaIcon(p.serviceEndLevel === 'rojo' ? '🔴' : p.serviceEndLevel === 'proximo-inicio' ? '🚀' : '⏳')} ${escapeHtml(p.serviceEndMessage || '')}</span>`
+          : `<span class="service-end-warning txt-ok">${metaIcon('✓')} Servicio activo</span>`}
+      </div>
+      <div class="actions">
+        <button class="btn small" data-act="open" data-id="${p.id}">Abrir</button>
+        <button class="btn ghost small" data-act="restore" data-id="${p.id}">Restaurar último backup</button>
+        <button class="btn ghost small" data-act="folder" data-id="${p.id}">Ver carpeta de backups</button>
+        <button class="btn ghost small danger" data-act="delete" data-id="${p.id}" data-name="${escapeHtml(p.name)}">Eliminar</button>
+      </div>
+    `;
+    gridEl.appendChild(card);
+  });
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
+gridEl.addEventListener('click', async (e) => {
+  // v0.1.77: el atajo "N entrevista(s) pendiente(s)" es un <span data-act>,
+  // no un <button> — el selector se amplía a cualquier elemento con
+  // data-act para que también lo capture, no solo los botones de acciones.
+  const btn = e.target.closest('[data-act]');
+  if (!btn) return;
+  const id = Number(btn.dataset.id);
+  const act = btn.dataset.act;
+  try {
+    if (act === 'open') {
+      setStatus('Abriendo proyecto…');
+      await window.launcherAPI.openProject(id);
+      setStatus('');
+    } else if (act === 'restore') {
+      const okRestore = await psConfirm('Esto reemplaza los datos actuales del proyecto por los del último backup guardado.', { title:'Restaurar último backup', confirmLabel:'Restaurar' });
+      if (!okRestore) return;
+      setStatus('Restaurando último backup…');
+      await window.launcherAPI.restoreBackup(id, null);
+      setStatus('Backup restaurado y proyecto reabierto.');
+      await refresh();
+    } else if (act === 'folder') {
+      await window.launcherAPI.openBackupsFolder(id);
+    } else if (act === 'delete') {
+      const name = btn.dataset.name || 'este proyecto';
+      const okDelete = await psConfirm(`Se borran todos sus datos, backups y copias guardadas en disco de "${name}". Esta acción no se puede deshacer.`, { title:'Eliminar proyecto', confirmLabel:'Eliminar', danger:true });
+      if (!okDelete) return;
+      setStatus('Eliminando proyecto…');
+      await window.launcherAPI.deleteProject(id);
+      setStatus('Proyecto eliminado.');
+      await refresh();
+    } else if (act === 'openEval') {
+      setStatus('Abriendo Evaluación de Candidatos…');
+      await window.launcherAPI.openCandidateEval(id);
+      setStatus('');
+    }
+  } catch (err) {
+    setStatus('Error: ' + err.message);
+  }
+});
+
+// ------------------------------------------------------------------
+// Arrastrar y soltar para reordenar las tarjetas (v0.1.26). La tarjeta que
+// se arrastra se mueve en vivo dentro de la rejilla siguiendo al cursor
+// (patrón estándar de "reordenar por distancia al centro más cercano" —
+// no hace falta ninguna librería). Al soltar, se persiste el orden final
+// completo con projects:reorder; si falla, se avisa en el pie pero no se
+// deshace el cambio visual (recargar la pantalla lo corrige solo).
+// ------------------------------------------------------------------
+function cardsCurrentOrder() {
+  return [...gridEl.querySelectorAll('.card')].map((c) => c.dataset.id);
+}
+// Devuelve la tarjeta (no la que se arrastra) antes de la cual debería
+// insertarse la tarjeta arrastrada, según qué tarjeta tiene el centro más
+// cercano al cursor y de qué lado de ese centro cae el cursor. `null`
+// significa "al final". `undefined` significa "no cambies nada esta vez"
+// (ver zona muerta más abajo — v0.1.27).
+//
+// v0.1.27: al principio esto decidía "antes/después" con un corte exacto
+// en el centro (x < cx). En la práctica, al pasar el cursor por encima de
+// una tarjeta (sobre todo cerca de su centro), cualquier temblor mínimo
+// del ratón hacía que el lado calculado cambiara de un evento dragover al
+// siguiente, y la tarjeta arrastrada saltaba de un lado a otro sin parar
+// ("parpadea" — reportado por el usuario). Y la esquina superior
+// izquierda era la más difícil de alcanzar porque, al ser la primera
+// tarjeta, ese parpadeo no tenía "otra tarjeta" al otro lado que lo
+// amortiguara. Arreglo de entonces: una franja muerta en el 30% central
+// del ancho de cada tarjeta donde no se decidía nada nuevo.
+//
+// v2.0.36: esa franja del 30% resultó ser DEMASIADO ancha — reportado
+// como "si toca la mitad de la tarjeta ya no permite mover". Con tarjetas
+// de ~270px eso son ~80px de zona muerta, más de un tercio de la tarjeta.
+// Además explicaba el segundo síntoma reportado a la vez ("vertical
+// tampoco mueve"): al arrastrar hacia arriba/abajo entre filas la
+// posición x apenas cambia (se mantiene en la misma columna), así que el
+// cursor entraba directo en esa franja muerta horizontal de la tarjeta
+// destino y nunca llegaba a decidir un lado — el arrastre vertical quedaba
+// bloqueado por el mismo motivo, no por un bug aparte.
+// Se sustituye el 15% de ancho por un margen fijo pequeño (6px) — lo
+// justo para seguir amortiguando el temblor de un pixel o dos del ratón
+// real (el problema que la zona muerta se creó para resolver) sin exigir
+// cruzar un tercio de la tarjeta para que el destino reaccione. No he
+// podido reproducir aquí el jitter de un ratón físico real (mi único
+// medio de simular arrastres es xdotool/CDP, con movimientos limpios) —
+// si con 6px reaparece el parpadeo en tu Windows real, se puede subir un
+// poco, pero este valor es la hipótesis de partida, no algo ya probado a
+// ojo con temblor real.
+function cardToInsertBefore(x, y) {
+  const candidates = [...gridEl.querySelectorAll('.card:not(.dragging)')];
+  let closest = null;
+  let closestDist = Infinity;
+  candidates.forEach((card) => {
+    const box = card.getBoundingClientRect();
+    const cx = box.left + box.width / 2;
+    const cy = box.top + box.height / 2;
+    const dist = Math.hypot(x - cx, y - cy);
+    if (dist < closestDist) {
+      closestDist = dist;
+      closest = { card, box, cx };
+    }
+  });
+  if (!closest) return null;
+  const deadZone = 6; // px fijos (antes: 15% del ancho de la tarjeta)
+  if (x < closest.cx - deadZone) return closest.card;
+  if (x > closest.cx + deadZone) return closest.card.nextElementSibling;
+  return undefined; // dentro de la zona muerta: no tocar el orden actual
+}
+// Declaradas aquí (antes de 'dragstart', que ya las usa para reiniciarlas)
+// aunque el resto de su lógica esté junto al listener de 'dragover' más
+// abajo, donde se explica para qué sirven.
+let dragoverRAF = null;
+let lastDragoverX = null;
+let lastDragoverY = null;
+// v2.0.34: imagen 1x1 transparente reutilizada como "miniatura" de arrastre
+// -- ver el comentario dentro de 'dragstart' para el porqué.
+const dragGhostImg = new Image();
+dragGhostImg.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBTAA7';
+gridEl.addEventListener('dragstart', (e) => {
+  const card = e.target.closest('.card');
+  if (!card) return;
+  card.classList.add('dragging');
+  // Reinicia el último punto procesado: si un arrastre anterior terminó
+  // justo en el mismo punto donde empieza este, no queremos que el primer
+  // 'dragover' de este arrastre se descarte por "coordenadas sin cambios".
+  lastDragoverX = null;
+  lastDragoverY = null;
+  e.dataTransfer.effectAllowed = 'move';
+  // Necesario para que algunos entornos consideren el arrastre "válido" —
+  // el propio dato no se usa, el reordenamiento va todo por el DOM.
+  e.dataTransfer.setData('text/plain', card.dataset.id);
+  // v2.0.34: reportado por el usuario en Windows real -- al pasar la
+  // tarjeta arrastrada por encima de otra, se veía texto superpuesto e
+  // ilegible. Causa: sin `setDragImage`, el navegador genera SOLO una
+  // "miniatura" propia de la tarjeta que sigue al cursor -- una captura a
+  // opacidad TOTAL tomada antes de que la clase 'dragging' (que pone
+  // opacity:.35, ver el CSS) llegue a aplicarse, así que esa miniatura
+  // tapa con texto nítido lo que haya debajo. Es un comportamiento nativo
+  // del navegador, presente desde que existe el arrastre (v0.1.26) -- no
+  // algo introducido ni arreglado por el sistema FLIP de la 2.0.32 (ya
+  // retirado). Con `setDragImage` a una imagen 1x1 transparente, el
+  // navegador no dibuja ninguna miniatura: la única señal visual del
+  // arrastre pasa a ser la propia tarjeta atenuada en su sitio (ya
+  // existía) más el desplazamiento en vivo de las demás -- mismo patrón
+  // que Trello/Notion, sin duplicado flotante que se pueda solapar con
+  // nada.
+  e.dataTransfer.setDragImage(dragGhostImg, 0, 0);
+});
+// El guardado va enganchado a 'dragend', NO a 'drop': 'dragend' SIEMPRE se
+// dispara al terminar el gesto de arrastre (haya soltado sobre un target
+// válido o no), mientras que 'drop' depende de que el navegador reconozca
+// el punto exacto como zona de destino válida — en pruebas reales se vio
+// que 'drop' a veces no llega a dispararse aunque el arrastre visual (el
+// reordenamiento en vivo de 'dragover') sí se complete del todo, dejando
+// la tarjeta movida en pantalla pero sin guardar. Con 'dragend' se guarda
+// siempre lo que se ve en pantalla en ese momento, que es lo correcto.
+gridEl.addEventListener('dragend', async (e) => {
+  const card = e.target.closest('.card');
+  if (card) card.classList.remove('dragging');
+  const orderedIds = cardsCurrentOrder();
+  try {
+    await window.launcherAPI.reorderProjects(orderedIds);
+  } catch (err) {
+    setStatus('No se pudo guardar el nuevo orden: ' + err.message);
+  }
+});
+// requestAnimationFrame limita el reordenamiento en vivo a como mucho una
+// vez por fotograma — 'dragover' puede dispararse muchas más veces que
+// eso mientras el ratón se mueve, y recalcular/mover el DOM en cada uno
+// era la otra mitad del parpadeo reportado (además de la zona muerta de
+// cardToInsertBefore, arriba). `dragoverRAF` evita encolar más de un
+// recálculo pendiente a la vez.
+// v0.1.27, segundo hallazgo: el propio reordenamiento en vivo cambia la
+// posición en pantalla de las tarjetas — y el navegador sigue disparando
+// 'dragover' periódicamente (~cada 350ms, "eventos de repetición") aunque
+// el ratón esté completamente quieto. Justo en los límites entre filas,
+// eso creaba un bucle: se inserta antes de la tarjeta X, lo que mueve X a
+// otra celda, lo que hace que en la SIGUIENTE repetición (con el cursor en
+// el mismo sitio) la tarjeta más cercana ya no sea X sino otra, así que se
+// deshace/rehace sin parar — parpadeo otra vez, pero por repetición del
+// evento en vez de por temblor del ratón. Arreglo: solo recalcular si las
+// coordenadas cambiaron de verdad desde el último 'dragover' procesado.
+gridEl.addEventListener('dragover', (e) => {
+  const dragging = gridEl.querySelector('.card.dragging');
+  if (!dragging) return;
+  e.preventDefault();
+  const x = e.clientX;
+  const y = e.clientY;
+  if (x === lastDragoverX && y === lastDragoverY) return;
+  if (dragoverRAF) return;
+  dragoverRAF = requestAnimationFrame(() => {
+    dragoverRAF = null;
+    lastDragoverX = x;
+    lastDragoverY = y;
+    const target = cardToInsertBefore(x, y);
+    if (target === undefined || target === dragging) return;
+    if (target == null) gridEl.appendChild(dragging);
+    else gridEl.insertBefore(dragging, target);
+  });
+});
+// Sigue haciendo falta escuchar 'drop' y llamar a preventDefault() — sin
+// esto, en algunos casos el navegador intenta su acción por defecto sobre
+// el elemento soltado (p.ej. tratarlo como si fuera un archivo/enlace
+// soltado). El guardado en sí ya no depende de que este evento llegue.
+gridEl.addEventListener('drop', (e) => {
+  e.preventDefault();
+});
+
+// Con un .json elegido, el nombre y la fecha del proyecto salen del propio
+// archivo (lo decide main.js al crear, ver parseAndDecryptImportedProjectJson)
+// — aquí solo se desactivan esos dos campos para que no parezca que lo
+// tecleado ahí se vaya a usar, ya que no es así.
+function setImportMode(active) {
+  inputName.disabled = active;
+  inputStart.disabled = active;
+  inputNameLabel.classList.toggle('disabled', active);
+  inputStartLabel.classList.toggle('disabled', active);
+  inputJsonClear.style.display = active ? '' : 'none';
+  if (active) {
+    inputName.value = '';
+    inputStart.value = '';
+  }
+}
+
+function openNewProjectModal() {
+  inputName.value = '';
+  inputClient.value = '';
+  inputStart.value = '';
+  inputJson.value = '';
+  inputJsonName.textContent = 'Ninguno — se crea vacío';
+  setImportMode(false);
+  modalError.textContent = '';
+  backdrop.classList.add('open');
+  inputName.focus();
+}
+
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('No se ha podido leer el archivo.'));
+    reader.readAsText(file);
+  });
+}
+
+document.getElementById('new-project-btn').addEventListener('click', openNewProjectModal);
+inputJsonBtn.addEventListener('click', () => inputJson.click());
+inputJson.addEventListener('change', () => {
+  const file = inputJson.files[0];
+  inputJsonName.textContent = file ? file.name : 'Ninguno — se crea vacío';
+  setImportMode(!!file);
+});
+inputJsonClear.addEventListener('click', () => {
+  inputJson.value = '';
+  inputJsonName.textContent = 'Ninguno — se crea vacío';
+  setImportMode(false);
+  inputName.focus();
+});
+document.getElementById('directorio-btn').addEventListener('click', async () => {
+  try {
+    setStatus('Abriendo Directorio de Talento…');
+    await window.launcherAPI.openDirectorio();
+    setStatus('');
+  } catch (err) {
+    setStatus('Error: ' + err.message);
+  }
+});
+document.getElementById('quit-btn').addEventListener('click', async () => {
+  const okQuit = await psConfirm('Se cerrarán todas las ventanas de proyecto abiertas.', { title:'¿Salir de Panorama del Servicio?', confirmLabel:'Salir' });
+  if (okQuit) {
+    window.launcherAPI.quitApp();
+  }
+});
+if (window.launcherAPI.onNewProjectRequested) {
+  window.launcherAPI.onNewProjectRequested(openNewProjectModal);
+}
+if (window.launcherAPI.onProjectsChanged) {
+  // Un proyecto se eliminó desde el menú "Proyecto" de su propia ventana
+  // (no desde aquí) — refresca la rejilla para que desaparezca su tarjeta.
+  window.launcherAPI.onProjectsChanged(() => refresh());
+}
+document.getElementById('modal-cancel').addEventListener('click', () => {
+  backdrop.classList.remove('open');
+});
+modalCreateBtn.addEventListener('click', async () => {
+  const file = inputJson.files[0];
+  modalError.textContent = '';
+  // Con un archivo elegido, el nombre (y la fecha) no hacen falta aquí: los
+  // toma main.js del propio archivo. Sin archivo, sigue haciendo falta un
+  // nombre escrito a mano, como siempre.
+  const name = inputName.value.trim();
+  if (!file && !name) {
+    inputName.focus();
+    return;
+  }
+  const client = inputClient.value.trim();
+  const start = inputStart.value || '';
+  let importJson = null;
+  if (file) {
+    try {
+      importJson = await readFileAsText(file);
+    } catch (err) {
+      modalError.textContent = err.message;
+      return;
+    }
+  }
+  modalCreateBtn.disabled = true;
+  try {
+    setStatus(file ? 'Creando proyecto (puede pedirte una contraseña en otra ventana)…' : 'Creando proyecto…');
+    const row = await window.launcherAPI.createProject(name, client, start, importJson);
+    backdrop.classList.remove('open');
+    await window.launcherAPI.openProject(row.id);
+    setStatus('');
+    await refresh();
+  } catch (err) {
+    // El proyecto no llegó a crearse (p.ej. el .json no es válido) — se deja
+    // el modal abierto con el error, en vez de cerrarlo como si hubiera ido
+    // bien, para que se pueda corregir sin volver a escribir todo.
+    setStatus('');
+    modalError.textContent = 'Error: ' + err.message;
+  } finally {
+    modalCreateBtn.disabled = false;
+  }
+});
+
+(async () => {
+  // v2.0.27: tema visual GLOBAL -- se aplica lo antes posible (ver
+  // vendor/theme.js). El launcher no necesita hacer nada extra al cambiar
+  // (no tiene un currentTheme propio que mantener al día, a diferencia de
+  // Dashboard/Directorio, que lo usan para exportar a PPTX).
+  await initGlobalTheme();
+  const info = await window.launcherAPI.dbInfo();
+  document.getElementById('db-path-line').textContent = 'Base de datos: ' + info.path;
+  try {
+    const version = await window.launcherAPI.getVersion();
+    document.getElementById('version-badge').textContent = 'v' + version;
+  } catch (e) {
+    document.getElementById('version-badge').textContent = '';
+  }
+  await refresh();
+})();
+
+// ------------------------------------------------------------------
+// v2.0.14 — barra de título y menú propios (prueba piloto sin marco nativo
+// de Windows, ver createLauncherWindow() en main.js). Todo lo de aquí abajo
+// es NUEVO en esta versión; el resto del archivo (arriba) no se ha tocado.
+// ------------------------------------------------------------------
+if (window.winControls) {
+  const btnMin = document.getElementById('tb-minimize');
+  const btnMax = document.getElementById('tb-maximize');
+  const btnClose = document.getElementById('tb-close');
+  const titlebar = document.getElementById('titlebar');
+
+  btnMin.addEventListener('click', () => window.winControls.minimize());
+  btnMax.addEventListener('click', () => window.winControls.toggleMaximize());
+  btnClose.addEventListener('click', () => window.winControls.close());
+
+  // Doble clic en la propia barra (no en los botones) también maximiza/
+  // restaura — igual que el comportamiento nativo de Windows que se pierde
+  // al quitar el marco.
+  titlebar.addEventListener('dblclick', (e) => {
+    if (e.target.closest('.win-controls')) return;
+    window.winControls.toggleMaximize();
+  });
+
+  function setMaximizedIcon(isMax) {
+    btnMax.textContent = isMax ? '❐' : '▢';
+    btnMax.title = isMax ? 'Restaurar' : 'Maximizar';
+  }
+  window.winControls.isMaximized().then(setMaximizedIcon).catch(() => {});
+  window.winControls.onMaximizedChanged(setMaximizedIcon);
+}
+
+// --- Menú propio: Archivo / Editar / Seguridad / Configuración ---
+if (window.launcherAPI && document.getElementById('menubar')) {
+  const menubar = document.getElementById('menubar');
+  const menuItems = menubar.querySelectorAll('.menu-item');
+  const dropdowns = {};
+  menubar.querySelectorAll('.menu-dropdown').forEach((el) => {
+    dropdowns[el.dataset.dropdown] = el;
+  });
+
+  function closeAllMenus() {
+    menuItems.forEach((mi) => mi.classList.remove('open'));
+    Object.values(dropdowns).forEach((dd) => dd.classList.remove('open'));
+  }
+
+  menuItems.forEach((mi) => {
+    mi.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const key = mi.dataset.menu;
+      const wasOpen = mi.classList.contains('open');
+      closeAllMenus();
+      if (!wasOpen) {
+        mi.classList.add('open');
+        if (dropdowns[key]) dropdowns[key].classList.add('open');
+      }
+    });
+  });
+  document.addEventListener('click', closeAllMenus);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeAllMenus();
+  });
+
+  // Seguridad: las opciones dependen de si ya está activada — se reconstruye
+  // cada vez que se abre el desplegable, igual que hacía securityMenuItems()
+  // en el menú nativo, para no quedar desfasado si se cambió desde otra
+  // ventana.
+  const securityDropdown = dropdowns['seguridad'];
+  menubar.querySelector('[data-menu="seguridad"]').addEventListener('click', async () => {
+    if (!securityDropdown.classList.contains('open')) return;
+    securityDropdown.innerHTML = '';
+    let enabled = false;
+    try {
+      enabled = await window.launcherAPI.isSecurityEnabled();
+    } catch (e) {
+      /* si falla, se asume no activado — mismo criterio conservador */
+    }
+    const items = enabled
+      ? [
+          { action: 'security-change', label: 'Cambiar contraseña…' },
+          { action: 'security-disable', label: 'Desactivar cifrado de backups…' },
+        ]
+      : [{ action: 'security-setup', label: 'Activar cifrado de backups…' }];
+    items.forEach(({ action, label }) => {
+      const btn = document.createElement('button');
+      btn.dataset.action = action;
+      btn.textContent = label;
+      securityDropdown.appendChild(btn);
+    });
+  });
+
+  // Un único manejador de clic para todos los botones de dentro de los
+  // desplegables — según el prefijo de data-action se resuelve local
+  // (Archivo/Editar, que no necesitan pasar por main.js) o remoto
+  // (Seguridad/Configuración, vía launcherMenuAction).
+  menubar.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-action]');
+    if (!btn) return;
+    const action = btn.dataset.action;
+    closeAllMenus();
+    switch (action) {
+      case 'archivo-nuevo':
+        openNewProjectModal();
+        return;
+      case 'archivo-directorio':
+        document.getElementById('directorio-btn').click();
+        return;
+      case 'archivo-salir':
+        document.getElementById('quit-btn').click();
+        return;
+      case 'editar-deshacer':
+        document.execCommand('undo');
+        return;
+      case 'editar-rehacer':
+        document.execCommand('redo');
+        return;
+      case 'editar-cortar':
+        document.execCommand('cut');
+        return;
+      case 'editar-copiar':
+        document.execCommand('copy');
+        return;
+      case 'editar-pegar':
+        document.execCommand('paste');
+        return;
+      case 'editar-todo':
+        document.execCommand('selectAll');
+        return;
+      case 'config-theme':
+        // v2.0.27: panel propio con muestras de color -- NO pasa por
+        // launcherMenuAction/main.js como el resto de "config-*" (esos son
+        // diálogos nativos simples; esto es HTML propio, ver
+        // openThemeModal() más abajo).
+        openThemeModal();
+        return;
+      default:
+        // security-* y el resto de config-* — se resuelven en main.js con
+        // las mismas funciones que usaba el menú nativo.
+        window.launcherAPI.launcherMenuAction(action);
+    }
+  });
+
+  // Ctrl+N ya no llega vía acelerador de un Menu nativo (no hay marco) — se
+  // reimplementa aquí a mano, llamando a la misma función que el botón
+  // "+ Nuevo proyecto" y que la entrada "Archivo > Nuevo proyecto...".
+  // v2.0.30 — FASE 4: se añade Ctrl+W (cerrar ventana), mismo patrón.
+  document.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    const k = e.key.toLowerCase();
+    if (k === 'n') {
+      e.preventDefault();
+      openNewProjectModal();
+    } else if (k === 'w') {
+      e.preventDefault();
+      if (window.winControls) window.winControls.close();
+    }
+  });
+}
+
+// ------------------------------------------------------------------
+// v2.0.27 — panel "Tema visual": único selector de tema de toda la app (ver
+// THEMES/applyTheme en vendor/theme.js y theme:get/theme:set en main.js).
+// Las muestras se generan a partir de THEMES, no hay colores hardcodeados
+// aquí -- si se añade un 6º tema algún día en vendor/theme.js, aparece solo.
+// ------------------------------------------------------------------
+async function openThemeModal() {
+  const backdrop = document.getElementById('theme-modal-backdrop');
+  if (!backdrop) return;
+  await renderThemeSwatches();
+  backdrop.classList.add('open');
+}
+function closeThemeModal() {
+  const backdrop = document.getElementById('theme-modal-backdrop');
+  if (backdrop) backdrop.classList.remove('open');
+}
+async function renderThemeSwatches() {
+  const grid = document.getElementById('theme-swatch-grid');
+  if (!grid || !window.themeAPI) return;
+  let current = 'medianoche';
+  try {
+    current = await window.themeAPI.get();
+  } catch (e) {
+    /* si falla, se asume el tema por defecto -- mismo criterio conservador que el resto de la app */
+  }
+  grid.innerHTML = '';
+  THEME_ORDER.forEach((key) => {
+    const t = THEMES[key];
+    const btn = document.createElement('button');
+    btn.className = 'theme-swatch' + (key === current ? ' active' : '');
+    btn.type = 'button';
+    btn.style.background = t.bg;
+    btn.innerHTML = `<span class="dot" style="background:${t.cyan};"></span><span class="name" style="color:${t.ink};">${t.label}</span>`;
+    btn.addEventListener('click', async () => {
+      await window.themeAPI.set(key);
+      // No hace falta aplicar aquí a mano: theme:set en main.js difunde
+      // 'theme:changed' a TODAS las ventanas abiertas, incluida ésta (ver
+      // initGlobalTheme en vendor/theme.js, que ya está suscrito).
+      await renderThemeSwatches();
+    });
+    grid.appendChild(btn);
+  });
+}
+if (document.getElementById('theme-modal-close')) {
+  document.getElementById('theme-modal-close').addEventListener('click', closeThemeModal);
+}
+if (document.getElementById('theme-modal-backdrop')) {
+  document.getElementById('theme-modal-backdrop').addEventListener('click', (e) => {
+    if (e.target.id === 'theme-modal-backdrop') closeThemeModal();
+  });
+}

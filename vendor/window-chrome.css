@@ -1,0 +1,45 @@
+/* v2.0.40 — estilos de "chrome" de ventana compartidos por dashboard,
+   directorio y preparacion-reunion (barra de título/controles propios y
+   scrollbar personalizado). Antes vivían duplicados carácter por carácter
+   en las 3 plantillas — auditoría 2026-09-12, sección 1.6 y sección 3.
+   Único cambio de comportamiento al unificar: el hover del botón cerrar
+   usaba #e2596b fijo (el rojo de Medianoche) en vez de var(--red) — en
+   Medianoche el valor es idéntico (--red:#e2596b), así que no cambia nada
+   ahí; en los 4 temas claros ahora usa el rojo propio de cada tema en vez
+   de un coral que no combinaba con esas paletas.
+   v2.0.47: la franja en sí, que hasta ahora se dejaba fija en gris
+   "Windows claro" en los 5 temas (ver el motivo en el historial de
+   versiones -- no se tocaba sin pedirlo explícitamente), pasa a seguir el
+   tema activo: pedido explícito tras ver Directorio de Talento en
+   Medianoche con esta franja clara pegada arriba, mientras el resto de la
+   ventana ya es oscuro. Fondo var(--surface) (mismo tono que el resto de
+   paneles, sin gradiente "cristal de Windows" que ya no pintaba nada
+   junto a un tema oscuro), texto var(--ink), borde inferior var(--border)
+   para separarla del contenido. */
+
+::-webkit-scrollbar{ width:10px; height:10px; }
+::-webkit-scrollbar-track{ background:var(--surface); }
+::-webkit-scrollbar-thumb{ background:var(--border); border-radius:99px; border:2px solid var(--surface); background-clip:padding-box; }
+::-webkit-scrollbar-thumb:hover{ background:var(--ink-faint); background-clip:padding-box; }
+::-webkit-scrollbar-corner{ background:var(--surface); }
+
+.titlebar{
+  -webkit-app-region: drag;
+  display:flex; align-items:center; gap:8px;
+  height:32px; padding:0 0 0 10px;
+  background:var(--surface);
+  border-bottom:1px solid var(--border);
+  color:var(--ink);
+  font-family:var(--sans); font-size:12.5px; flex-shrink:0;
+  user-select:none;
+}
+.titlebar img{ width:16px; height:16px; -webkit-app-region: no-drag; pointer-events:none; }
+.titlebar .tb-title{ font-weight:600; }
+.titlebar .tb-spacer{ flex:1; }
+.win-controls{ display:flex; height:100%; -webkit-app-region: no-drag; }
+.win-controls button{
+  width:44px; height:100%; border:none; background:transparent; color:var(--ink-soft);
+  cursor:pointer; font-family:var(--sans); font-size:13px; line-height:1;
+}
+.win-controls button:hover{ background:var(--surface-2); color:var(--ink); }
+.win-controls button.close:hover{ background:var(--red); color:#fff; }

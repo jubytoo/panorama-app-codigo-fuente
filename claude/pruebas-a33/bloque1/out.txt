@@ -1,0 +1,516 @@
+RUTAS DE PRUEBA
+  raíz:                 C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS
+  ubicación real det.:  (no configurada / no legible)
+  carpeta por defecto:  C:\Users\admin.jlopezr\AppData\Roaming\panorama-app
+  (las tres comprobadas por el guardián antes de cada carpeta)
+
+=== A. REGRESIÓN DE LA API ACTUAL de db.js ===
+  OK    getDb() devuelve el objeto de base de datos
+  OK    getDb() es idempotente (segunda llamada devuelve el mismo)
+  OK    getDbPath() apunta al .sqlite3 de la carpeta
+  OK    el archivo existe en disco
+  OK    run() con INSERT devuelve un id numérico
+  OK    run() con el segundo INSERT devuelve id+1
+  OK    get() devuelve un objeto plano
+  OK    get() trae las columnas por nombre
+  OK    get() devuelve null si no hay fila
+  OK    all() devuelve un array
+  OK    all() trae objetos con columnas por nombre
+  OK    all() devuelve [] si no hay filas
+  OK    UPDATE se aplica
+  OK    DELETE se aplica
+  OK    run() sigue devolviendo el id de la fila recién insertada
+  OK    lastInsertRowId() conserva su comportamiento previo (0 tras persistir)
+  OK    lastInsertRowId() sigue devolviendo un número, no lanza
+  OK    setMeta + getMeta funcionan
+  OK    setMeta sobrescribe sin duplicar
+  OK    deleteMeta funciona
+  OK    getMeta de una clave inexistente devuelve null
+  OK    app_meta contiene las 4 claves de A3.3
+  OK    25 escrituras consecutivas
+  OK    vacuum() no lanza y avanza una generación
+  OK    vacuum() conserva los datos
+  OK    reapertura: los datos siguen
+  OK    reapertura: mismo commit, sin generación espuria
+  OK    reapertura: se puede seguir escribiendo
+
+=== B. COMPATIBILIDAD HACIA ATRÁS — base de datos anterior a A3.3 ===
+  OK    preparación: BD legada sin .gen ni db_commit_id
+  OK    se abre una BD anterior a A3.3 sin lanzar
+  OK    conserva sus datos
+  OK    conserva su app_meta
+  OK    recibe identidad de commit al abrir
+  OK    y su .gen coherente
+  OK    el .gen apunta al mismo commit que la BD
+  OK    la migración de esquema se aplicó (columna backup_dir)
+
+=== C. NÚCLEO A3.3 CONTRA EL db.js REAL ===
+  OK    hay installation-id persistido
+  OK    política por defecto = local (no cambia el comportamiento)
+  OK    dirty = false tras abrir
+  OK    hay imagen confirmada
+  OK    20 escrituras -> 21 commits distintos
+  OK    historial acotado a 20
+  OK    .gen y BD llevan el mismo commit
+  OK    F_mio coincide con el hash real del archivo
+  OK    ultimaImagenConfirmada coincide byte a byte con el disco
+  OK    los temporales llevan writer y nonce, no el PID
+  OK    todos los temporales son distintos
+  OK    con el latch fatal, run() no escribe
+  OK    ...y vacuum() TAMPOCO (era el agujero de main.js:844)
+  OK    levantar el latch fatal se rechaza
+  OK    un motivo fatal no se sustituye
+  OK    fallo pre-confirmación: lanza ErrorDb io
+  OK       aplicado = false
+  OK       el disco NO cambió
+  OK       dirty = false
+  OK       la memoria volvió al commit confirmado
+  OK       la fila fantasma no está
+  OK       la escritura posterior no arrastra el fantasma
+  OK    SQL inválido: lanza y no toca el disco
+  OK       dirty = false
+  OK    violación de UNIQUE: lanza y no toca el disco
+  OK       y la app puede seguir escribiendo
+  OK    dos DELETE = UNA generación
+  OK       en disco no queda ni el proyecto ni sus backups
+  OK    BD invisible al arrancar: NO se crea una nueva
+  OK       estadoDisco = ausente
+  OK       el archivo original está intacto (mismo SHA-256)
+  OK       el .gen no se tocó
+  OK       al recuperar, abre la BD original con su fila
+  OK    carpeta con .gen huérfano y sin .sqlite3: NO se crea nada
+  OK       no apareció ningún .sqlite3
+  OK       ni con crearSiAusente explícito
+  OK    el temporal huérfano NO se borró al arrancar
+  OK       se conservó como .tmp-huerfano-
+  OK       con sus bytes intactos
+
+=== E. AUTORIZACIÓN EXPLÍCITA DE CREACIÓN (las DOS condiciones) ===
+  OK    [local] carpeta virgen SIN autorización: lanza
+  OK       estadoDisco = ausente
+  OK       NO se creó panorama.sqlite3
+  OK       NO se creó el .gen
+  OK       la carpeta sigue COMPLETAMENTE vacía
+  OK       la pista de "podría ser la primera vez" viaja como INFO, no como permiso
+  OK       LOCAL no hace fail-closed
+  OK    [compartida] carpeta virgen SIN autorización: lanza
+  OK       estadoDisco = ausente
+  OK       NO se creó panorama.sqlite3
+  OK       NO se creó el .gen
+  OK       la carpeta sigue COMPLETAMENTE vacía
+  OK       la pista de "podría ser la primera vez" viaja como INFO, no como permiso
+  OK       COMPARTIDA/DESCONOCIDA -> fail-closed
+  OK    [desconocida] carpeta virgen SIN autorización: lanza
+  OK       estadoDisco = ausente
+  OK       NO se creó panorama.sqlite3
+  OK       NO se creó el .gen
+  OK       la carpeta sigue COMPLETAMENTE vacía
+  OK       la pista de "podría ser la primera vez" viaja como INFO, no como permiso
+  OK       COMPARTIDA/DESCONOCIDA -> fail-closed
+  OK    [local] con autorización explícita SÍ crea
+  OK       y su .gen
+  OK       generación 1
+  OK       y se puede escribir
+  OK    [compartida] con autorización explícita SÍ crea
+  OK       y su .gen
+  OK       generación 1
+  OK       y se puede escribir
+  OK    [desconocida] con autorización explícita SÍ crea
+  OK       y su .gen
+  OK       generación 1
+  OK       y se puede escribir
+  OK    carpeta personalizada virgen SIN autorización: tampoco crea
+  OK       db.js NO aplica ninguna excepción implícita para la carpeta por defecto
+  OK    REGRESIÓN: crearSiAusente=false + carpeta virgen NO crea
+  OK       (con el fallo anterior, aquí habría un panorama.sqlite3)
+
+=== F. PRIMERA ADOPCIÓN DE UNA BD LEGADA — frontera PRE/POST ===
+  OK    [fallo en esquema (CREATE TABLE)] la apertura lanza
+  OK       aplicado = false
+  OK       SHA-256 de la BD legada INTACTO
+  OK       NO queda un .gen activo
+  OK       AL REINICIAR: la BD original vuelve a abrir
+  OK       ...NO se clasifica como bd-ilegible
+  OK       ...los 5 proyectos valiosos siguen ahí
+  OK       ...y su app_meta también
+  OK       ...y ahora sí recibe identidad
+  OK    [fallo en migrateSchema()] la apertura lanza
+  OK       aplicado = false
+  OK       SHA-256 de la BD legada INTACTO
+  OK       NO queda un .gen activo
+  OK       AL REINICIAR: la BD original vuelve a abrir
+  OK       ...NO se clasifica como bd-ilegible
+  OK       ...los 5 proyectos valiosos siguen ahí
+  OK       ...y su app_meta también
+  OK       ...y ahora sí recibe identidad
+  OK    [fallo en UPSERT 1 — db_commit_id] la apertura lanza
+  OK       aplicado = false
+  OK       SHA-256 de la BD legada INTACTO
+  OK       NO queda un .gen activo
+  OK       AL REINICIAR: la BD original vuelve a abrir
+  OK       ...NO se clasifica como bd-ilegible
+  OK       ...los 5 proyectos valiosos siguen ahí
+  OK       ...y su app_meta también
+  OK       ...y ahora sí recibe identidad
+  OK    [fallo en UPSERT 2 — db_parent_commit_id] la apertura lanza
+  OK       aplicado = false
+  OK       SHA-256 de la BD legada INTACTO
+  OK       NO queda un .gen activo
+  OK       AL REINICIAR: la BD original vuelve a abrir
+  OK       ...NO se clasifica como bd-ilegible
+  OK       ...los 5 proyectos valiosos siguen ahí
+  OK       ...y su app_meta también
+  OK       ...y ahora sí recibe identidad
+  OK    [fallo en UPSERT 3 — db_commit_history] la apertura lanza
+  OK       aplicado = false
+  OK       SHA-256 de la BD legada INTACTO
+  OK       NO queda un .gen activo
+  OK       AL REINICIAR: la BD original vuelve a abrir
+  OK       ...NO se clasifica como bd-ilegible
+  OK       ...los 5 proyectos valiosos siguen ahí
+  OK       ...y su app_meta también
+  OK       ...y ahora sí recibe identidad
+  OK    [fallo en UPSERT 4 — db_generation] la apertura lanza
+  OK       aplicado = false
+  OK       SHA-256 de la BD legada INTACTO
+  OK       NO queda un .gen activo
+  OK       AL REINICIAR: la BD original vuelve a abrir
+  OK       ...NO se clasifica como bd-ilegible
+  OK       ...los 5 proyectos valiosos siguen ahí
+  OK       ...y su app_meta también
+  OK       ...y ahora sí recibe identidad
+  OK    [fallo en escritura del .gen] la apertura lanza
+  OK       aplicado = false
+  OK       SHA-256 de la BD legada INTACTO
+  OK       NO queda un .gen activo
+  OK       AL REINICIAR: la BD original vuelve a abrir
+  OK       ...NO se clasifica como bd-ilegible
+  OK       ...los 5 proyectos valiosos siguen ahí
+  OK       ...y su app_meta también
+  OK       ...y ahora sí recibe identidad
+  OK    [fallo en persistencia del .sqlite3] la apertura lanza
+  OK       aplicado = false
+  OK       SHA-256 de la BD legada INTACTO
+  OK       NO queda un .gen activo
+  OK       AL REINICIAR: la BD original vuelve a abrir
+  OK       ...NO se clasifica como bd-ilegible
+  OK       ...los 5 proyectos valiosos siguen ahí
+  OK       ...y su app_meta también
+  OK       ...y ahora sí recibe identidad
+  OK    BD legada + testigo de bootstrap PROPIO y demostrable: válida, no ilegible
+  OK       abre sin error
+  OK       con sus 5 proyectos
+  OK       los bytes originales ya no están porque se adoptó (esperado)
+  OK       y ahora .gen y BD son coherentes
+  OK    BD sin db_commit_id + .gen ENCADENADO: sigue siendo ilegible
+  OK       getDb() lanza y latchea bd-ilegible
+  OK    adopción feliz: la BD legada recibe identidad
+  OK       es un commit RAÍZ (sin padre)
+  OK       una sola generación raíz
+  OK       historial con un solo commit
+  OK       conserva los 5 proyectos
+  OK       conserva app_meta
+  OK       .gen y SQLite coherentes
+  OK       el .gen es raíz también
+  OK       el archivo ha cambiado (ya no es el legado)
+  OK       y se puede escribir encima
+  OK       la segunda escritura encadena desde la raíz
+
+=== G. CARRERA DURANTE LA MIGRACIÓN — revalidación JIT ===
+  OK    G.1 descendencia: A abre sin error
+  OK       A NO pisó a B: la fila DE-B sigue
+  OK       A adoptó la rama de B
+  OK       el disco sigue conteniendo lo de B
+  OK    G.2 preparación: A abre la imagen desmigrada
+  OK    G.2 BIFURCACIÓN: la migración NO se persiste
+  OK       el .sqlite3 en disco NO cambió
+  OK    G.3 la fila externa NO se pierde al migrar
+  OK    G.4 disco no verificable en la revalidación JIT: NO se persiste
+  OK       el .sqlite3 NO cambió
+  OK       se hicieron VARIAS lecturas (hubo revalidación, no una sola)
+
+=== H. MARCADOR DE BOOTSTRAP DEMOSTRABLE (no solo parent === null) ===
+  OK    H.1 bootstrap propio + hash coincidente -> válida y reanudable
+  OK       abre y adopta
+  OK    H.2 bootstrap propio + hash DISTINTO -> no demostrable
+  OK       NO se adopta en silencio
+  OK       y NO se escribió nada
+  OK    H.3 bootstrap AJENO -> estado propio, no "valida"
+  OK       NO se adopta
+  OK       fail-closed (degradado)
+  OK       el .sqlite3 legado sigue con su SHA-256
+  OK    H.4 .gen RAÍZ normal sin marca -> no demostrable (NO adopción)
+  OK       getDb() no adopta
+  OK       la BD legada sigue intacta
+  OK    H.5 preparación: la instalación A3.3 tiene un commit RAÍZ
+  OK       ...y su .gen ESTABLE no conserva NINGUNA marca transitoria
+  OK       BD sin identidad + .gen raíz de la instalación -> no demostrable
+  OK       NO se adopta en silencio
+  OK       la imagen restaurada sigue intacta
+  OK    H.6 corte tras el testigo y antes del rename: lanza
+  OK       la BD legada conserva su SHA-256
+  OK       el testigo se apartó (no queda .gen activo)
+  OK       al reiniciar abre bien
+  OK       con sus 4 proyectos
+  OK       y el testigo final queda NORMAL, sin la marca transitoria
+
+=== I. PRIMERA CREACIÓN INTERRUMPIDA — no puede dejar la instalación muerta ===
+  OK    [corte en persist] A) la carpeta está completamente vacía
+  OK       B/C) la creación autorizada falla en persist
+  OK       D) NO existe panorama.sqlite3
+  OK       D) NO queda un .gen activo
+  OK       E/F) al reiniciar, la creación se completa SIN intervención
+  OK       ...y existe la base de datos
+  OK       ...con su testigo NORMAL (sin marca transitoria)
+  OK       ...y se puede escribir
+  OK       ...el testigo de la creación fallida SIGUE conservado como evidencia
+  OK    [corte en meta2] A) la carpeta está completamente vacía
+  OK       B/C) la creación autorizada falla en meta2
+  OK       D) NO existe panorama.sqlite3
+  OK       D) NO queda un .gen activo
+  OK       E/F) al reiniciar, la creación se completa SIN intervención
+  OK       ...y existe la base de datos
+  OK       ...con su testigo NORMAL (sin marca transitoria)
+  OK       ...y se puede escribir
+  OK       ...(corte anterior al testigo: no había nada que conservar)
+  OK    [corte en tras-migracion] A) la carpeta está completamente vacía
+  OK       B/C) la creación autorizada falla en tras-migracion
+  OK       D) NO existe panorama.sqlite3
+  OK       D) NO queda un .gen activo
+  OK       E/F) al reiniciar, la creación se completa SIN intervención
+  OK       ...y existe la base de datos
+  OK       ...con su testigo NORMAL (sin marca transitoria)
+  OK       ...y se puede escribir
+  OK       ...(corte anterior al testigo: no había nada que conservar)
+  OK    G) [writeSync sin progreso] la creación inicial falla
+  OK       no queda una base de datos activa
+  OK       al reiniciar, la creación se completa
+  OK    G) [fsync EIO] la creación inicial falla
+  OK       no queda una base de datos activa
+  OK       al reiniciar, la creación se completa
+  OK    G) [rename EPERM] la creación inicial falla
+  OK       no queda una base de datos activa
+  OK       al reiniciar, la creación se completa
+  OK    H) [compartida] la creación inicial falla
+  OK       al reiniciar se completa igualmente
+  OK       sin latch pendiente
+  OK    H) [desconocida] la creación inicial falla
+  OK       al reiniciar se completa igualmente
+  OK       sin latch pendiente
+  OK    I) [.gen vivo de otro equipo] SIGUE bloqueando la creación
+  OK       no se creó ninguna base de datos
+  OK    I) [testigo de creación de OTRO writer] SIGUE bloqueando la creación
+  OK       no se creó ninguna base de datos
+  OK    I) [testigo de creación ilegible] SIGUE bloqueando la creación
+  OK       no se creó ninguna base de datos
+  OK    I) [archivo de conflicto] SIGUE bloqueando la creación
+  OK       no se creó ninguna base de datos
+  OK    I) [temporal de otro writer] SIGUE bloqueando la creación
+  OK       no se creó ninguna base de datos
+  OK    I) [testigo de BOOTSTRAP fallido (había BD antes)] SIGUE bloqueando la creación
+  OK       no se creó ninguna base de datos
+
+=== J. EL MARCADOR DE FASE ES TRANSITORIO ===
+  OK    J.A adopción feliz: el .gen final NO lleva fase
+  OK       ...ni base_sha256
+  OK       ...pero conserva el commit y el padre nulo
+  OK       ...y la BD tiene ese commit
+  OK    J.B corte antes del SQLite: la BD legada intacta
+  OK       al reiniciar se recupera y adopta
+  OK    J.C marcador superviviente sobre un commit YA confirmado: abre
+  OK       el .gen se NORMALIZA (se retira la marca)
+  OK       conserva el MISMO commit
+  OK       NUNCA se restaura hacia atrás: la BD sigue siendo la adoptada
+  OK       y sus datos siguen
+  OK    J.D preparación: adoptada y el .gen ya está normalizado
+  OK    J.D restauración antigua: NO se clasifica como bootstrap-propio
+  OK       se clasifica como no demostrable
+  OK       y NO se vuelve a adoptar en silencio
+  OK       la imagen restaurada sigue intacta
+
+=== K. INTERLEAVING REAL A -> B -> A (con gancho en el flujo) ===
+  OK    K.1 el gancho disparó: A tenía X en memoria cuando B publicó Y
+  OK       A abre sin error
+  OK       A detectó Y y lo adoptó
+  OK       LA FILA DE B SOBREVIVE
+  OK       y la de A también
+  OK       el disco contiene lo de B
+  OK    K.2 el gancho publicó la rama hermana
+  OK       A NO pisa el disco
+  OK    K.3 el gancho introdujo el cambio externo
+  OK       A NO pisa la escritura externa
+  OK       la fila externa sobrevive
+  OK    K.4 EIO justo en la revalidación JIT: NO se persiste
+  OK       el .sqlite3 NO cambió
+
+=== L. TEMPORAL PROPIO != PRUEBA DE PRIMERA CREACIÓN ===
+  OK    L.1 primera creación: falla en el punto previo a publicar el .gen
+  OK       no hay base de datos
+  OK       la carpeta sigue vacía (el corte fue antes del primer byte)
+  OK       NO hay testigo .gen.creacion-fallida (no llegó a publicarse)
+  OK       al reiniciar autorizado, SÍ crea (la intención local lo explica)
+  OK       ...y la intención se retira al completarse
+  OK    L.2 [.tmp-] temporal propio de escritura NORMAL: NO autoriza crear
+  OK       no se creó ninguna base de datos
+  OK       el temporal SIGUE conservado (apartado, no borrado)
+  OK       y su contenido intacto byte a byte
+  OK    L.2 [.tmp-fallido-] temporal propio de escritura NORMAL: NO autoriza crear
+  OK       no se creó ninguna base de datos
+  OK       el temporal SIGUE conservado (apartado, no borrado)
+  OK       y su contenido intacto byte a byte
+  OK    L.2 [.tmp-huerfano-] temporal propio de escritura NORMAL: NO autoriza crear
+  OK       no se creó ninguna base de datos
+  OK       el temporal SIGUE conservado (apartado, no borrado)
+  OK       y su contenido intacto byte a byte
+  OK    L.3 [compartida] SQLite no visible + temporal propio: NO crea
+  OK       fail-closed
+  OK       CERO escrituras nuevas en la carpeta
+  OK    L.3 [desconocida] SQLite no visible + temporal propio: NO crea
+  OK       fail-closed
+  OK       CERO escrituras nuevas en la carpeta
+  OK    L.4 temporal del .gen de escritura NORMAL: tampoco autoriza
+  OK       no se creó nada
+  OK    L.5 hay restos del intento
+  OK       el testigo apartado lleva el campo intento
+  OK       SÍ reanuda la creación
+  OK    L.6 sin intención local, los MISMOS restos ya NO autorizan crear
+  OK       y nada cambió en la carpeta
+  OK    L.7 intención registrada por OTRO writer: no autoriza
+  OK       no se creó nada
+  OK    L.8 preparación: hay testigo válido del intento
+  OK       testigo válido + resto ajeno: NO crea
+  OK       no se creó ninguna base de datos
+  OK       el resto ajeno sigue intacto
+
+=== M. FIABILIDAD DE LA EVIDENCIA LOCAL ===
+  OK    M.A fallo al escribir la intención: la creación ABORTA
+  OK       el error lo dice explícitamente
+  OK       CERO bytes escritos en la carpeta de datos
+  OK    M.B la relectura no coincide: la creación ABORTA
+  OK       CERO bytes en la carpeta de datos
+  OK    M.C corte en el rename del archivo de intenciones: la creación ABORTA
+  OK       el JSON anterior sigue VÁLIDO
+  OK       ...y con el mismo SHA-256 que antes
+  OK       la intención de la OTRA carpeta no se perdió
+  OK       CERO bytes en la carpeta de datos
+  OK    M.D hay intención para la carpeta A
+  OK       el archivo sigue legible tras escribir la segunda
+  OK       la intención de A SIGUE ahí tras operar sobre B
+  OK       y la de B se retiró al completarse
+  OK       A puede reanudar su creación
+  OK    M.E la base de datos SÍ se creó (no hay rollback)
+  OK       la intención quedó PENDIENTE de retirar
+  OK       y queda constancia en el registro
+  OK       al reabrir, la intención obsoleta se RETIRA
+  OK       esa intención ya NO autoriza una recreación posterior
+  OK       y no se creó nada
+  OK    M.F preparación: la identidad NO está persistida
+  OK       la creación ABORTA
+  OK       el error lo dice explícitamente
+  OK       CERO bytes en la carpeta de datos
+  OK    M.F2 con el installation-id no persistible de verdad: ABORTA
+  OK       usó una identidad de sesión
+  OK       CERO bytes en la carpeta de datos
+  OK    M.G la identidad se generó y persistió
+  OK       la creación falló (inyectado) pero dejó intención
+  OK       el reinicio conserva el MISMO writer
+  OK       y la recuperación de la primera creación FUNCIONA
+  OK    M.H el archivo de intenciones se lee como CORRUPTO, no como vacío
+  OK       con restos + evidencia ilegible: NO crea (fail-closed)
+  OK       y nada cambió en la carpeta
+
+=== D. PRODUCCIÓN NO TOCADA ===
+  C:\Users\admin.jlopezr\AppData\Roaming\panorama-app\panorama.sqlite3
+     antes:   57344 B  sha f71f4140e7fd6850…  mtime 1787904557572.9622
+     después: 57344 B  sha f71f4140e7fd6850…  mtime 1787904557572.9622
+  OK       sin cambios: panorama-app
+  OK    todas las rutas usadas están bajo la marca de pruebas
+
+  RUTAS USADAS (82):
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c1-api
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c2-legado
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c3-nucleo
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c4-preconf
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c5-sqlmalo
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c6-multiple
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c7-ausente
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c8-restos
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c9-huerfanos
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c10-virgen-local
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c11-virgen-compartida
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c12-virgen-desconocida
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c13-autorizada-local
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c14-autorizada-compartida
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c15-autorizada-desconocida
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c16-personalizada-virgen
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c17-regresion-and-or
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c18-legado-tras-esquema
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c19-legado-tras-migracion
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c20-legado-meta1
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c21-legado-meta2
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c22-legado-meta3
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c23-legado-meta4
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c24-legado-gen
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c25-legado-persist
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c26-legado-testigo-superviviente
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c27-legado-gen-encadenado
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c28-legado-feliz
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c29-carrera-desc
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c30-carrera-bifurcacion
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c31-carrera-caso8
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c32-carrera-noverif
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c33-boot-mio-ok
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c34-boot-mio-hashmal
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c35-boot-ajeno
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c36-boot-raiz-normal
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c37-boot-restaurada-vieja
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c38-boot-corte-realista
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c39-creacion-persist
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c40-creacion-meta2
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c41-creacion-tras-migracion
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c42-creacion-io-writeSync
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c43-creacion-io-fsync
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c44-creacion-io-rename
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c45-creacion-compartida
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c46-creacion-desconocida
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c47-bloqueo-gen
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c48-bloqueo-testigo
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c49-bloqueo-testigo
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c50-bloqueo-archivo
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c51-bloqueo-temporal
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c52-bloqueo-testigo
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c53-fase-feliz
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c54-fase-corte-antes
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c55-fase-corte-despues
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c56-fase-restauracion-antigua
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c57-inter-desc
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c58-inter-bifurcacion
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c59-inter-caso8
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c60-inter-eio
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c61-L1-creacion-real
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c62-L2-tmp
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c63-L2-tmpfallido
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c64-L2-tmphuerfano
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c65-L3-compartida
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c66-L3-desconocida
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c67-L4-gen-tmp-normal
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c68-L5-restos-con-intento
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c69-L6-sin-intencion
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c70-L7-intencion-ajena
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c71-L8-mezcla
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c72-M-A-intencion-no-escribe
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c73-M-B-relectura-no-coincide
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c74-M-C-corte-intenciones
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c75-M-C-otra-ubicacion
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c76-M-D-uno
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c77-M-D-dos
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c78-M-E-limpieza-falla
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c79-M-F-id-no-persistible
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c80-M-F2-id-real-no-persistible
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c81-M-G-id-estable
+    C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque1-PRUEBAS\c82-M-H-json-corrupto
+
+==================================================================
+  BLOQUE 1 — db.js integrado: 393 OK, 0 FALLOS
+==================================================================
+  carpetas de prueba borradas: true

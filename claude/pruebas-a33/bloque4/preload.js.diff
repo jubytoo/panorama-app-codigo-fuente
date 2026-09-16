@@ -1,0 +1,76 @@
+--- preload.js (antes)
++++ preload.js (despues)
+@@ -19,13 +19,46 @@
+ let flushBeforeCloseCallback = null;
+ let focusEvaluacionesCallback = null;
+ 
++// ------------------------------------------------------------------
++// A3.3/Bloque 4 — CONTRATO DE ACCIÓN (archivo + base de datos).
++//
++// Las CUATRO acciones que guardan contenido del usuario (backup, preparación
++// de reunión — guardar y editar — y evaluación de candidatos) devuelven
++// siempre un objeto con una de estas tres formas:
++//
++//   NO aplicado        { ok:false, aplicado:false, reintentable, error }
++//   aplicado y ok      { ok:true,  aplicado:true,  verificado:true, … }
++//   aplicado pero sin  { ok:true,  aplicado:true,  verificado:false,
++//   poder verificar      requiereReinicio:true, aviso }
++//
++// La normalización se hace AQUÍ, en el borde, para que quien llama nunca tenga
++// que distinguir entre "devolvió algo raro" y "la promesa se rechazó": las dos
++// cosas llegan como un "no aplicado" explícito. Sin esto, una promesa
++// rechazada podía acabar interpretándose como éxito — que es el bug de
++// `lastSerialized` de la v0.1.62 entrando por otra puerta.
++//
++// SOLO para esas cuatro. El resto de IPC (listar, leer, borrar) tiene otro
++// contrato y no pasa por aquí.
++function normalizarContratoAccion(r) {
++  if (r && typeof r === 'object' && typeof r.aplicado === 'boolean') return r;
++  return {
++    ok: false, aplicado: false, reintentable: true,
++    error: 'respuesta inesperada del proceso principal: ' + JSON.stringify(r),
++  };
++}
++function errorComoNoAplicado(e) {
++  return { ok: false, aplicado: false, reintentable: true, error: String((e && e.message) || e) };
++}
++function invokeAccion(canal, payload) {
++  return ipcRenderer.invoke(canal, payload).then(normalizarContratoAccion, errorComoNoAplicado);
++}
++
+ contextBridge.exposeInMainWorld('panoramaBridge', {
+   projectId,
+   projectName: decodeURIComponent(rawName),
+   initialTab,
+-  saveBackup: (payloadJsonString, reason) => {
+-    return ipcRenderer.invoke('backup:save', { projectId, payload: payloadJsonString, reason });
+-  },
++  saveBackup: (payloadJsonString, reason) =>
++    invokeAccion('backup:save', { projectId, payload: payloadJsonString, reason }),
+   // v0.1.40: true si este proyecto tiene al menos un backup guardado en la
+   // base de datos (clave estable por project_id, ajena a cualquier fallo de
+   // regeneración de plantilla). Lo usa resolveProjectIdentity() para avisar
+@@ -75,7 +108,7 @@
+   // listar las guardadas de este proyecto, y leer una en concreto. Ver
+   // main.js (meeting:savePrep / meeting:listPreps / meeting:getPrep).
+   saveMeetingPrep: (meetingDate, finalidad, payloadJsonString) =>
+-    ipcRenderer.invoke('meeting:savePrep', { projectId, meetingDate, finalidad, payload: payloadJsonString }),
++    invokeAccion('meeting:savePrep', { projectId, meetingDate, finalidad, payload: payloadJsonString }),
+   listMeetingPreps: () => ipcRenderer.invoke('meeting:listPreps', { projectId }),
+   getMeetingPrep: (id) => ipcRenderer.invoke('meeting:getPrep', { projectId, id }),
+   deleteMeetingPrep: (id) => ipcRenderer.invoke('meeting:deletePrep', { projectId, id }),
+@@ -83,12 +116,12 @@
+   // main.js) — usado por "✏️ Editar" en el historial para completar el
+   // checklist de Cierre tras la reunión real sin duplicar el registro.
+   updateMeetingPrep: (id, meetingDate, finalidad, payloadJsonString) =>
+-    ipcRenderer.invoke('meeting:updatePrep', { projectId, id, meetingDate, finalidad, payload: payloadJsonString }),
++    invokeAccion('meeting:updatePrep', { projectId, id, meetingDate, finalidad, payload: payloadJsonString }),
+   // v0.1.73: "Evaluación de Candidatos" — un documento único por proyecto
+   // (puestos + entrevistas), leído/guardado vía IPC igual que Preparación
+   // de Reunión. Ver candidateEval:get/save en main.js.
+   getCandidateEvalData: () => ipcRenderer.invoke('candidateEval:get', { projectId }),
+-  saveCandidateEvalData: (payloadJsonString) => ipcRenderer.invoke('candidateEval:save', { projectId, payload: payloadJsonString }),
++  saveCandidateEvalData: (payloadJsonString) => invokeAccion('candidateEval:save', { projectId, payload: payloadJsonString }),
+   // v0.1.75: adjuntar/ver/quitar el CV de una evaluación. El archivo vive en
+   // disco (carpeta cv/ junto al estado.json de este proyecto), NUNCA
+   // cifrado aunque la Seguridad de la app esté activa — ver el comentario

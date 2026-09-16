@@ -1,0 +1,372 @@
+﻿  main.js bajo prueba: C:\Users\ADMIN~1.JLO\AppData\Local\Temp\claude\C--Codigo-Fuente-PS\e55d4471-ea3f-4279-b758-0366ccb6384c\scratchpad\bloque4\main.js.PRE-CORRECCIONES
+RUTAS DE PRUEBA
+  raiz:                C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque4-PRUEBAS
+  ubicacion real det.: (no configurada)
+  OK    los bloques reales de main.js se extraen sin reescribirse
+
+=== OK. CAMINO FELIZ ===
+  OK    OK-1) devuelve aplicado y verificado
+  OK       el archivo esta publicado con su contenido
+  OK       la fila existe y apunta a ese archivo
+  OK       la marca lleva el action_id
+  OK       no queda journal
+  OK       no queda tmp ni old
+  OK    OK-2) la marca y la fila salen del MISMO commit
+
+=== C1-C4, C7. CORTES RESUELTOS AL ARRANCAR ===
+  OK    C1) sin journal, la recuperacion no encuentra nada que resolver
+  OK       el tmp se CONSERVA (solo se cuenta, no se borra)
+  OK       el destino sigue sin existir
+  OK       nada cambio en la carpeta
+  OK    C2) CASO A: se deshace
+  OK       el destino sigue sin existir
+  OK       el tmp se retira
+  OK       el journal se retira
+  OK    C3) [estado] el destino no esta y el original esta en .old
+  OK       CASO A: se repone el original
+  OK       el destino vuelve a existir CON EL CONTENIDO ORIGINAL
+  OK       no queda .old ni .tmp
+  OK       PERDIDA DE DATOS: no
+  OK    C4-nuevo) [estado] el destino ya es la version nueva
+  OK       la marca NO contiene la accion
+  OK       CASO A: se deshace
+  OK       el archivo nuevo se retira
+  OK       el journal se retira
+  OK    C4-overwrite) [estado] el destino ya es la version nueva
+  OK       la marca NO contiene la accion
+  OK       CASO A: se deshace
+  OK       el destino vuelve al ORIGINAL
+  OK       el journal se retira
+  OK    C7) [estado] la marca esta en la BD
+  OK       y el journal sigue vivo
+  OK       CASO B: NO se deshace nada
+  OK       el destino CONSERVA la version nueva
+  OK       el .old se limpia
+  OK       el journal se limpia
+  OK       la fila sigue ahi
+  OK    C12) un segundo arranque no encuentra nada
+  OK       y el contenido sigue intacto
+
+=== C5, C6, C8. FALLOS EN VIVO ===
+  OK    C5) el otro equipo avanzo la BD antes de confirmar
+  OK       NO aplicado y reintentable
+  OK       el mensaje explica que fue otro equipo
+  OK       el destino VUELVE al contenido original
+  OK       no queda journal
+  OK       no queda .old ni .tmp
+  OK       no se escribio ninguna fila
+  OK    C6) NO aplicado
+  OK       el destino vuelve al original
+  OK       no queda journal
+  OK       ninguna fila
+  OK    C8) forma 3: aplicado sin verificar
+  OK       trae aviso
+  OK       NO hay rollback: el destino es la version NUEVA
+  OK       la fila SI esta en el archivo de disco
+  OK       db.js queda desincronizada
+
+=== C9, C10. ROLLBACK CON TERCER HASH / ILEGIBLE ===
+  OK    C9) tercer hash -> CASO C fail-closed
+  OK       se clasifica como no demostrable
+  OK       NADA se toca: carpeta byte a byte igual
+  OK       el .old se conserva
+  OK       el journal se conserva
+  OK    C12) sigue fail-closed en el segundo arranque
+  OK       y sigue sin tocarse nada
+  OK    C10) destino ilegible -> CASO C
+  OK       NO se trata como ausente ni se sobrescribe
+  OK       el .old se conserva
+  OK    CB) marca presente + destino cambiado -> NO se borra el .old
+  OK       se clasifica accion-aplicada-destino-cambiado
+  OK       y NO se deshace (sabemos que si se aplico)
+  OK       se conserva TODO el material
+
+=== ACT-MARK. UN JOURNAL PROPIO PENDIENTE BLOQUEA ACCIONES NUEVAS ===
+  OK    ACT-MARK-1) la accion A confirma
+  OK       pero su journal NO se pudo borrar
+  OK       la marca contiene A
+  OK       NINGUNA accion nueva confirma dejando vivo el journal de A
+  OK       A se resolvio como CASO B (aplicada) y su journal ya no esta
+  OK       A NO se deshizo: su archivo sigue publicado
+  OK       y su fila sigue en la BD
+  OK       tras reiniciar no queda nada pendiente de A
+  OK       el archivo de A sigue intacto
+  OK    ACT-MARK-2) [estado] hay journal propio pendiente y sin marca
+  OK       una accion nueva NO se inicia
+  OK       se identifica como no demostrable
+  OK       no es reintentable
+  OK       no se escribio NADA
+  OK       ni una fila nueva
+
+=== ACT-W. JOURNAL AJENO: SOLO BLOQUEA EL MISMO DESTINO ===
+  OK    ACT-W1) B NO guarda sobre el destino ocupado por otro equipo
+  OK       se identifica como ocupado-otro-writer
+  OK       es reintentable
+  OK       NO escribe archivo: la carpeta queda igual
+  OK       el journal ajeno queda byte a byte intacto
+  OK       no escribe ninguna fila
+  OK    ACT-W2) B SI puede guardar en otro proyecto
+  OK       con su contenido
+  OK       y el journal ajeno sigue intacto
+  OK    ACT-W3) un backup nuevo con destino distinto no queda bloqueado
+  OK       la recuperacion IGNORA el journal ajeno (no lo resuelve ni lo borra)
+  OK       y sigue intacto
+  OK    W-corrupto) con un journal ajeno ilegible no se toca nada que pudiera colisionar
+  OK       es reintentable (no cierra la app)
+  OK       el journal corrupto NO se borra
+  OK       el destino no cambia
+  OK       la recuperacion lo conserva sin tocarlo
+
+=== ACT-JOURNAL-SCHEMA. EVIDENCIA INCOMPLETA != ESTADO AUSENTE ===
+  OK    SCHEMA-0) un journal COMPLETO se acepta como valido
+  FALLO SCHEMA-1 falta new_sha256: NO se acepta como evidencia valida  -- valido / undefined
+  OK       la recuperacion NO hace rollback
+  OK       NO destruye ni un byte
+  OK       el .old (unica copia del original) sigue ahi
+  OK       el journal NO se borra
+  OK       ninguna accion propia nueva comienza
+  OK       y no escribio nada
+  FALLO SCHEMA-2 new_sha256 no es SHA-256: NO se acepta como evidencia valida  -- valido / undefined
+  OK       la recuperacion NO hace rollback
+  OK       NO destruye ni un byte
+  OK       el .old (unica copia del original) sigue ahi
+  OK       el journal NO se borra
+  OK       ninguna accion propia nueva comienza
+  OK       y no escribio nada
+  FALLO SCHEMA-3 falta modo: NO se acepta como evidencia valida  -- valido / undefined
+  FALLO    la recuperacion NO hace rollback  -- [{"caso":"A","ok":true,"actionId":"f06606c5d92bb811708456f34ea98118","deshecha":true}]
+  FALLO    NO destruye ni un byte  -- schema.json,schema.json.old-f06606c5d92bb811708456f34ea98118 -> schema.json
+  FALLO    el .old (unica copia del original) sigue ahi
+  FALLO    el journal NO se borra
+  FALLO    ninguna accion propia nueva comienza  -- {"ok":true,"aplicado":true,"verificado":true,"actionId":"a30d1b20034297b2074a0d3e3bbfd343"}
+  FALLO    y no escribio nada
+  FALLO SCHEMA-4 overwrite sin original_sha256: NO se acepta como evidencia valida  -- valido / undefined
+  FALLO    la recuperacion NO hace rollback  -- [{"caso":"A","ok":true,"actionId":"b9398e7b1cd1f1f1aee6268c11ed6afb","deshecha":true}]
+  FALLO    NO destruye ni un byte  -- schema.json,schema.json.old-b9398e7b1cd1f1f1aee6268c11ed6afb -> schema.json.old-b9398e7b1cd1f1f1aee6268c11ed6afb
+  OK       el .old (unica copia del original) sigue ahi
+  FALLO    el journal NO se borra
+  FALLO    ninguna accion propia nueva comienza  -- {"ok":true,"aplicado":true,"verificado":true,"actionId":"792379748be6367a8fdcdd2047885872"}
+  FALLO    y no escribio nada
+  FALLO SCHEMA-5 nuevo con original_sha256: NO se acepta como evidencia valida  -- valido / undefined
+  FALLO    la recuperacion NO hace rollback  -- [{"caso":"A","ok":true,"actionId":"93cc2aaa36b399b340ccb2f2934a94dd","deshecha":true}]
+  FALLO    NO destruye ni un byte  -- schema.json,schema.json.old-93cc2aaa36b399b340ccb2f2934a94dd -> schema.json.old-93cc2aaa36b399b340ccb2f2934a94dd
+  OK       el .old (unica copia del original) sigue ahi
+  FALLO    el journal NO se borra
+  FALLO    ninguna accion propia nueva comienza  -- {"ok":true,"aplicado":true,"verificado":true,"actionId":"94a390f369dbb5e8effde7c62d0df9fc"}
+  FALLO    y no escribio nada
+  FALLO SCHEMA-6 base_commit_id corrupto: NO se acepta como evidencia valida  -- valido / undefined
+  FALLO    la recuperacion NO hace rollback  -- [{"caso":"A","ok":true,"actionId":"f49465823e0743220f5b40c14a51813a","deshecha":true}]
+  FALLO    NO destruye ni un byte  -- schema.json,schema.json.old-f49465823e0743220f5b40c14a51813a -> schema.json
+  FALLO    el .old (unica copia del original) sigue ahi
+  FALLO    el journal NO se borra
+  FALLO    ninguna accion propia nueva comienza  -- {"ok":true,"aplicado":true,"verificado":true,"actionId":"f23ae0ab3063ac30d0779ffd21c160fa"}
+  FALLO    y no escribio nada
+  FALLO SCHEMA-7 action_id mal formado: NO se acepta como evidencia valida  -- valido / undefined
+  FALLO    la recuperacion NO hace rollback  -- [{"caso":"A","ok":true,"actionId":"corto","deshecha":true}]
+  FALLO    NO destruye ni un byte  -- schema.json,schema.json.old-corto -> schema.json
+  FALLO    el .old (unica copia del original) sigue ahi
+  FALLO    el journal NO se borra
+  FALLO    ninguna accion propia nueva comienza  -- {"ok":true,"aplicado":true,"verificado":true,"actionId":"9b22da1ab750bccacf7b46a0d4d75e31"}
+  FALLO    y no escribio nada
+  FALLO SCHEMA-8 falta new_size: NO se acepta como evidencia valida  -- valido / undefined
+  FALLO    la recuperacion NO hace rollback  -- [{"caso":"A","ok":true,"actionId":"97db8adf87d1176b1fe0cea6a15fc9f2","deshecha":true}]
+  FALLO    NO destruye ni un byte  -- schema.json,schema.json.old-97db8adf87d1176b1fe0cea6a15fc9f2 -> schema.json
+  FALLO    el .old (unica copia del original) sigue ahi
+  FALLO    el journal NO se borra
+  FALLO    ninguna accion propia nueva comienza  -- {"ok":true,"aplicado":true,"verificado":true,"actionId":"ae486371f08fe81908e8e75a456d5bee"}
+  FALLO    y no escribio nada
+  FALLO SCHEMA-9 tipo desconocido: NO se acepta como evidencia valida  -- valido / undefined
+  FALLO    la recuperacion NO hace rollback  -- [{"caso":"A","ok":true,"actionId":"16b8a24efd8fee8ea424dc1c78009c63","deshecha":true}]
+  FALLO    NO destruye ni un byte  -- schema.json,schema.json.old-16b8a24efd8fee8ea424dc1c78009c63 -> schema.json
+  FALLO    el .old (unica copia del original) sigue ahi
+  FALLO    el journal NO se borra
+  FALLO    ninguna accion propia nueva comienza  -- {"ok":true,"aplicado":true,"verificado":true,"actionId":"7cbe50faf85f8d7f2abbadc228021192"}
+  FALLO    y no escribio nada
+  FALLO SCHEMA-10 fase inesperada: NO se acepta como evidencia valida  -- valido / undefined
+  FALLO    la recuperacion NO hace rollback  -- [{"caso":"A","ok":true,"actionId":"e3bfa2c7d9e837142d346888c75baf7e","deshecha":true}]
+  FALLO    NO destruye ni un byte  -- schema.json,schema.json.old-e3bfa2c7d9e837142d346888c75baf7e -> schema.json
+  FALLO    el .old (unica copia del original) sigue ahi
+  FALLO    el journal NO se borra
+  FALLO    ninguna accion propia nueva comienza  -- {"ok":true,"aplicado":true,"verificado":true,"actionId":"56b09a9483bbcbdcfdf5a5d45770825f"}
+  FALLO    y no escribio nada
+  FALLO SCHEMA-11 cifrado no booleano: NO se acepta como evidencia valida  -- valido / undefined
+  FALLO    la recuperacion NO hace rollback  -- [{"caso":"A","ok":true,"actionId":"775cf399c71b785bec873302ab552770","deshecha":true}]
+  FALLO    NO destruye ni un byte  -- schema.json,schema.json.old-775cf399c71b785bec873302ab552770 -> schema.json
+  FALLO    el .old (unica copia del original) sigue ahi
+  FALLO    el journal NO se borra
+  FALLO    ninguna accion propia nueva comienza  -- {"ok":true,"aplicado":true,"verificado":true,"actionId":"8dd8b73b7df4900cb12ad7f4e11c0ac6"}
+  FALLO    y no escribio nada
+  FALLO SCHEMA-12 destino relativo: NO se acepta como evidencia valida  -- valido / undefined
+  OK       la recuperacion NO hace rollback
+  OK       NO destruye ni un byte
+  OK       el .old (unica copia del original) sigue ahi
+  OK       el journal NO se borra
+  OK       ninguna accion propia nueva comienza
+  OK       y no escribio nada
+
+=== ACT-F3. FALLO VIVO ENTRE LOS DOS RENAMES DE F3 ===
+  OK    ACT-F3-1) el primer rename aparto el original y el segundo fallo
+  FALLO    y la vuelta atras repuso el original con otro rename
+  OK       devuelve NO aplicado
+  FALLO    el destino vuelve EXACTAMENTE al original
+  FALLO    no queda .old ni .tmp  -- estado.json.old-ffe28f8b70bf166fd224db92c962d630
+  OK       no queda journal
+  OK       ninguna fila
+  FALLO    PERDIDA DE DATOS: no
+  FALLO ACT-F3-2) devuelve NO aplicado y NO reintentable  -- {"ok":false,"aplicado":false,"reintentable":true,"error":"No se pudo guardar el archivo: EIO simulado"}
+  FALLO    se identifica como no demostrable  -- undefined
+  FALLO    CERO destruccion: el journal se conserva  -- 0
+  OK       el .old con el original se conserva
+  FALLO    la sesion queda bloqueada
+  OK       ninguna fila
+  FALLO    el siguiente arranque lo resuelve  -- {"resueltas":[],"fallosCerrados":[],"ajenos":0,"ilegiblesAjenos":0}
+  FALLO    y el destino vuelve al ORIGINAL
+
+=== ACT-MARK-CORRUPT. MARCA ILEGIBLE != NINGUNA ACCION APLICADA ===
+  OK    ACT-MARK-CORRUPT) A confirma y deja su journal
+  FALLO    la marca queda corrupta  -- {"ok":true,"lista":[]}
+  FALLO    estadoAccionEnMarca dice "no-demostrable", NO "no-aplicada"  -- no-aplicada
+  FALLO    la recuperacion NO deshace A  -- {"resueltas":[{"caso":"A","ok":true,"actionId":"3be925d9d91fb8f7840dd75f8cc91f17","deshecha":true}],"fallosCerrados":[],"ajenos":0,"ilegiblesAjenos":0}
+  FALLO    se clasifica accion-no-demostrable  -- undefined
+  FALLO    el archivo de A sigue intacto
+  OK       su fila sigue en la BD
+  FALLO    material y journal conservados byte a byte
+  FALLO    el journal sigue ahi
+  FALLO    ninguna accion propia nueva puede empezar  -- {"ok":true,"aplicado":true,"verificado":true,"actionId":"a30f7aaa66befb68eab598f43a3b8eb6"}
+  FALLO    y no escribio nada
+
+=== ACT-DIR-EIO. NO PODER LEER LA CARPETA != NO HAY JOURNALS ===
+  OK    ACT-DIR-EIO) [estado] hay un journal propio pendiente
+  FALLO    journalsDeAcciones() NO devuelve lista vacia  -- {"ok":true,"entradas":[]}
+  FALLO    una accion nueva NO se inicia  -- {"ok":true,"aplicado":true,"verificado":true,"actionId":"eddf7d0541421c9515cf44fd8b3c1ea5"}
+  FALLO    se identifica como no verificable  -- undefined
+  FALLO    CERO commits: el commit de la BD no avanza
+  FALLO    ningun archivo cambia
+  FALLO    la recuperacion tampoco inventa ausencia  -- {"resueltas":[],"fallosCerrados":[],"ajenos":0,"ilegiblesAjenos":0}
+  OK       recuperado el acceso, el journal original se resuelve
+  OK       y su tmp y journal se retiran
+
+=== ACT-B-OLD. CASO B CON .old ALTERADO ===
+  OK    ACT-B-OLD) [estado] marca presente y destino = N
+  FALLO    NO se declara limpiado  -- {"resueltas":[{"caso":"B","ok":true,"actionId":"308f0b5bb2bc13e5575b1f955e2236e5","limpiado":true}],"fallosCerrados":[],"ajenos":0,"ilegiblesAjenos":0}
+  FALLO    se clasifica residuo-no-demostrable  -- undefined
+  OK       el .old NO se borra
+  FALLO    el journal NO se borra
+  OK       NO hay rollback: el destino sigue siendo N
+  OK       nada cambia en la carpeta
+
+=== ACT-NEW-EVAL. PRIMER GUARDADO SIN DESTINO PREVIO ===
+  OK    ACT-NEW-EVAL) [estado] el destino NO existe
+  OK       NO aplicado
+  OK       el archivo nuevo se retira
+  OK       cero fila
+  OK       cero journal
+  OK       cero .old y cero .tmp
+  OK       el segundo intento guarda normalmente
+  OK       con su contenido
+  OK       y su fila
+  OK       el tercero ya es un reemplazo real
+  OK       sin dejar residuos
+
+=== PRODUCCION NO TOCADA ===
+  OK    la huella de produccion es IDENTICA
+    antes:   f71f4140e7fd68504cbf65c1d930bc4a244554d7bfb013a70557a30ccf74f501
+    despues: f71f4140e7fd68504cbf65c1d930bc4a244554d7bfb013a70557a30ccf74f501
+
+==================================================================
+  BLOQUE 4 — helper y recuperacion aislados: 150 OK, 92 FALLOS
+==================================================================
+  fallos:
+   - SCHEMA-1 falta new_sha256: NO se acepta como evidencia valida
+   - SCHEMA-2 new_sha256 no es SHA-256: NO se acepta como evidencia valida
+   - SCHEMA-3 falta modo: NO se acepta como evidencia valida
+   -    la recuperacion NO hace rollback
+   -    NO destruye ni un byte
+   -    el .old (unica copia del original) sigue ahi
+   -    el journal NO se borra
+   -    ninguna accion propia nueva comienza
+   -    y no escribio nada
+   - SCHEMA-4 overwrite sin original_sha256: NO se acepta como evidencia valida
+   -    la recuperacion NO hace rollback
+   -    NO destruye ni un byte
+   -    el journal NO se borra
+   -    ninguna accion propia nueva comienza
+   -    y no escribio nada
+   - SCHEMA-5 nuevo con original_sha256: NO se acepta como evidencia valida
+   -    la recuperacion NO hace rollback
+   -    NO destruye ni un byte
+   -    el journal NO se borra
+   -    ninguna accion propia nueva comienza
+   -    y no escribio nada
+   - SCHEMA-6 base_commit_id corrupto: NO se acepta como evidencia valida
+   -    la recuperacion NO hace rollback
+   -    NO destruye ni un byte
+   -    el .old (unica copia del original) sigue ahi
+   -    el journal NO se borra
+   -    ninguna accion propia nueva comienza
+   -    y no escribio nada
+   - SCHEMA-7 action_id mal formado: NO se acepta como evidencia valida
+   -    la recuperacion NO hace rollback
+   -    NO destruye ni un byte
+   -    el .old (unica copia del original) sigue ahi
+   -    el journal NO se borra
+   -    ninguna accion propia nueva comienza
+   -    y no escribio nada
+   - SCHEMA-8 falta new_size: NO se acepta como evidencia valida
+   -    la recuperacion NO hace rollback
+   -    NO destruye ni un byte
+   -    el .old (unica copia del original) sigue ahi
+   -    el journal NO se borra
+   -    ninguna accion propia nueva comienza
+   -    y no escribio nada
+   - SCHEMA-9 tipo desconocido: NO se acepta como evidencia valida
+   -    la recuperacion NO hace rollback
+   -    NO destruye ni un byte
+   -    el .old (unica copia del original) sigue ahi
+   -    el journal NO se borra
+   -    ninguna accion propia nueva comienza
+   -    y no escribio nada
+   - SCHEMA-10 fase inesperada: NO se acepta como evidencia valida
+   -    la recuperacion NO hace rollback
+   -    NO destruye ni un byte
+   -    el .old (unica copia del original) sigue ahi
+   -    el journal NO se borra
+   -    ninguna accion propia nueva comienza
+   -    y no escribio nada
+   - SCHEMA-11 cifrado no booleano: NO se acepta como evidencia valida
+   -    la recuperacion NO hace rollback
+   -    NO destruye ni un byte
+   -    el .old (unica copia del original) sigue ahi
+   -    el journal NO se borra
+   -    ninguna accion propia nueva comienza
+   -    y no escribio nada
+   - SCHEMA-12 destino relativo: NO se acepta como evidencia valida
+   -    y la vuelta atras repuso el original con otro rename
+   -    el destino vuelve EXACTAMENTE al original
+   -    no queda .old ni .tmp
+   -    PERDIDA DE DATOS: no
+   - ACT-F3-2) devuelve NO aplicado y NO reintentable
+   -    se identifica como no demostrable
+   -    CERO destruccion: el journal se conserva
+   -    la sesion queda bloqueada
+   -    el siguiente arranque lo resuelve
+   -    y el destino vuelve al ORIGINAL
+   -    la marca queda corrupta
+   -    estadoAccionEnMarca dice "no-demostrable", NO "no-aplicada"
+   -    la recuperacion NO deshace A
+   -    se clasifica accion-no-demostrable
+   -    el archivo de A sigue intacto
+   -    material y journal conservados byte a byte
+   -    el journal sigue ahi
+   -    ninguna accion propia nueva puede empezar
+   -    y no escribio nada
+   -    journalsDeAcciones() NO devuelve lista vacia
+   -    una accion nueva NO se inicia
+   -    se identifica como no verificable
+   -    CERO commits: el commit de la BD no avanza
+   -    ningun archivo cambia
+   -    la recuperacion tampoco inventa ausencia
+   -    NO se declara limpiado
+   -    se clasifica residuo-no-demostrable
+   -    el journal NO se borra
+  carpetas de prueba borradas: true

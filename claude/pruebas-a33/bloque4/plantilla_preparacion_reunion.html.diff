@@ -1,0 +1,76 @@
+--- plantilla_preparacion_reunion.html (antes)
++++ plantilla_preparacion_reunion.html (despues)
+@@ -1013,6 +1013,13 @@
+   if(state.saveHistoryStatus === 'ok'){
+     return `<span class="save-status ok">✓ Guardado en el historial</span>`;
+   }
++  // A3.3/Bloque 4 — CUARTO estado. Tras la forma 3 del contrato de acción
++  // (aplicado:true, verificado:false) el cambio SÍ se guardó, así que decir
++  // "no se pudo guardar" es falso, y ofrecer "Reintentar" es justo lo que el
++  // contrato prohíbe: nunca se repite una acción ya aplicada. No lleva botón.
++  if(state.saveHistoryStatus === 'requiere-reinicio'){
++    return `<span class="save-status error">⚠ El cambio SÍ se guardó, pero esta sesión no puede continuar de forma segura. Cierra Panorama del Servicio y vuelve a abrirlo.</span>`;
++  }
+   if(state.saveHistoryStatus === 'error'){
+     return `<span class="save-status error">⚠ No se pudo guardar automáticamente <button type="button" class="btn" id="btn-retry-save">Reintentar</button></span>`;
+   }
+@@ -1029,8 +1036,17 @@
+ // vez de duplicar. El resultado se pinta con `saveStatusHtml()` en el
+ // propio paso de guion — "✓ Guardado en el historial" en verde, o un
+ // aviso de error con botón de reintentar si algo falla.
++// A3.3/Bloque 4 — CONTRATO DE ACCIÓN. `saveMeetingPrep`/`updateMeetingPrep`
++// devuelven ahora `{ok, aplicado, verificado, reintentable, …}` (ver
++// preload.js). Lo que decide si el contenido está guardado es `aplicado`, NO
++// `ok`: la forma "aplicado pero sin verificar" también trae `ok:true`, y
++// tratarla como un guardado normal dejaría al usuario editando sobre una
++// sesión cuya base de datos ya no admite escrituras.
++let guardadosDetenidos = false;
++let avisoReinicioMostrado = false;
+ async function autoSaveHistory(){
+   if(!window.panoramaBridge || typeof window.panoramaBridge.saveMeetingPrep !== 'function') return;
++  if(guardadosDetenidos){ state.saveHistoryStatus = 'requiere-reinicio'; render(); return; }
+   state.saveHistoryStatus = 'saving';
+   render();
+   try{
+@@ -1040,10 +1056,22 @@
+       result = await window.panoramaBridge.updateMeetingPrep(state.loadedPrepId, state.todayDate, state.finalidad, payload);
+     } else {
+       result = await window.panoramaBridge.saveMeetingPrep(state.todayDate, state.finalidad, payload);
+-      if(result && result.ok && result.id) state.loadedPrepId = result.id;
++      if(result && result.aplicado === true && result.id) state.loadedPrepId = result.id;
+     }
+-    state.saveHistoryStatus = (result && result.ok) ? 'ok' : 'error';
+-    if(!result || !result.ok) console.warn('No se pudo guardar en el historial:', result && result.error);
++    const aplicado = !!(result && result.aplicado === true);
++    state.saveHistoryStatus = aplicado ? 'ok' : 'error';
++    if(!aplicado) console.warn('No se pudo guardar en el historial:', result && result.error);
++    if(aplicado && result.verificado === false){
++      // Se aplicó, pero la sesión ya no es de fiar: no se repite NUNCA y se
++      // deja de guardar en esta ventana.
++      guardadosDetenidos = true;
++      state.saveHistoryStatus = 'requiere-reinicio';
++      if(!avisoReinicioMostrado){
++        avisoReinicioMostrado = true;
++        try{ await psAlert(result.aviso || 'Se guardó, pero no se pudo verificar. Cierra la aplicación y vuelve a abrirla.',
++          { title:'Hay que reiniciar la aplicación', danger:true }); }catch(e){}
++      }
++    }
+   }catch(e){
+     state.saveHistoryStatus = 'error';
+     console.warn('No se pudo guardar en el historial:', e);
+@@ -1322,6 +1350,15 @@
+ 
+   const restart = document.getElementById('btn-restart');
+   if(restart) restart.onclick = async () => {
++    // A3.3/Bloque 4: tras la forma 3 esta ventana ya no puede guardar. Abrir
++    // una preparación nueva sería invitar al usuario a rellenarla creyendo que
++    // se guardará, y no se guardaría.
++    if(guardadosDetenidos){
++      await psAlert('El último cambio SÍ se guardó, pero esta sesión no puede continuar de forma segura. ' +
++        'Cierra Panorama del Servicio y vuelve a abrirlo antes de empezar una preparación nueva.',
++        { title:'Hay que reiniciar la aplicación', danger:true });
++      return;
++    }
+     const ok = await psConfirm('Se perderán las respuestas actuales.', { title:'¿Empezar una nueva preparación?', confirmLabel:'Empezar de nuevo', danger:true });
+     if(ok){
+       const freshFields = {};

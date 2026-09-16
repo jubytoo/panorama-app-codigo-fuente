@@ -1,0 +1,217 @@
+--- plantilla_evaluacion_candidatos.html (antes)
++++ plantilla_evaluacion_candidatos.html (despues)
+@@ -717,17 +717,45 @@
+ }
+ 
+ let saveTimer = null;
++// A3.3/Bloque 4 — CONTRATO DE ACCIÓN. `saveCandidateEvalData` devuelve
++// `{ok, aplicado, verificado, reintentable, …}` (ver preload.js). Lo que
++// decide si está guardado es `aplicado`, NO `ok`: la forma "aplicado pero sin
++// verificar" también trae `ok:true`, y enseñar "Guardado" ahí dejaría al
++// usuario siguiendo con una sesión que ya no puede escribir.
++let guardadosDetenidos = false;
++let avisoReinicioMostrado = false;
+ function saveState(immediate) {
+   clearTimeout(saveTimer);
++  if (guardadosDetenidos) return;
+   if (immediate) { doSaveNow(); return; }
+   saveTimer = setTimeout(doSaveNow, 400);
+ }
+ async function doSaveNow() {
+   clearTimeout(saveTimer);
++  if (guardadosDetenidos) return;
+   try {
+     const res = await window.panoramaBridge.saveCandidateEvalData(JSON.stringify(state));
+-    if (res && res.ok) showToast('Guardado');
+-    else showError((res && res.error) || 'No se pudo guardar.');
++    if (!res || res.aplicado !== true) {
++      showError((res && res.error) || 'No se pudo guardar.');
++      return;
++    }
++    if (res.verificado === false) {
++      // Se aplicó: NO se repite. Pero la sesión no puede seguir guardando.
++      guardadosDetenidos = true;
++      clearTimeout(saveTimer);
++      const aviso = res.aviso || 'Se guardó, pero no se pudo verificar. Cierra la aplicación y vuelve a abrirla.';
++      // Banner FIJO, no el toast de 4,5 s: mientras esta ventana siga abierta
++      // el usuario tiene que ver que sus cambios nuevos ya no se guardan.
++      mostrarAvisoPersistente(AVISO_SESION_DETENIDA);
++      if (!avisoReinicioMostrado) {
++        avisoReinicioMostrado = true;
++        if (typeof psAlert === 'function') {
++          try { await psAlert(aviso, { title: 'Hay que reiniciar la aplicación', danger: true }); } catch (e) {}
++        }
++      }
++      return;
++    }
++    showToast('Guardado');
+   } catch (e) {
+     showError('No se pudo guardar: ' + ((e && e.message) || String(e)));
+   }
+@@ -757,6 +785,59 @@
+   toastTimer = setTimeout(() => el.classList.remove('show'), 4500);
+ }
+ 
++// ------------------------------------------------------------------
++// A3.3/Bloque 4 — SESIÓN DETENIDA (forma 3 del contrato de acción).
++//
++// El toast dura 4,5 s y luego desaparece: no sirve para esto. Si tras
++// "aplicado:true / verificado:false" el aviso se esfuma y la ventana sigue
++// editable, el usuario puede seguir trabajando durante minutos creyendo que
++// se guarda — y no se guarda. Aquí el aviso es un banner FIJO que no se va
++// mientras la ventana siga abierta.
++//
++// Y no basta con bloquear el guardado: TODA mutación queda congelada, porque
++// algunas escriben en disco por su cuenta (los CV) y dejarlas pasar produce
++// justo la incoherencia archivo↔estado que este bloque existe para evitar.
++function mostrarAvisoPersistente(texto) {
++  let el = document.getElementById('avisoSesionDetenida');
++  if (!el) {
++    el = document.createElement('div');
++    el.id = 'avisoSesionDetenida';
++    el.setAttribute('role', 'alert');
++    el.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:99999;padding:12px 16px;' +
++      'background:#7f1d1d;color:#fff;font-weight:600;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.4);';
++    document.body.appendChild(el);
++    document.body.style.paddingTop = '48px';
++  }
++  el.textContent = texto || AVISO_SESION_DETENIDA;
++}
++const AVISO_SESION_DETENIDA =
++  'El último cambio se guardó. Esta sesión debe reiniciarse: cierra Panorama del Servicio y vuelve a ' +
++  'abrirlo. Los cambios nuevos NO se guardarán.';
++
++// Guarda ÚNICA para todas las acciones que cambian `state` o tocan archivos.
++// Va SIEMPRE antes de llamar a ningún IPC: no vale hacer el IPC y descubrir
++// después que no se puede guardar el estado.
++function mutacionesPermitidas() {
++  if (!guardadosDetenidos) return true;
++  mostrarAvisoPersistente();
++  return false;
++}
++// Acciones que NO cambian ni `state` ni ningún archivo: siguen permitidas con
++// la sesión detenida. Todo lo demás pasa por `mutacionesPermitidas()`.
++// OJO con `task-guide`: NO va aquí. Es el <textarea> editable de la guía de
++// una tarea y su manejador hace `task.guide = t.value` — dejarla pasar
++// permitía escribir con la sesión detenida, `saveState()` no guardaba, y ese
++// texto se perdía al cerrar sin que nada lo avisara.
++const ACCIONES_SOLO_LECTURA = new Set([
++  'toggle-puesto-tasks', 'toggle-tasks',
++  'export-eval', 'copy-feedback', 'ver-cv', 'cancel-puesto-name',
++]);
++function accionPermitida(action) {
++  if (!action) return true;
++  if (ACCIONES_SOLO_LECTURA.has(action)) return true;
++  return mutacionesPermitidas();
++}
++
+ // ---------- Modal genérico de texto ----------
+ function askText(title, desc, placeholder, onConfirm) {
+   const overlay = document.getElementById('modalOverlay');
+@@ -1558,6 +1639,7 @@
+ });
+ 
+ document.getElementById('threshold').addEventListener('input', e => {
++  if (!mutacionesPermitidas()) return;   // A3.3/Bloque 4
+   const v = parseFloat(e.target.value);
+   state.threshold = isNaN(v) ? 3.5 : v;
+   saveState(); renderEvaluaciones(); renderResultados();
+@@ -1590,6 +1672,7 @@
+ });
+ 
+ document.getElementById('btnAddPuesto').addEventListener('click', () => {
++  if (!mutacionesPermitidas()) return;   // A3.3/Bloque 4
+   askText('Nuevo puesto', 'Escribe el nombre del puesto — el bloque se crea al momento.', 'Ej: Consultora SAP MM', (name) => {
+     const id = uid();
+     state.puestos.push({ id, name, tasks: [], formacionMinima: '', aniosMinimos: '', sbaReferencia: '' });
+@@ -1603,6 +1686,7 @@
+ });
+ 
+ document.getElementById('btnAddEval').addEventListener('click', () => {
++  if (!mutacionesPermitidas()) return;   // A3.3/Bloque 4
+   if (state.puestos.length === 0) {
+     askConfirm('Todavía no hay puestos', 'Crea primero al menos un puesto en la pestaña Puestos. ¿Quieres ir allí ahora?', () => {
+       document.querySelector('nav.tabs button[data-tab="puestos"]').click();
+@@ -1622,6 +1706,7 @@
+ document.getElementById('puestosList').addEventListener('click', e => {
+   const t = e.target;
+   const action = t.dataset.action;
++  if (!accionPermitida(action)) return;   // A3.3/Bloque 4: sesion detenida
+   if (action === 'add-task') {
+     askText('Nueva tarea', 'Escribe el nombre de la tarea — luego ajustas su peso (0 a 5, según su importancia).', 'Ej: Soporte post-arranque', (name) => {
+       const puesto = puestoById(t.dataset.puesto);
+@@ -1693,6 +1778,11 @@
+   if (!puesto) return;
+   if (e.key === 'Enter') {
+     e.preventDefault();
++    // A3.3/Bloque 4: este manejador NO pasa por el listener de `click` de
++    // puestosList, así que necesita su propia guarda. Sin ella, Enter cambiaba
++    // `puesto.name` en memoria con la sesión detenida y el cambio se perdía al
++    // cerrar. Escape sigue permitido: solo cancela la edición, no toca datos.
++    if (!mutacionesPermitidas()) return;
+     const val = e.target.value.trim();
+     if (val) { puesto.name = val; saveState(true); }
+     editingPuestoNameId = null;
+@@ -1708,6 +1798,7 @@
+ document.getElementById('puestosList').addEventListener('input', e => {
+   const t = e.target;
+   const action = t.dataset.action;
++  if (!accionPermitida(action)) return;   // A3.3/Bloque 4: sesion detenida
+   if (action === 'task-name' || action === 'task-weight' || action === 'task-guide') {
+     const puesto = puestoById(t.dataset.puesto);
+     const task = puesto.tasks.find(tk => tk.id === t.dataset.task);
+@@ -1730,6 +1821,7 @@
+ document.getElementById('evalList').addEventListener('click', e => {
+   const t = e.target;
+   const action = t.dataset.action;
++  if (!accionPermitida(action)) return;   // A3.3/Bloque 4: sesion detenida
+   if (action === 'del-eval') {
+     const ev = state.evaluaciones.find(x => x.id === t.dataset.id);
+     askConfirm('Eliminar evaluación', `¿Seguro que quieres eliminar la evaluación de "${ev.candidato || '(sin nombre)'}"? Esta acción no se puede deshacer.`, () => {
+@@ -1759,6 +1851,10 @@
+     ev.feedbackEdited = null;
+     saveState(true); renderEvaluaciones();
+   } else if (action === 'adjuntar-cv' || action === 'cambiar-cv') {
++    // A3.3/Bloque 4: la guarda va ANTES del IPC. Adjuntar copia un archivo a
++    // disco y luego guarda el estado; si el estado ya no se puede guardar,
++    // quedaría un CV huérfano que nada referencia.
++    if (!mutacionesPermitidas()) return;
+     const ev = state.evaluaciones.find(x => x.id === t.dataset.id);
+     window.panoramaBridge.pickCandidateCv(ev.id).then(res => {
+       if (!res || res.canceled) return;
+@@ -1775,6 +1871,11 @@
+       if (!res || !res.ok) showError((res && res.error) || 'No se pudo abrir el CV.');
+     }).catch(e => showError('No se pudo abrir el CV: ' + ((e && e.message) || String(e))));
+   } else if (action === 'quitar-cv') {
++    // A3.3/Bloque 4: EL CASO GRAVE. `saveState(true)` sería un no-op con la
++    // sesión detenida, pero `removeCandidateCv()` SÍ borra el archivo físico:
++    // quedaría un estado.json confirmado apuntando a un CV que ya no existe.
++    // Por eso la guarda va antes incluso de preguntar.
++    if (!mutacionesPermitidas()) return;
+     const ev = state.evaluaciones.find(x => x.id === t.dataset.id);
+     askConfirm('Quitar CV', `¿Seguro que quieres quitar el CV adjuntado a "${ev.candidato || '(sin nombre)'}"? El archivo se borrará de la carpeta de backups de este proyecto.`, () => {
+       const storedName = ev.cvStoredName;
+@@ -1804,6 +1905,7 @@
+ document.getElementById('evalList').addEventListener('change', e => {
+   const t = e.target;
+   const action = t.dataset.action;
++  if (!accionPermitida(action)) return;   // A3.3/Bloque 4: sesion detenida
+   if (action === 'ev-puesto') {
+     const ev = state.evaluaciones.find(x => x.id === t.dataset.id);
+     ev.puestoId = t.value; ev.notas = {}; ev.feedbackEdited = null;
+@@ -1820,6 +1922,7 @@
+ document.getElementById('evalList').addEventListener('input', e => {
+   const t = e.target;
+   const action = t.dataset.action;
++  if (!accionPermitida(action)) return;   // A3.3/Bloque 4: sesion detenida
+   const ev = t.dataset.id ? state.evaluaciones.find(x => x.id === t.dataset.id) : null;
+   if (action === 'ev-field') {
+     ev[t.dataset.field] = t.value;
+@@ -1862,6 +1965,7 @@
+ });
+ 
+ document.getElementById('fileImport').addEventListener('change', e => {
++  if (!mutacionesPermitidas()) { e.target.value = ''; return; }   // A3.3/Bloque 4
+   const file = e.target.files[0];
+   if (!file) return;
+   const reader = new FileReader();

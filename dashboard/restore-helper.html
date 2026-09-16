@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>Restaurando…</title></head>
+<body>
+<!--
+  Página auxiliar interna, invisible para el usuario (se carga en una ventana oculta).
+  Necesaria porque about:blank tiene el acceso a localStorage bloqueado en Chromium
+  ("Storage is disabled inside 'about:blank' documents"). Al vivir en el mismo directorio
+  file:// que plantilla_dashboard.html y usar la misma partición de Electron, comparte el
+  mismo cubo de almacenamiento — así se puede rellenar localStorage aquí ANTES de cargar
+  el dashboard real, sin tocar su lógica interactiva.
+-->
+Restaurando copia de seguridad…
+</body>
+</html>

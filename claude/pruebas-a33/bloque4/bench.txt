@@ -1,0 +1,35 @@
+﻿BENCHMARK BLOQUE 4 — coste por fase de la mini-transaccion
+  carpeta:            C:\Users\ADMIN~1.JLO\AppData\Local\Temp\_a33-bloque4-BENCH
+  ubicacion real det.: (no configurada)
+  node:               20.16.0  (electron 30.5.1)
+
+  N=30 por medida; una pasada de calentamiento descartada
+
+  FASE                                     64 KB      512 KB       2 MB
+  ------------------------------------------------------------------------
+  HOY  writeFileSync del archivo           0.826 ms   0.523 ms   2.543 ms
+  F1   tmp durable (fsync + rename)        4.308 ms   5.923 ms  10.964 ms
+  F1b  releer el tmp + sha256              0.120 ms   0.481 ms   2.503 ms
+  F2   journal durable (~500 B)            3.387 ms   3.453 ms   4.499 ms
+  F3   rename (publicar)                   1.476 ms   0.976 ms   2.204 ms
+  F5   borrar journal + .old               0.472 ms   0.275 ms   0.336 ms
+  ------------------------------------------------------------------------
+  F4   commit A3.3 (.sqlite3 de 44 KB): 27.535 ms  (no depende del payload)
+
+  COSTE POR GUARDADO DE backup:save
+  ------------------------------------------------------------------------
+     64 KB   hoy 28.36 ms   ->   protocolo 37.30 ms   (+8.94 ms, x1.3)
+    512 KB   hoy 28.06 ms   ->   protocolo 38.64 ms   (+10.58 ms, x1.4)
+   2048 KB   hoy 30.08 ms   ->   protocolo 48.04 ms   (+17.96 ms, x1.6)
+
+  Referencia: el autoguardado corre cada 15.000 ms.
+     64 KB   ocupa el 0.249 % de cada ciclo
+    512 KB   ocupa el 0.258 % de cada ciclo
+   2048 KB   ocupa el 0.320 % de cada ciclo
+
+  LIMITE DE ESTA MEDIDA: es coste y compatibilidad sobre un disco local.
+  NO demuestra durabilidad ante un corte electrico, ni dice nada del
+  comportamiento real sobre una carpeta sincronizada por Drive.
+
+  produccion intacta: true  (f71f4140e7fd6850...)
+  carpeta de prueba borrada: true

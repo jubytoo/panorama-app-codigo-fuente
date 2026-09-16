@@ -1,0 +1,13 @@
+{
+    "archivo":  "G:\\Mi unidad\\BD-PanoramaServicio\\panorama.sqlite3",
+    "sha256":  "D5C3FF53D09925B6C8258F5EFFF84DA44F949EBCE609A1276887BD30D21F46C8",
+    "bytes":  77824,
+    "lastWriteTime":  "2026-09-15T11:26:45.9140000+02:00",
+    "capturado":  "2026-09-15T13:24:29.4121207+02:00",
+    "anterior":  {
+                     "sha256":  "52394C7A0CB83D8B170F514C10522BF74FCA01D6D3F54160544B7D1375A01F16",
+                     "capturado":  "2026-09-15T00:00:17.7299478+02:00",
+                     "motivoDelCambio":  "sesion real del usuario: panorama.sqlite3 y app.log con la misma marca 2026-09-15 11:26:45, y cache de Chromium a las 12:39. Ninguna bateria toca esa carpeta."
+                 },
+    "nota":  "BD VIVA. La copia de %APPDATA%\\panorama-app\\panorama.sqlite3 es residual y NO es produccion."
+}

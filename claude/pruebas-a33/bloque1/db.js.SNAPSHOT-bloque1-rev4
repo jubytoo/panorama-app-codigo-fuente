@@ -1,0 +1,1341 @@
+// Base de datos interna del proyecto, vía sql.js (SQLite compilado a WebAssembly).
+// Se eligió deliberadamente en vez de un módulo nativo (better-sqlite3, etc.):
+// no requiere compilar nada para la arquitectura de Electron ni del sistema
+// operativo destino, así que funciona igual en desarrollo y una vez empaquetado
+// como .exe, sin pasos de "rebuild" nativos.
+//
+// ------------------------------------------------------------------
+// A3.3 — BLOQUE 1 DE INTEGRACIÓN (14 sept 2026).
+//
+// Se integra AQUÍ, y solo aquí, el núcleo de persistencia/detección validado en
+// aislamiento (395/395, ver claude/a3-3-diseno.md §15). `main.js` NO se toca en
+// este bloque.
+//
+// Lo que entra: ErrorDb + latch, metadatos de commit, ultimaImagenConfirmada,
+// escribirAtomico(), el testigo .gen, la detección previa, la frontera
+// PRE/POST-confirmación de run(), escribirMultiple(), y las persistencias
+// internas (getDb/vacuum) por el mismo camino.
+//
+// Lo que NO entra todavía: A1/rekey, Seguridad, A2, borrados, meeting,
+// contratos IPC, resolución de conflictos en la interfaz, cierre/apagado,
+// Drive/watchdog.
+//
+// ESTADO POR DEFECTO: política 'local' mientras main.js no inyecte otra con
+// setPoliticaUbicacion(). Es el modo MENOS protector a propósito, para que este
+// bloque no cambie el comportamiento observable de la aplicación. La detección
+// por bytes en carpeta compartida se activa en el bloque siguiente, con el
+// cableado. Ver §14.f del diseño.
+// ------------------------------------------------------------------
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const initSqlJs = require('sql.js');
+const { app } = require('electron');
+
+let db = null;
+let SQLjs = null;
+let dbFilePath = null;
+let genFilePath = null;
+let dirty = false;                 // A3.3: ahora SÍ se lee. Ver §2.d.
+
+// --- A3.3: estado de identidad y de sesión ---------------------------------
+let cMem = null;                   // commit de la imagen en memoria
+let pMem = null;                   // su padre
+let hMem = [];                     // historial (20 últimos)
+let gMem = 0;                      // generación (contador informativo)
+let fMio = null;                   // sha256 de la imagen confirmada
+let sMio = null;                   // { mtimeMs, size } del .sqlite3 confirmado
+let ultimaImagenConfirmada = null; // Buffer inmutable de lo último que llegó a disco
+let wYo = null;                    // installation-id de ESTE equipo
+let politica = 'local';            // 'local' | 'compartida' | 'desconocida'
+let escrituraBloqueada = null;
+let fsyncAvisado = false;
+const HISTORIAL_MAX = 20;
+
+// Códigos que SÍ significan "este sistema de archivos no implementa fsync".
+// Lista cerrada; todo lo demás es un fallo real.
+const FSYNC_NO_SOPORTADO = new Set(['EINVAL', 'ENOSYS', 'ENOTSUP', 'EOPNOTSUPP']);
+
+const MOTIVOS_IRREVERSIBLES = new Set(['comprometido', 'desincronizada', 'bd-ilegible']);
+const MOTIVOS_LEVANTABLES = new Set(['conflicto', 'degradado']);
+
+const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
+const nuevoCommit = () => crypto.randomBytes(16).toString('hex');
+
+// Inyección de fallos SOLO para las pruebas. En producción `_fallarEn` es null
+// y esta función no hace absolutamente nada. No se expone ningún camino que la
+// active desde main.js ni desde los renderers.
+let _fallarEn = null;
+function puntoDePrueba(nombre) {
+  if (_fallarEn === nombre) {
+    const e = new Error('FALLO INYECTADO en ' + nombre);
+    e.puntoInyectado = nombre;
+    throw e;
+  }
+}
+
+// Gancho de pruebas: permite que una prueba ejecute algo EN MEDIO del flujo,
+// para reproducir carreras reales (otro equipo escribe entre dos pasos
+// nuestros). En producción `_ganchoPrueba` es null y esto no hace nada.
+let _ganchoPrueba = null;
+function gancho(nombre) {
+  if (_ganchoPrueba) { try { _ganchoPrueba(nombre); } catch (e) { /* la prueba verá el efecto */ } }
+}
+
+// Registro interno. main.js no está cableado en este bloque, así que de momento
+// se guarda aquí y se puede consultar con _diagnostico().
+const registroA33 = [];
+function logA33(s) {
+  registroA33.push(new Date().toISOString() + ' ' + s);
+  if (registroA33.length > 200) registroA33.shift();
+}
+
+class ErrorDb extends Error {
+  constructor(kind, message, extra) {
+    super(message);
+    this.name = 'ErrorDb';
+    this.kind = kind;            // 'io'|'conflicto'|'bloqueado'|'ilegible'|'io-tras-confirmar'
+    this.aplicado = false;       // ¿esta sentencia llegó a disco?
+    this.accionAplicada = false; // reservado para el bloque de IPC
+    Object.assign(this, extra || {});
+  }
+}
+
+// --- latch ------------------------------------------------------------------
+// NO es una asignación: un motivo fatal ya puesto nunca se sustituye, ni por
+// otro fatal. El primero es el que explica la causa raíz.
+function bloquearEscrituras(motivo) {
+  if (escrituraBloqueada && MOTIVOS_IRREVERSIBLES.has(escrituraBloqueada)) {
+    logA33(`se ignora el bloqueo '${motivo}': ya bloqueado por '${escrituraBloqueada}'`);
+    return escrituraBloqueada;
+  }
+  escrituraBloqueada = motivo;
+  logA33(`escrituras bloqueadas por '${motivo}'`);
+  return escrituraBloqueada;
+}
+
+// Único punto que levanta el latch. Rechaza los tres motivos irreversibles,
+// venga de donde venga la petición.
+function levantarLatch(motivoEsperado) {
+  if (!escrituraBloqueada) return { ok: true };
+  if (MOTIVOS_IRREVERSIBLES.has(escrituraBloqueada)) {
+    return { ok: false, error: `'${escrituraBloqueada}' es irreversible en esta sesión` };
+  }
+  if (motivoEsperado && escrituraBloqueada !== motivoEsperado) {
+    return { ok: false, error: `el bloqueo actual es '${escrituraBloqueada}'` };
+  }
+  if (!MOTIVOS_LEVANTABLES.has(escrituraBloqueada)) {
+    return { ok: false, error: `'${escrituraBloqueada}' no es levantable` };
+  }
+  logA33(`bloqueo '${escrituraBloqueada}' levantado`);
+  escrituraBloqueada = null;
+  return { ok: true };
+}
+
+function estadoLatch() { return escrituraBloqueada; }
+function setPoliticaUbicacion(p) {
+  if (['local', 'compartida', 'desconocida'].includes(p)) {
+    politica = p;
+    logA33(`política de ubicación = '${p}'`);
+  }
+  return politica;
+}
+function setInstallationId(id) { if (id) wYo = String(id); return wYo; }
+
+// installation-id: identidad de ESTE equipo. Vive en la carpeta de configuración
+// LOCAL (la misma que location.json, ver userDataConfigPath() en main.js), nunca
+// en la carpeta de datos: si viajara por Drive dejaría de identificar nada.
+function cargarInstallationId() {
+  if (wYo) return wYo;
+  try {
+    const dirCfg = path.join(app.getPath('appData'), 'panorama-app-config');
+    const f = path.join(dirCfg, 'installation-id');
+    try {
+      const v = fs.readFileSync(f, 'utf8').trim();
+      if (v) { wYo = v; return wYo; }
+    } catch (e) { /* no existe todavía */ }
+    wYo = crypto.randomBytes(16).toString('hex');
+    fs.mkdirSync(dirCfg, { recursive: true });
+    fs.writeFileSync(f, wYo, 'utf8');
+  } catch (e) {
+    // Si ni siquiera se puede guardar, se usa uno de sesión: peor identidad,
+    // pero nunca un fallo de arranque por esto.
+    wYo = wYo || ('sesion-' + crypto.randomBytes(12).toString('hex'));
+    logA33('no se pudo persistir el installation-id: ' + String((e && e.message) || e));
+  }
+  return wYo;
+}
+
+// ---------------------------------------------------------------------------
+// ESCRITURA ATÓMICA — temporal, escritura completa, fsync, rename.
+// Nombre temporal GLOBALMENTE ÚNICO: process.pid no distingue dos PCs sobre la
+// misma carpeta sincronizada, y los .tmp supervivientes se tratan como posibles
+// imágenes de recuperación.
+// ---------------------------------------------------------------------------
+function nombreTemporal(rutaFinal, opts) {
+  const o = opts || {};
+  const w = o.writer ? String(o.writer).replace(/[^0-9a-zA-Z_-]/g, '').slice(0, 16) : 'anon';
+  const nonce = (o.commit ? String(o.commit).slice(0, 8) : '') + crypto.randomBytes(8).toString('hex');
+  return `${rutaFinal}.tmp-${w}-${nonce}`;
+}
+
+function escribirAtomico(rutaFinal, buffer, opts) {
+  const o = opts || {};
+  const conFsync = o.conFsync !== false;
+  const tmp = nombreTemporal(rutaFinal, o);
+  let completo = false;
+  let fsyncNoSoportado = false;
+
+  const fd = fs.openSync(tmp, 'w');
+  try {
+    let escritos = 0;
+    let vueltas = 0;
+    while (escritos < buffer.length) {
+      if (++vueltas > buffer.length + 16) {
+        throw new ErrorDb('io', `bucle de escritura sin fin en el byte ${escritos}`);
+      }
+      const n = fs.writeSync(fd, buffer, escritos, buffer.length - escritos, escritos);
+      if (!(n > 0)) throw new ErrorDb('io', `writeSync sin progreso en el byte ${escritos} de ${buffer.length}`);
+      escritos += n;
+    }
+    if (escritos !== buffer.length) {
+      throw new ErrorDb('io', `escritura incompleta: ${escritos}/${buffer.length}`);
+    }
+    if (conFsync) {
+      try {
+        fs.fsyncSync(fd);
+      } catch (e) {
+        if (FSYNC_NO_SOPORTADO.has(e && e.code)) {
+          fsyncNoSoportado = true;
+        } else {
+          throw new ErrorDb('io', `fsync falló (${(e && e.code) || '?'}): ${e && e.message}`);
+        }
+      }
+    }
+    completo = true;
+  } finally {
+    try { fs.closeSync(fd); } catch (e) { /* ya cerrado */ }
+    if (!completo) {
+      // El temporal NO sustituye nada. Se conserva para diagnóstico.
+      const fallido = tmp.replace('.tmp-', '.tmp-fallido-') + '-' + Date.now();
+      try { fs.renameSync(tmp, fallido); } catch (e) { /* se queda como .tmp- */ }
+    }
+  }
+  fs.renameSync(tmp, rutaFinal);   // solo con completo === true
+  if (fsyncNoSoportado && !fsyncAvisado) {
+    fsyncAvisado = true;
+    logA33('fsync no soportado en esta ubicación: garantía de durabilidad REBAJADA');
+  }
+  return { fsyncNoSoportado };
+}
+
+// --- el testigo .gen --------------------------------------------------------
+function leerGen() {
+  try {
+    const j = JSON.parse(fs.readFileSync(genFilePath, 'utf8'));
+    if (!j || j.v !== 2 || !j.commit_id || !j.writer) return null;
+    return {
+      C: j.commit_id, P: j.parent_commit_id || null, W: j.writer, gen: j.gen,
+      // Marcador de bootstrap (§adopción). Solo lo lleva el testigo que se
+      // publica durante la PRIMERA adopción de una base de datos sin identidad.
+      fase: j.fase || null,
+      baseSha: j.base_sha256 || null,
+    };
+  } catch (e) { return null; }
+}
+
+// `extra` permite marcar el testigo de bootstrap. Ver adopcionQueSePuedeProbar().
+function escribirGen(commit, parent, gen, extra) {
+  const obj = {
+    v: 2, gen, commit_id: commit, parent_commit_id: parent, writer: wYo,
+    at: new Date().toISOString(),
+  };
+  if (extra && extra.fase) obj.fase = extra.fase;
+  if (extra && extra.baseSha) obj.base_sha256 = extra.baseSha;
+  if (extra && extra.base) obj.base = extra.base;
+  escribirAtomico(genFilePath, Buffer.from(JSON.stringify(obj), 'utf8'), { writer: wYo, commit });
+}
+
+// El marcador de fase es TRANSITORIO: describe una adopción o una creación EN
+// CURSO, no la forma estable de un commit raíz. En cuanto el .sqlite3 queda
+// confirmado, el testigo se reescribe sin la marca — mismo commit, mismo padre,
+// mismo writer y misma generación, pero ya sin `fase` ni `base_sha256`.
+//
+// Si no se consigue, no pasa nada grave: el arranque siguiente lo normaliza al
+// ver que la base de datos YA contiene ese commit.
+function normalizarGenTrasConfirmar(commit, parent, gen) {
+  try {
+    escribirGen(commit, parent, gen);
+    logA33('testigo normalizado: se retira la marca de fase tras confirmar');
+    return true;
+  } catch (e) {
+    logA33('no se pudo normalizar el testigo (se hará al arrancar): ' + String((e && e.message) || e));
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// ¿Qué significa una base de datos SIN db_commit_id que tiene un .gen al lado?
+//
+// La regla anterior ("si parent_commit_id es null, es mi bootstrap
+// interrumpido") ERA FALSA: el primer commit válido de cualquier base de datos
+// A3.3 es precisamente un commit raíz con padre nulo. Y en una carpeta de Drive
+// ese .gen raíz puede venir de OTRO equipo.
+//
+// Hace falta una marca inequívoca y ligada a ESOS bytes concretos:
+//     fase = 'bootstrap'   y   base_sha256 = SHA-256 de la imagen legada
+//
+// Devuelve el motivo de la clasificación, nunca una adopción por defecto.
+function clasificarGenSobreBdSinIdentidad(g, shaBytes) {
+  if (!g) return { tipo: 'legado-limpio' };                 // no hay testigo: BD anterior a A3.3
+  if (g.P) return { tipo: 'incoherente', motivo: 'sin db_commit_id habiendo un .gen encadenado' };
+  if (g.fase !== 'bootstrap') {
+    // .gen raíz NORMAL (una BD A3.3 cuyo primer commit era raíz) junto a un
+    // .sqlite3 sin identidad: alguien ha sustituido el archivo. No se adopta.
+    return { tipo: 'no-demostrable', motivo: 'hay un .gen raíz normal (sin marca de bootstrap) junto a una base de datos sin identidad' };
+  }
+  if (!g.baseSha || g.baseSha !== shaBytes) {
+    return { tipo: 'no-demostrable', motivo: 'el testigo de bootstrap no corresponde a estos bytes (base_sha256 no coincide)' };
+  }
+  if (g.W !== wYo) {
+    return { tipo: 'bootstrap-ajeno', motivo: `otro equipo (${String(g.W).slice(0, 8)}…) está adoptando esta base de datos ahora mismo` };
+  }
+  return { tipo: 'bootstrap-propio', motivo: 'adopción propia interrumpida sobre exactamente estos bytes' };
+}
+
+function preservarGenComoTestigo() {
+  try {
+    const destino = `${genFilePath}.interrumpido-${Date.now()}`;
+    fs.copyFileSync(genFilePath, destino);
+    logA33('testigo interrumpido preservado en ' + path.basename(destino));
+    return destino;
+  } catch (e) { return null; }
+}
+
+// Aparta (NO borra) un .gen que escribimos y que no llegó a respaldarse con su
+// .sqlite3. Es imprescindible en el bootstrap: si se quedara ahí, el arranque
+// siguiente vería una BD legada sin db_commit_id junto a un .gen y podría
+// tomarla por corrupta. Se conserva con otro nombre para no perder evidencia.
+function apartarGenFallido(etiqueta) {
+  try {
+    if (!fs.existsSync(genFilePath)) return null;
+    const destino = `${genFilePath}.${etiqueta}-${Date.now()}`;
+    fs.renameSync(genFilePath, destino);
+    logA33(`testigo apartado como ${path.basename(destino)} (${etiqueta})`);
+    return destino;
+  } catch (e) {
+    logA33('NO se pudo apartar el testigo fallido: ' + String((e && e.message) || e));
+    return null;
+  }
+}
+
+// --- lectura del .sqlite3 con ESTADOS EXPLÍCITOS ----------------------------
+// "No he podido leer" NO es "he demostrado un conflicto".
+//   'valida' | 'ausente' | 'no-disponible' | 'ilegible'
+function leerDisco() {
+  let bytes;
+  try {
+    bytes = fs.readFileSync(dbFilePath);
+  } catch (e) {
+    const cod = (e && e.code) || '';
+    if (cod === 'ENOENT') return { estado: 'ausente', motivo: 'el archivo no existe' };
+    return { estado: 'no-disponible', motivo: `no se pudo leer (${cod || e.message})`, codigo: cod };
+  }
+  let d = null;
+  try { d = new SQLjs.Database(bytes); } catch (e) { return { estado: 'ilegible', motivo: 'no abre' }; }
+  try {
+    const ic = d.exec('PRAGMA integrity_check');
+    const okIc = ic.length && ic[0].values.length && String(ic[0].values[0][0]) === 'ok';
+    if (!okIc) { d.close(); return { estado: 'ilegible', motivo: 'integrity_check' }; }
+    const r = d.exec(
+      "SELECT key,value FROM app_meta WHERE key IN " +
+      "('db_commit_id','db_parent_commit_id','db_commit_history','db_generation')"
+    );
+    const m = {};
+    if (r.length) r[0].values.forEach(([k, v]) => { m[k] = v; });
+    d.close();
+    // Base de datos SIN db_commit_id: puede ser legítima (anterior a A3.3) o
+    // puede ser el síntoma de algo roto. La decisión se delega en
+    // clasificarGenSobreBdSinIdentidad(), que exige PRUEBA ligada a estos
+    // bytes concretos y no se conforma con "parent_commit_id es null".
+    if (!m.db_commit_id) {
+      const shaBytes = sha256(bytes);
+      const c = clasificarGenSobreBdSinIdentidad(leerGen(), shaBytes);
+      const base = { C: null, P: null, H: [], gen: 0, F: shaBytes, bytes, sinIdentidad: true };
+
+      if (c.tipo === 'incoherente') return { estado: 'ilegible', motivo: c.motivo };
+      if (c.tipo === 'no-demostrable') return { estado: 'no-demostrable', motivo: c.motivo, F: shaBytes };
+      if (c.tipo === 'bootstrap-ajeno') {
+        return { estado: 'bootstrap-ajeno', motivo: c.motivo, F: shaBytes, writerAjeno: true };
+      }
+      if (c.tipo === 'bootstrap-propio') {
+        return Object.assign({ estado: 'valida' }, base, { adopcionPropiaInterrumpida: true });
+      }
+      // 'legado-limpio': base de datos de una versión ANTERIOR a A3.3, sin
+      // testigo al lado. Es el caso normal de la instalación actual.
+      return Object.assign({ estado: 'valida' }, base);
+    }
+    return {
+      estado: 'valida',
+      C: m.db_commit_id,
+      P: m.db_parent_commit_id || null,
+      H: JSON.parse(m.db_commit_history || '[]'),
+      gen: parseInt(m.db_generation || '0', 10),
+      F: sha256(bytes),
+      bytes,
+    };
+  } catch (e) {
+    try { d.close(); } catch (e2) {}
+    return { estado: 'ilegible', motivo: String((e && e.message) || e) };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// ¿Un resto concreto prueba, en exclusiva, una PRIMERA CREACIÓN NUESTRA que se
+// quedó a medias? Es distinto de "hay restos, luego hubo datos".
+//
+// El testigo de una primera creación lleva `fase:'creacion-inicial'` y
+// `base:'ninguna'` — es decir, deja constancia de que cuando se escribió NO
+// existía ninguna base de datos previa. Solo cuenta si además es de ESTE
+// equipo. Cualquier otra cosa (un `.gen` vivo, un `.conflicto-`, un
+// `.abandonado-`, un testigo de otro writer, o algo que no se pueda leer) NO
+// se explica y sigue bloqueando.
+// ---------------------------------------------------------------------------
+function esTestigoDeCreacionInicialPropia(dir, f) {
+  const base = path.basename(dbFilePath);
+  if (!f.startsWith(base + '.gen.creacion-fallida-')) return false;
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+    return !!(j && j.v === 2 && j.fase === 'creacion-inicial' && j.base === 'ninguna' &&
+      j.writer === wYo && (j.parent_commit_id === null || j.parent_commit_id === undefined));
+  } catch (e) { return false; }
+}
+
+// Temporales NUESTROS, tanto del `.sqlite3` como del `.gen`. El nombre del
+// temporal del testigo es `panorama.sqlite3.gen.tmp-<writer>-<nonce>`, así que
+// el prefijo del .sqlite3 no basta: hay que contemplar los dos.
+function esTemporalPropio(f) {
+  const base = path.basename(dbFilePath);
+  const w = String(wYo || '').replace(/[^0-9a-zA-Z_-]/g, '').slice(0, 16);
+  if (!w) return false;
+  const prefijos = [base, base + '.gen'];
+  const clases = ['.tmp-', '.tmp-fallido-', '.tmp-huerfano-'];
+  for (const p of prefijos) {
+    for (const c of clases) {
+      if (f.startsWith(p + c + w)) return true;
+    }
+  }
+  return false;
+}
+
+// --- ¿la carpeta está realmente virgen? -------------------------------------
+// Solo como comprobación ADICIONAL antes de crear, nunca como autorización.
+// Ante cualquier duda devuelve false (fail-closed).
+function pareceUbicacionNueva() {
+  const dir = path.dirname(dbFilePath);
+  let entradas;
+  try { entradas = fs.readdirSync(dir); } catch (e) {
+    return { nueva: false, motivo: 'no se pudo listar la carpeta de datos' };
+  }
+  const base = path.basename(dbFilePath);
+  const restos = entradas.filter((f) => f === base || f.startsWith(base + '.'));
+  if (!restos.length) {
+    return { nueva: true, motivo: 'no hay ningún rastro de una base de datos previa' };
+  }
+
+  // ¿TODOS los restos se explican por un intento de creación NUESTRO?
+  //
+  // Se aceptan dos clases, y solo esas dos:
+  //   · el testigo `.gen.creacion-fallida-…` que prueba `fase:'creacion-inicial'`
+  //     con `base:'ninguna'` y nuestro writer;
+  //   · temporales nuestros (del .sqlite3 o del .gen), que es lo que queda si
+  //     el corte ocurrió ANTES de poder publicar siquiera el testigo.
+  //
+  // Aquí ya se sabe que NO hay `panorama.sqlite3` (solo se llega con el estado
+  // 'ausente'), así que un temporal nuestro sin base de datos al lado no puede
+  // proceder de una escritura sobre datos anteriores: o nunca hubo base, o el
+  // usuario la borró. En ambos casos crear es correcto, y el resto se conserva.
+  const noExplicados = restos.filter((f) =>
+    !esTestigoDeCreacionInicialPropia(dir, f) && !esTemporalPropio(f));
+  if (noExplicados.length) {
+    return { nueva: false, motivo: `hay restos de una base de datos anterior: ${noExplicados.join(', ')}` };
+  }
+  return {
+    nueva: true,
+    motivo: `solo hay restos de un intento de creación propio interrumpido (${restos.join(', ')})`,
+    creacionInicialInterrumpida: true,
+  };
+}
+
+// --- clasificación (función pura) -------------------------------------------
+function clasificar(e) {
+  const R = (tipo, caso, motivo, extra) => Object.assign({ tipo, caso, motivo }, extra || {});
+
+  if (e.politica === 'local' && e.gen && e.sMio && e.stat) {
+    if (e.gen.C === e.mem.C && e.stat.mtimeMs === e.sMio.mtimeMs && e.stat.size === e.sMio.size) {
+      return R('seguir', null, 'atajo local: .gen y stat sin cambios');
+    }
+  }
+  if (!e.disk) return R('leer-disco', null, 'hay que leer el .sqlite3 para clasificar');
+  if (!e.gen) {
+    return R(e.politica === 'local' ? 'reparar-gen' : 'degradado', 7,
+      'el .gen no existe o no se puede interpretar');
+  }
+
+  // RAMA A: .gen y BD del mismo commit
+  if (e.gen.C === e.disk.C) {
+    if (e.disk.C === e.mem.C) {
+      if (e.disk.F === e.mem.F) {
+        return R('seguir', null, 'mismo commit y mismos bytes; se refresca S_mio', { refrescarStat: true });
+      }
+      return R('conflicto', 8, 'el .sqlite3 cambió sin que cambiaran los identificadores');
+    }
+    if (e.disk.H.includes(e.mem.C)) {
+      if (e.dirty) return R('conflicto', 1, 'el disco desciende de lo nuestro, pero hay cambios sin confirmar');
+      return R('recarga', 1, 'descendencia lineal estricta');
+    }
+    if (e.mem.H.includes(e.disk.C)) return R('aviso-atrasado', 4, 'la imagen del disco es un ancestro nuestro');
+    if (e.gen.P && e.mem.P && e.gen.P === e.mem.P) {
+      return R('conflicto', 3, 'bifurcación concurrente: otro equipo partió del mismo commit');
+    }
+    return R('conflicto', 5, 'divergencia no demostrable');
+  }
+
+  // RAMA B: .gen y BD de commits distintos
+  const discoIntacto = (e.disk.C === e.mem.C) && (e.disk.F === e.mem.F);
+  if (!discoIntacto) {
+    const comoSiA = clasificar(Object.assign({}, e, { gen: { C: e.disk.C, P: e.disk.P, W: e.gen.W } }));
+    return Object.assign({}, comoSiA, {
+      genAdelantado: true,
+      motivo: comoSiA.motivo + ' (además hay un .gen adelantado sin resolver)',
+    });
+  }
+  if (e.gen.W === e.wYo && e.gen.P === e.disk.C && e.disk.C === e.mem.C && e.disk.F === e.mem.F) {
+    return R('reparar-gen', 2, 'mi propia escritura interrumpida');
+  }
+  if (e.gen.W !== e.wYo && e.gen.P === e.disk.C) {
+    return R('espera', 0, 'otro equipo empezó a escribir y su .sqlite3 no ha llegado');
+  }
+  return R('espera', 0, 'incoherencia: el .gen no encadena con la base de datos', { conservador: true });
+}
+
+function fotografiar(forzarLeerDisco) {
+  let st = null;
+  try { const s = fs.statSync(dbFilePath); st = { mtimeMs: s.mtimeMs, size: s.size }; } catch (e) {}
+  const gen = leerGen();
+  const disk = (forzarLeerDisco || politica !== 'local') ? leerDisco() : null;
+  return {
+    politica, dirty, wYo,
+    mem: { C: cMem, P: pMem, H: hMem, F: fMio },
+    stat: st, sMio, gen,
+    disk: disk && disk.estado === 'valida' ? disk : null,
+    diskEstado: disk ? disk.estado : null,
+    diskMotivo: disk ? disk.motivo : null,
+  };
+}
+
+function salidaPorEstadoDeDisco(e) {
+  if (e.diskEstado === 'ilegible') return { ok: false, motivo: 'bd-ilegible', detalle: e.diskMotivo };
+  if (e.diskEstado === 'no-disponible' || e.diskEstado === 'ausente' ||
+      e.diskEstado === 'no-demostrable' || e.diskEstado === 'bootstrap-ajeno') {
+    return { ok: false, motivo: 'no-verificable', detalle: e.diskMotivo, estadoDisco: e.diskEstado };
+  }
+  return null;
+}
+
+function comprobarEscrituraPosible() {
+  if (escrituraBloqueada) return { ok: false, motivo: 'bloqueado', detalle: escrituraBloqueada };
+  let e = fotografiar(false);
+  let s = salidaPorEstadoDeDisco(e);
+  if (s) return s;
+  let d = clasificar(e);
+  if (d.tipo === 'leer-disco') {
+    e = fotografiar(true);
+    s = salidaPorEstadoDeDisco(e);
+    if (s) return s;
+    d = clasificar(e);
+    if (d.tipo === 'leer-disco') {
+      return { ok: false, motivo: 'no-verificable', detalle: 'no se obtuvo una imagen válida del disco',
+        estadoDisco: e.diskEstado || 'desconocido' };
+    }
+  }
+  return { ok: d.tipo === 'seguir' || d.tipo === 'reparar-gen', decision: d, estado: e };
+}
+
+// --- restauración y recarga --------------------------------------------------
+function leerMetaMemoria() {
+  const r = db.exec(
+    "SELECT key,value FROM app_meta WHERE key IN " +
+    "('db_commit_id','db_parent_commit_id','db_commit_history','db_generation')"
+  );
+  const m = {};
+  if (r.length) r[0].values.forEach(([k, v]) => { m[k] = v; });
+  return {
+    C: m.db_commit_id || null,
+    P: m.db_parent_commit_id || null,
+    H: JSON.parse(m.db_commit_history || '[]'),
+    gen: parseInt(m.db_generation || '0', 10),
+  };
+}
+
+function restaurarUltimaImagenConfirmada() {
+  if (!ultimaImagenConfirmada) throw new Error('no hay imagen confirmada que restaurar');
+  try { db.close(); } catch (e) {}
+  db = new SQLjs.Database(Buffer.from(ultimaImagenConfirmada));  // copia fresca
+  const m = leerMetaMemoria();
+  cMem = m.C; pMem = m.P; hMem = m.H; gMem = m.gen;
+  fMio = sha256(ultimaImagenConfirmada);
+  dirty = false;
+}
+
+// Solo descendencia estricta y solo con dirty === false. NO es la resolución de
+// conflicto de §7, que no entra en este bloque.
+function recargarDesdeDisco() {
+  if (dirty) throw new ErrorDb('io', 'no se recarga con cambios en memoria sin confirmar');
+  const d = leerDisco();
+  if (d.estado === 'ilegible') throw new ErrorDb('ilegible', `la base de datos no es utilizable (${d.motivo})`);
+  if (d.estado !== 'valida') {
+    throw new ErrorDb('io', `no se pudo releer la base de datos (${d.motivo})`,
+      { noVerificable: true, estadoDisco: d.estado });
+  }
+  try { db.close(); } catch (e) {}
+  db = new SQLjs.Database(d.bytes);
+  ultimaImagenConfirmada = Buffer.from(d.bytes);
+  cMem = d.C; pMem = d.P; hMem = d.H; gMem = d.gen; fMio = d.F;
+  try { const s = fs.statSync(dbFilePath); sMio = { mtimeMs: s.mtimeMs, size: s.size }; } catch (e) {}
+  dirty = false;
+  return true;
+}
+
+function ejecutarInterno(sql, params) { db.run(sql, params); }
+
+async function getDb(opts) {
+  if (db) return db;
+  const o = opts || {};
+  const wasmPath = require.resolve('sql.js/dist/sql-wasm.wasm');
+  SQLjs = await initSqlJs({ wasmBinary: fs.readFileSync(wasmPath) });
+  const SQL = SQLjs;
+
+  const dir = app.getPath('userData');
+  fs.mkdirSync(dir, { recursive: true });
+  dbFilePath = path.join(dir, 'panorama.sqlite3');
+  genFilePath = dbFilePath + '.gen';
+  cargarInstallationId();
+
+  // A3.3 — la limpieza destructiva de temporales de la v2.0.42 se RETIRA.
+  //
+  // Antes se borraba incondicionalmente todo `panorama.sqlite3.tmp-*`. Su
+  // razonamiento ("no corrompe nada porque el .sqlite3 real nunca se tocó") era
+  // cierto entonces, pero deja de serlo con la escritura durable de A3.3: en la
+  // ventana "se perdió el rename" ese .tmp puede ser la ÚNICA copia de la
+  // escritura que falta, y en la ventana "se perdió el contenido" puede ser lo
+  // único legible que quede. Ahora se APARTAN, no se borran.
+  try {
+    const base = path.basename(dbFilePath);
+    fs.readdirSync(dir)
+      .filter((f) => f.startsWith(`${base}.tmp-`) && !f.includes('.tmp-huerfano-') && !f.includes('.tmp-fallido-'))
+      .forEach((f) => {
+        const origen = path.join(dir, f);
+        const destino = path.join(dir, f.replace('.tmp-', '.tmp-huerfano-') + '-' + Date.now());
+        try {
+          fs.renameSync(origen, destino);
+          logA33(`temporal huérfano CONSERVADO como ${path.basename(destino)} (antes se borraba)`);
+        } catch (e) { /* si no se puede apartar, se deja donde está: nunca se borra */ }
+      });
+  } catch (e) { /* no crítico */ }
+
+  const dInicial = leerDisco();
+
+  if (dInicial.estado === 'ilegible') {
+    bloquearEscrituras('bd-ilegible');
+    throw new ErrorDb('ilegible', `la base de datos no es utilizable (${dInicial.motivo})`);
+  }
+  if (dInicial.estado === 'no-disponible') {
+    // El archivo existe y puede estar bien: lo que ha fallado es leerlo. NO se
+    // crea nada encima y NO se latchea 'bd-ilegible'.
+    if (politica !== 'local') bloquearEscrituras('degradado');
+    throw new ErrorDb('io', `no se pudo leer la base de datos (${dInicial.motivo})`,
+      { noVerificable: true, estadoDisco: 'no-disponible' });
+  }
+  if (dInicial.estado === 'bootstrap-ajeno') {
+    // Otro equipo está adoptando esta misma base de datos legada y su .sqlite3
+    // todavía no ha llegado. Adoptarla nosotros crearía dos raíces distintas
+    // para la misma imagen. Se espera, en cualquier política: aquí no se puede
+    // "fallar en abierto" porque el riesgo es duplicar la adopción.
+    bloquearEscrituras('degradado');
+    throw new ErrorDb('io', `no se adopta la base de datos todavía: ${dInicial.motivo}`,
+      { noVerificable: true, estadoDisco: 'bootstrap-ajeno' });
+  }
+  if (dInicial.estado === 'no-demostrable') {
+    // Una base de datos sin identidad junto a un testigo que NO prueba que le
+    // corresponda. Puede ser una imagen antigua restaurada sobre una
+    // instalación A3.3. No se adopta en silencio y no se escribe nada.
+    bloquearEscrituras('degradado');
+    throw new ErrorDb('io',
+      `no se puede demostrar el estado de la base de datos: ${dInicial.motivo}. No se ha tocado nada.`,
+      { noVerificable: true, estadoDisco: 'no-demostrable' });
+  }
+  if (dInicial.estado === 'ausente') {
+    // "Ausente" es un HECHO OBSERVADO; "crear" es una DECISIÓN DE
+    // INICIALIZACIÓN. Ver el contrato en §4.e del diseño.
+    //
+    // Caller único hoy: main.js:5954, precedido por
+    // checkCustomLocationDatabaseSanity() (main.js:5640), que en carpeta
+    // personalizada ya espera y PREGUNTA antes de dejar llegar aquí. Con la
+    // carpeta por defecto no hay nada que preguntar: es la carpeta por usuario
+    // de Windows y estar vacía significa PC nuevo.
+    //
+    // LAS DOS CONDICIONES SON OBLIGATORIAS, EN ESTE ORDEN:
+    //   1) autorización explícita  crearSiAusente === true
+    //   2) Y ADEMÁS la carpeta realmente virgen
+    //
+    // Una carpeta virgen NO es autorización: es una observación. No hay
+    // excepción implícita para la carpeta por defecto dentro de db.js; esa
+    // decisión llega desde arriba y se cablea en el bloque siguiente.
+    const autorizado = o.crearSiAusente === true;
+
+    if (!autorizado) {
+      if (politica !== 'local') bloquearEscrituras('degradado');
+      const pistaInfo = pareceUbicacionNueva();   // solo informativa
+      throw new ErrorDb('io',
+        'la base de datos no está donde se esperaba y no hay autorización explícita para ' +
+        'crear una nueva. No se ha creado ni escrito nada.',
+        { noVerificable: true, estadoDisco: 'ausente',
+          podriaSerPrimeraVez: pistaInfo.nueva, pistaUbicacion: pistaInfo.motivo });
+    }
+
+    const pista = pareceUbicacionNueva();
+    if (!pista.nueva) {
+      if (politica !== 'local') bloquearEscrituras('degradado');
+      throw new ErrorDb('io',
+        `se pidió inicializar, pero la carpeta no está vacía: ${pista.motivo}. No se crea nada.`,
+        { noVerificable: true, estadoDisco: 'ausente', pistaUbicacion: pista.motivo });
+    }
+
+    // Solo aquí, con AMBAS condiciones cumplidas.
+    logA33(`inicialización AUTORIZADA de una ubicación sin rastro previo (política ${politica})`);
+    db = new SQL.Database();
+  } else {
+    db = new SQL.Database(dInicial.bytes);
+    ultimaImagenConfirmada = Buffer.from(dInicial.bytes);
+    cMem = dInicial.C; pMem = dInicial.P; hMem = dInicial.H || []; gMem = dInicial.gen || 0;
+    fMio = dInicial.F;
+    if (dInicial.sinIdentidad) {
+      logA33('base de datos anterior a A3.3 (sin db_commit_id): se le dará identidad al persistir');
+    }
+    if (dInicial.adopcionInterrumpida) {
+      logA33('se detecta una adopción A3.3 interrumpida: la BD legada sigue siendo válida');
+    }
+  }
+
+  // ==========================================================================
+  // PRIMERA APERTURA — TODO bajo la MISMA frontera PRE/POST-confirmación.
+  //
+  // Aquí caben tres trabajos que hasta la revisión anterior quedaban FUERA de
+  // la máquina de estados: la creación del esquema, `migrateSchema()`, y —lo
+  // más grave— la adopción de una base de datos anterior a A3.3.
+  //
+  // El escenario que esto cierra: una BD legada válida y valiosa, se le escribe
+  // el .gen nuevo, falla el rename del .sqlite3, y en el arranque siguiente la
+  // BD legada (sin db_commit_id) junto a un .gen la hacían parecer CORRUPTA
+  // aunque sus bytes estuvieran intactos. Ahora:
+  //   · el punto de confirmación sigue siendo el rename de panorama.sqlite3;
+  //   · cualquier fallo anterior deja el .sqlite3 original intacto, la memoria
+  //     restaurada, y NINGÚN .gen activo que lo haga parecer ilegible;
+  //   · después del rename no se restaura nunca.
+  // ==========================================================================
+  const imagenOriginalEnDisco = dInicial.estado === 'valida' ? Buffer.from(dInicial.bytes) : null;
+  const habiaGenAntes = fs.existsSync(genFilePath);
+  let genEscritoEnBootstrap = false;
+  let confirmado = false;
+  let faseDeEstaApertura = null;     // 'bootstrap' | 'creacion-inicial' | null
+
+  // NORMALIZACIÓN DE UN MARCADOR SUPERVIVIENTE.
+  //
+  // Si el proceso murió entre el rename del .sqlite3 y la retirada de la marca,
+  // el testigo sigue diciendo "adopción/creación en curso" cuando en realidad
+  // ya terminó. Se reconoce sin ambigüedad: la BASE DE DATOS ya contiene ese
+  // mismo commit. Entonces se normaliza y NUNCA se vuelve atrás.
+  if (dInicial.estado === 'valida' && dInicial.C) {
+    const gAhora = leerGen();
+    if (gAhora && gAhora.fase && gAhora.C === dInicial.C) {
+      logA33(`marcador '${gAhora.fase}' superviviente sobre un commit YA confirmado: se normaliza`);
+      normalizarGenTrasConfirmar(gAhora.C, gAhora.P, gAhora.gen || gMem || 1);
+    }
+  }
+
+  // Gancho de pruebas: la memoria ya tiene la imagen cargada y todavía no se ha
+  // hecho la revalidación JIT. Es el instante exacto en el que otro equipo
+  // puede publicar su escritura. Inerte en producción.
+  gancho('memoria-cargada');
+
+  // El trabajo de esquema es IDEMPOTENTE (`CREATE TABLE IF NOT EXISTS` y
+  // `migrateSchema()` comprueban antes de tocar), así que se puede volver a
+  // aplicar sobre una imagen recargada. Eso es lo que hace posible la
+  // revalidación JIT de más abajo.
+  function trabajoDeEsquema() {
+    db.run(`
+    CREATE TABLE IF NOT EXISTS projects(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      client TEXT,
+      partition_name TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS backups(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      reason TEXT,
+      payload TEXT NOT NULL,
+      size INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_backups_project ON backups(project_id, created_at);
+    CREATE TABLE IF NOT EXISTS app_meta(
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
+    CREATE TABLE IF NOT EXISTS meeting_preps(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      meeting_date TEXT,
+      finalidad TEXT,
+      file_path TEXT NOT NULL,
+      encrypted INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_meeting_preps_project ON meeting_preps(project_id, created_at);
+    -- "Evaluación de Candidatos" (v0.1.73): un único documento vivo por
+    -- proyecto (puestos + entrevistas), no un historial de muchos archivos
+    -- como meeting_preps — de ahí project_id como PRIMARY KEY en vez de un
+    -- id autoincremental. Mismo principio que los backups: el JSON en sí
+    -- (que puede crecer con cada puesto/candidato añadido) vive en un
+    -- archivo aparte en disco, NUNCA en esta fila — esta tabla solo guarda
+    -- metadatos ligeros (cuándo se guardó, si el archivo está cifrado) para
+    -- no repetir el error que se corrigió en su día con backups.payload.
+    CREATE TABLE IF NOT EXISTS candidate_evals(
+      project_id INTEGER PRIMARY KEY,
+      updated_at TEXT NOT NULL,
+      encrypted INTEGER NOT NULL DEFAULT 0
+    );
+  `);
+    puntoDePrueba('tras-esquema');
+    migrateSchema();
+    puntoDePrueba('tras-migracion');
+  }
+
+  try {
+
+  if (!cMem) {
+    // ===================== ADOPCIÓN (bootstrap) =========================
+    // La base de datos venía sin identidad: recién creada, o de una versión
+    // anterior a A3.3. Aquí recibe un commit RAÍZ (padre nulo).
+    dirty = true;
+    trabajoDeEsquema();
+
+    const c = nuevoCommit();
+    puntoDePrueba('meta1');
+    ejecutarInterno(
+      "INSERT INTO app_meta(key,value) VALUES ('db_commit_id',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [c]);
+    puntoDePrueba('meta2');
+    ejecutarInterno(
+      "INSERT INTO app_meta(key,value) VALUES ('db_parent_commit_id',NULL) ON CONFLICT(key) DO UPDATE SET value=excluded.value");
+    puntoDePrueba('meta3');
+    ejecutarInterno(
+      "INSERT INTO app_meta(key,value) VALUES ('db_commit_history',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [JSON.stringify([c])]);
+    puntoDePrueba('meta4');
+    ejecutarInterno(
+      "INSERT INTO app_meta(key,value) VALUES ('db_generation','1') ON CONFLICT(key) DO UPDATE SET value=excluded.value");
+
+    // REVALIDACIÓN JIT de la adopción: justo antes de publicar el testigo, se
+    // vuelve a leer el disco y se exige que siga siendo EXACTAMENTE la imagen
+    // legada sobre la que se construyó esta adopción.
+    const shaBase = dInicial.estado === 'valida' ? dInicial.F : null;
+    const ahora = leerDisco();
+    if (shaBase) {
+      if (ahora.estado !== 'valida' || ahora.F !== shaBase) {
+        throw new Error('la base de datos cambió mientras se preparaba su adopción');
+      }
+    } else if (ahora.estado !== 'ausente') {
+      throw new Error('apareció una base de datos mientras se creaba una nueva');
+    }
+
+    puntoDePrueba('gen');
+    // El testigo lleva PRUEBA de qué se está haciendo y sobre qué:
+    //   · ADOPCIÓN de una BD legada -> fase 'bootstrap' + SHA-256 de esa imagen
+    //   · PRIMERA CREACIÓN          -> fase 'creacion-inicial' + base 'ninguna'
+    // Las dos son marcas TRANSITORIAS: se retiran al confirmar (ver abajo).
+    faseDeEstaApertura = shaBase ? 'bootstrap' : 'creacion-inicial';
+    escribirGen(c, null, 1, shaBase
+      ? { fase: 'bootstrap', baseSha: shaBase }
+      : { fase: 'creacion-inicial', base: 'ninguna' });
+    genEscritoEnBootstrap = true;
+
+    puntoDePrueba('persist');
+    const buf = Buffer.from(db.export());
+    escribirAtomico(dbFilePath, buf, { writer: wYo, commit: c });
+
+    confirmado = true;               // <<<< PUNTO DE CONFIRMACIÓN
+    cMem = c; pMem = null; hMem = [c]; gMem = 1;
+    ultimaImagenConfirmada = buf;
+    fMio = sha256(buf);
+
+    // El marcador ya cumplió su función. Se retira para que el estado ESTABLE
+    // del commit raíz sea un testigo normal. Si esto falla o el proceso muere
+    // aquí, el arranque siguiente lo normaliza (ver la normalización de más
+    // abajo, que actúa cuando la BD ya contiene ese mismo commit).
+    normalizarGenTrasConfirmar(c, null, 1);
+  } else {
+    // ============ BD YA IDENTIFICADA: REVALIDACIÓN JIT ==================
+    // `migrateSchema()` puede añadir columnas y provocar una persistencia. Esa
+    // persistencia es una escritura como cualquier otra y NO puede saltarse la
+    // detección: entre el leerDisco() del principio de getDb() y este momento,
+    // otro equipo puede haber escrito.
+    //
+    // Por eso se comprueba ANTES de tocar la memoria, igual que en run(), y el
+    // trabajo de esquema se aplica DESPUÉS, sobre la imagen ya validada.
+    let intentos = 0;
+    for (;;) {
+      intentos++;
+      dirty = false;                 // la clasificación necesita el estado real
+      const posible = comprobarEscrituraPosible();
+
+      if (posible.ok) {
+        dirty = true;
+        trabajoDeEsquema();
+        const buf = Buffer.from(db.export());
+        if (!ultimaImagenConfirmada || !buf.equals(ultimaImagenConfirmada)) {
+          aplicarYConfirmar([]);     // tiene su propia frontera PRE/POST
+        } else {
+          dirty = false;             // la migración no cambió nada: no se escribe
+        }
+        break;
+      }
+
+      // Descendencia lineal estricta: el disco ya contiene lo nuestro. NO se
+      // escribe encima: se adopta la imagen nueva y la migración se vuelve a
+      // evaluar SOBRE ELLA.
+      if (posible.decision && posible.decision.tipo === 'recarga' && intentos <= 3) {
+        logA33(`migración: el disco avanzó mientras se abría; se recarga y se reevalúa (intento ${intentos})`);
+        recargarDesdeDisco();
+        continue;
+      }
+
+      // Bifurcación, caso 8, versión antigua, o estado no verificable:
+      // NO se persiste NADA.
+      const det = posible.decision
+        ? `${posible.decision.motivo} (caso ${posible.decision.caso})`
+        : `${posible.motivo}: ${posible.detalle}`;
+      if (posible.motivo === 'bd-ilegible') bloquearEscrituras('bd-ilegible');
+      else if (politica !== 'local' || (posible.decision && posible.decision.tipo === 'conflicto')) {
+        bloquearEscrituras(posible.decision && posible.decision.tipo === 'conflicto' ? 'conflicto' : 'degradado');
+      }
+      throw new Error(`no se puede consolidar la migración de esquema: ${det}`);
+    }
+    confirmado = true;
+  }
+
+  } catch (e) {
+    if (!confirmado) {
+      // ============ PRE-CONFIRMACIÓN de la primera apertura ================
+      // El .sqlite3 en disco NO se ha tocado. Hay que deshacer dos cosas.
+
+      // 1. El testigo. Si lo escribimos NOSOTROS en este bootstrap y antes no
+      //    había ninguno, se aparta: dejarlo convertiría una base de datos
+      //    legada perfectamente válida en "ilegible" al arrancar de nuevo.
+      // La etiqueta distingue las dos situaciones, y esa distinción es la que
+      // permite después reconocer un resto de PRIMERA CREACIÓN propia sin
+      // confundirlo con los restos de una base de datos anterior valiosa.
+      if (genEscritoEnBootstrap && !habiaGenAntes) {
+        apartarGenFallido(faseDeEstaApertura === 'creacion-inicial'
+          ? 'creacion-fallida' : 'bootstrap-fallido');
+      }
+
+      // 2. La memoria. Si aplicarYConfirmar() ya restauró (dirty === false),
+      //    no se toca nada; si el fallo fue antes de llegar ahí, se vuelve a
+      //    la imagen que había en disco al abrir.
+      if (dirty && imagenOriginalEnDisco) {
+        try {
+          try { db.close(); } catch (e2) {}
+          db = new SQLjs.Database(Buffer.from(imagenOriginalEnDisco));
+          const m = leerMetaMemoria();
+          cMem = m.C; pMem = m.P; hMem = m.H; gMem = m.gen;
+          ultimaImagenConfirmada = Buffer.from(imagenOriginalEnDisco);
+          fMio = sha256(imagenOriginalEnDisco);
+          dirty = false;
+        } catch (e2) {
+          bloquearEscrituras('desincronizada');
+          throw new ErrorDb('io',
+            `fallo en la primera apertura (${e.message}) y además al restaurar la imagen (${e2.message})`,
+            { aplicado: false, restauracionFallida: true });
+        }
+      }
+      dirty = false;
+      db = null;                     // que el próximo getDb() vuelva a intentarlo
+      throw new ErrorDb('io',
+        `no se pudo completar la primera apertura de la base de datos: ${(e && e.message) || e}`,
+        { aplicado: false, faseBootstrap: true });
+    }
+    throw e;                          // post-confirmación: se propaga tal cual
+  }
+
+  try { const s = fs.statSync(dbFilePath); sMio = { mtimeMs: s.mtimeMs, size: s.size }; } catch (e) {}
+  dirty = false;
+  return db;
+}
+
+// ------------------------------------------------------------------
+// Por qué existe esto: la versión inicial guardaba el JSON completo de cada
+// backup DENTRO de la propia base de datos (columna `backups.payload`).
+// sql.js mantiene la base de datos entera en memoria y la vuelve a escribir
+// COMPLETA a disco en cada INSERT/UPDATE/DELETE (ver persist() más abajo) —
+// así que si esa columna sigue creciendo (backups de cada proyecto, en cada
+// proyecto que se vaya creando con el tiempo), cada guardado automático
+// (cada ~15s si hay cambios, por cada ventana de proyecto abierta) reescribe
+// un archivo cada vez más grande. Es exactamente el riesgo de "se satura /
+// va más lento con el tiempo" que hay que evitar.
+//
+// La solución: el contenido del backup pasa a vivir SOLO en el archivo
+// .json en disco (que ya se escribía igualmente, ver backup:save en
+// main.js) — la fila en `backups` solo guarda una referencia ligera
+// (`file_path`) y metadatos. Así la base de datos en sí nunca crece más
+// allá de un puñado de bytes por backup, sin importar cuántos proyectos o
+// backups acumules.
+//
+// `file_path` y `encrypted` se añaden con ALTER TABLE (comprobando antes si
+// ya existen, porque SQLite no soporta "ADD COLUMN IF NOT EXISTS" y esto
+// puede ejecutarse sobre una base de datos ya existente de una versión
+// anterior). Las filas antiguas, creadas antes de este cambio, se quedan
+// con su `payload` inline tal cual — restoreProjectBackup() en main.js sabe
+// leer de cualquiera de las dos formas.
+// ------------------------------------------------------------------
+function migrateSchema() {
+  const backupCols = all("PRAGMA table_info(backups)").map((c) => c.name);
+  if (!backupCols.includes('file_path')) {
+    db.run('ALTER TABLE backups ADD COLUMN file_path TEXT');
+  }
+  if (!backupCols.includes('encrypted')) {
+    db.run('ALTER TABLE backups ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0');
+  }
+  // `backup_dir`: nombre de carpeta de backups de este proyecto, fijado UNA
+  // sola vez al crearlo y nunca recalculado. Antes se recalculaba cada vez a
+  // partir del nombre actual del proyecto (id + nombre "slugificado") — si
+  // el proyecto se renombraba (algo que pasa solo con abrir el asistente de
+  // la plantilla y cambiar el título), la siguiente vez apuntaba a OTRA
+  // carpeta distinta, dejando huérfanos los backups antiguos. Con una
+  // columna propia, la carpeta no se mueve aunque el proyecto cambie de
+  // nombre.
+  const projectCols = all("PRAGMA table_info(projects)").map((c) => c.name);
+  if (!projectCols.includes('backup_dir')) {
+    db.run('ALTER TABLE projects ADD COLUMN backup_dir TEXT');
+  }
+  // `kind`: distingue los proyectos normales ('project', valor por defecto —
+  // se rellena solo en las filas ya existentes al añadir la columna) del
+  // singleton interno "Directorio de Talento" ('directorio_talento'). Este
+  // último se guarda como una fila más de `projects` para reutilizar toda la
+  // infraestructura ya existente (partición propia, backups automáticos,
+  // menú Proyecto), pero se excluye del listado normal del launcher — ver
+  // ensureDirectorioTalentoProject() en main.js.
+  if (!projectCols.includes('kind')) {
+    db.run("ALTER TABLE projects ADD COLUMN kind TEXT NOT NULL DEFAULT 'project'");
+  }
+  // `sort_order`: orden manual de las tarjetas en el launcher (v0.1.26,
+  // arrastrar y soltar). NULL en todas las filas hasta que el usuario
+  // arrastra una tarjeta por primera vez — momento en el que se les asigna
+  // a TODAS un valor secuencial de una vez (ver projects:reorder en
+  // main.js). Mientras sea NULL, el listado se sigue ordenando como
+  // siempre (por actividad reciente) — así no cambia nada para quien no
+  // use el arrastre. Los proyectos nuevos se crean con sort_order NULL, así
+  // que si ya hay un orden manual establecido, aparecen al final de ese
+  // orden hasta que el usuario los arrastre a su sitio (ver ORDER BY en
+  // projects:list).
+  if (!projectCols.includes('sort_order')) {
+    db.run('ALTER TABLE projects ADD COLUMN sort_order INTEGER');
+  }
+}
+
+// v2.0.42: escritura atómica -- antes se escribía directamente sobre
+// panorama.sqlite3 con fs.writeFileSync(). Si la app se cerraba en mal
+// momento (corte de luz, cuelgue del proceso, o Google Drive leyendo el
+// archivo justo en ese instante -- la carpeta de datos puede vivir en una
+// unidad sincronizada por Drive/OneDrive) exactamente durante esa escritura,
+// el .sqlite3 podía quedar truncado/corrupto, sin ningún mecanismo de
+// recuperación para ESTE archivo en concreto (los backups por proyecto son
+// independientes de él). Ahora se escribe primero a un archivo temporal en
+// la MISMA carpeta (para que el rename sea atómico -- fs.renameSync entre
+// carpetas distintas no lo es) y solo se sustituye el archivo real una vez
+// la escritura del temporal ha terminado con éxito. Con esto, un corte a
+// mitad de escritura deja como mucho el .tmp a medias -- el .sqlite3 real
+// nunca se toca hasta que la copia nueva está completa en disco.
+//
+// A3.3 — `persist()` y `markDirtyAndPersist()` DESAPARECEN, absorbidas por
+// aplicarYConfirmar(). Ahora hay un único punto en todo el archivo que escribe
+// el .gen y el .sqlite3, y ese punto tiene la frontera PRE/POST-confirmación.
+//
+// ---------------------------------------------------------------------------
+// LA MÁQUINA DE ESTADOS DE LA ESCRITURA
+//
+// La frontera es EL RENAME DEL .sqlite3, marcada por `confirmado`.
+//   PRE-CONFIRMACIÓN  -> SIEMPRE restaurar. aplicado = false.
+//   POST-CONFIRMACIÓN -> JAMÁS restaurar.   aplicado = true.
+//
+// Dos `try` distintos a propósito: el primero cubre desde la PRIMERA mutación
+// de memoria (no desde la persistencia) hasta el rename; el segundo cubre solo
+// el bookkeeping y nunca toca la imagen.
+// ---------------------------------------------------------------------------
+function aplicarYConfirmar(sentencias, opts) {
+  const o = opts || {};
+  const snapSMio = sMio;
+  let confirmado = false;
+  let buf = null;
+  let lastId = null;
+
+  try {
+    dirty = true;                                   // desde aquí hay riesgo
+    for (const s of sentencias) {
+      db.run(s.sql, s.params || []);
+      // last_insert_rowid() se lee AQUÍ, antes de tocar app_meta: sql.js
+      // resetea ese contador al exportar.
+      const idRow = get('SELECT last_insert_rowid() as id');
+      lastId = idRow ? idRow.id : null;
+    }
+
+    const cNuevo = nuevoCommit();
+    const hNueva = [cNuevo].concat(hMem).slice(0, HISTORIAL_MAX);
+    const gNueva = (gMem || 0) + 1;
+
+    ejecutarInterno("INSERT INTO app_meta(key,value) VALUES ('db_commit_id',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [cNuevo]);
+    ejecutarInterno("INSERT INTO app_meta(key,value) VALUES ('db_parent_commit_id',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [cMem]);
+    ejecutarInterno("INSERT INTO app_meta(key,value) VALUES ('db_commit_history',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [JSON.stringify(hNueva)]);
+    ejecutarInterno("INSERT INTO app_meta(key,value) VALUES ('db_generation',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [String(gNueva)]);
+
+    if (o.preservarTestigo) preservarGenComoTestigo();
+
+    escribirGen(cNuevo, cMem, gNueva);
+    buf = Buffer.from(db.export());                 // Buffer.from(Uint8Array) COPIA
+    escribirAtomico(dbFilePath, buf, { writer: wYo, commit: cNuevo });
+
+    confirmado = true;                              // <<<< PUNTO DE CONFIRMACIÓN
+    o._cNuevo = cNuevo; o._hNueva = hNueva; o._gNueva = gNueva;
+  } catch (e) {
+    if (confirmado) throw e;
+    // ============ PRE-CONFIRMACIÓN: el disco activo está intacto ============
+    try {
+      restaurarUltimaImagenConfirmada();
+      sMio = snapSMio;
+    } catch (e2) {
+      bloquearEscrituras('desincronizada');
+      throw new ErrorDb('io',
+        `fallo antes de confirmar (${e.message}) y además al restaurar la memoria (${e2.message})`,
+        { aplicado: false, restauracionFallida: true });
+    }
+    throw new ErrorDb('io', (e && e.message) || String(e), { aplicado: false });
+  }
+
+  // ================ POST-CONFIRMACIÓN: JAMÁS restaurar ====================
+  try {
+    const s = fs.statSync(dbFilePath);
+    ultimaImagenConfirmada = buf;
+    pMem = cMem;
+    cMem = o._cNuevo;
+    hMem = o._hNueva;
+    gMem = o._gNueva;
+    fMio = sha256(buf);
+    sMio = { mtimeMs: s.mtimeMs, size: s.size };
+    dirty = false;
+  } catch (e) {
+    const rehecho = rehacerBookkeepingDesdeDisco(o._cNuevo, buf);
+    if (rehecho.ok) {
+      logA33('bookkeeping rehecho tras un fallo posterior a la confirmación: ' + e.message);
+      return lastId;
+    }
+    bloquearEscrituras('desincronizada');
+    throw new ErrorDb('io-tras-confirmar',
+      `el cambio SÍ se guardó, pero no se ha podido verificar: ${e.message}. NO repitas la operación.`,
+      { aplicado: true, reclasificado: rehecho.reclasificado || null });
+  }
+  return lastId;
+}
+
+// Al releer para reconstruir, NO se da por nuestro sin comprobar.
+function rehacerBookkeepingDesdeDisco(commitEsperado, bufEscrito) {
+  const d = leerDisco();
+  if (d.estado !== 'valida') return { ok: false, estadoDisco: d.estado };
+  if (d.C !== commitEsperado) {
+    const decision = clasificar({
+      politica, dirty: true, wYo,
+      mem: { C: commitEsperado, P: cMem, H: [commitEsperado].concat(hMem), F: sha256(bufEscrito) },
+      stat: null, sMio: null, gen: leerGen(), disk: d,
+    });
+    return { ok: false, reclasificado: decision };
+  }
+  if (d.F !== sha256(bufEscrito)) return { ok: false, reclasificado: { tipo: 'conflicto', caso: 8 } };
+  ultimaImagenConfirmada = bufEscrito;
+  cMem = d.C; pMem = d.P; hMem = d.H; gMem = d.gen; fMio = d.F;
+  try { const s = fs.statSync(dbFilePath); sMio = { mtimeMs: s.mtimeMs, size: s.size }; } catch (e) {}
+  dirty = false;
+  return { ok: true };
+}
+
+function get(sql, params = []) {
+  const stmt = db.prepare(sql);
+  stmt.bind(params);
+  let row = null;
+  if (stmt.step()) row = stmt.getAsObject();
+  stmt.free();
+  return row;
+}
+
+function all(sql, params = []) {
+  const stmt = db.prepare(sql);
+  stmt.bind(params);
+  const rows = [];
+  while (stmt.step()) rows.push(stmt.getAsObject());
+  stmt.free();
+  return rows;
+}
+
+// INSERT/UPDATE/DELETE: ejecuta y persiste a disco inmediatamente (la BD es
+// pequeña — metadatos de proyecto + backups — así que no hace falta batching).
+// OJO: last_insert_rowid() hay que leerlo ANTES de export()/persist() — sql.js
+// resetea ese contador interno al exportar la base de datos, así que se captura
+// aquí mismo, en el mismo tick que el INSERT, y se devuelve ya resuelto.
+function run(sql, params = []) {
+  return escribirMultiple([{ sql, params }]);
+}
+
+// A3.3 — varias sentencias, UNA sola imagen, UN commit, UNA persistencia.
+// El mecanismo entra ya en este bloque; sus consumidores (deleteProjectById,
+// la consolidación de meta del rekey) NO se cablean hasta el bloque siguiente.
+function escribirMultiple(sentencias) {
+  if (escrituraBloqueada) {
+    throw new ErrorDb('bloqueado', `escrituras bloqueadas: ${escrituraBloqueada}`, { latch: escrituraBloqueada });
+  }
+
+  let posible = comprobarEscrituraPosible();
+
+  // Descendencia lineal estricta: NO es conflicto. Se adopta y se reclasifica.
+  if (!posible.ok && posible.decision && posible.decision.tipo === 'recarga') {
+    logA33('recarga silenciosa por descendencia lineal: ' + posible.decision.motivo);
+    recargarDesdeDisco();
+    posible = comprobarEscrituraPosible();
+    if (!posible.ok && posible.decision && posible.decision.tipo === 'recarga') {
+      bloquearEscrituras('degradado');
+      throw new ErrorDb('conflicto', 'el disco cambia más rápido de lo que se puede seguir',
+        { caso: 1, decision: 'recarga' });
+    }
+  }
+
+  if (!posible.ok) {
+    if (posible.motivo === 'bd-ilegible') {
+      bloquearEscrituras('bd-ilegible');
+      throw new ErrorDb('ilegible', `la base de datos en disco no es utilizable (${posible.detalle})`);
+    }
+    // NO haber podido LEER no demuestra ningún conflicto.
+    if (posible.motivo === 'no-verificable') {
+      if (politica === 'local') {
+        throw new ErrorDb('io', `no se pudo comprobar el estado del disco (${posible.detalle})`,
+          { aplicado: false, noVerificable: true, estadoDisco: posible.estadoDisco });
+      }
+      bloquearEscrituras('degradado');
+      throw new ErrorDb('io',
+        `no se puede verificar que otro equipo no esté escribiendo (${posible.detalle})`,
+        { aplicado: false, noVerificable: true, estadoDisco: posible.estadoDisco, latch: 'degradado' });
+    }
+    const d = posible.decision;
+    const motivo = (d.tipo === 'espera' || d.tipo === 'degradado') ? 'degradado' : 'conflicto';
+    bloquearEscrituras(motivo);
+    throw new ErrorDb('conflicto', d.motivo, { caso: d.caso, decision: d.tipo, latch: motivo });
+  }
+
+  if (posible.decision && posible.decision.refrescarStat) {
+    try { const s = fs.statSync(dbFilePath); sMio = { mtimeMs: s.mtimeMs, size: s.size }; } catch (e) {}
+  }
+
+  // `reparar-gen` (caso 2): la escritura nueva sustituye al testigo
+  // interrumpido, pero el testigo se CONSERVA antes.
+  const preservarTestigo = !!(posible.decision
+    && posible.decision.tipo === 'reparar-gen' && posible.decision.caso === 2);
+
+  return aplicarYConfirmar(sentencias, { preservarTestigo });
+}
+
+function lastInsertRowId() {
+  const row = get('SELECT last_insert_rowid() as id');
+  return row ? row.id : null;
+}
+
+// VACUUM reconstruye el archivo de la base de datos compactado, sin los
+// huecos que deja SQLite tras borrar/actualizar filas grandes (por ejemplo,
+// tras la migración que vacía `backups.payload` de filas antiguas — ver
+// migrateLegacyInlineBackupsToFiles() en main.js). Se llama una sola vez al
+// arrancar, solo si hubo algo que compactar; con la base de datos ya
+// pequeña de por sí (metadatos, sin contenido de backups) tarda milisegundos.
+function vacuum() {
+  if (!db) return;
+  // A3.3: vacuum() pasa por el MISMO camino que run(). Antes hacía
+  // `db.run('VACUUM'); persist();` sin guardas, así que era el agujero del
+  // fail-stop de B2 (main.js:844 lo llama sin comprobar procesoComprometido).
+  // Ahora el latch lo cubre igual que a cualquier otra escritura.
+  return escribirMultiple([{ sql: 'VACUUM', params: [] }]);
+}
+
+module.exports = {
+  // --- API existente, sin cambios de forma ni de valores devueltos ---------
+  getDb,
+  get,
+  all,
+  run,
+  lastInsertRowId,
+  vacuum,
+  getDbPath: () => dbFilePath,
+
+  // --- A3.3, bloque 1: todo ADITIVO. Ningún caller actual lo usa todavía. --
+  ErrorDb,
+  escribirMultiple,
+  comprobarEscrituraPosible,
+  bloquearEscrituras,
+  levantarLatch,
+  estadoLatch,
+  recargarDesdeDisco,
+  setPoliticaUbicacion,
+  setInstallationId,
+  pareceUbicacionNueva,
+  getGenPath: () => genFilePath,
+  // Introspección para las pruebas y para el diagnóstico. No decide nada.
+  _diagnostico: () => ({
+    politica, wYo, cMem, pMem, hMem: hMem.slice(), gMem, fMio, sMio, dirty,
+    escrituraBloqueada, dbFilePath, genFilePath,
+    tieneImagenConfirmada: !!ultimaImagenConfirmada,
+    ultimaImagenConfirmada,
+  }),
+  // Diagnóstico. Admite una carpeta para poder inspeccionar ANTES de abrir;
+  // solo fija las rutas si todavía no lo estaban, nunca las cambia en caliente.
+  _leerDisco: (dirOpcional) => {
+    if (dirOpcional && !dbFilePath) {
+      dbFilePath = path.join(dirOpcional, 'panorama.sqlite3');
+      genFilePath = dbFilePath + '.gen';
+    }
+    return leerDisco();
+  },
+  _leerGen: () => leerGen(),
+  _clasificar: clasificar,
+  _fotografiar: (f) => fotografiar(!!f),
+  _registro: () => registroA33.slice(),
+  // Solo para las pruebas: inyecta un fallo en un punto de la primera apertura.
+  _inyectarFalloEn: (p) => { _fallarEn = p || null; return _fallarEn; },
+  // Solo para las pruebas: ejecuta algo en medio del flujo, para reproducir
+  // carreras reales entre equipos. Inerte si no se instala.
+  _inyectarGancho: (fn) => { _ganchoPrueba = typeof fn === 'function' ? fn : null; return !!_ganchoPrueba; },
+  // Solo para las pruebas: reinicia el módulo entre casos.
+  _resetParaPruebas: () => {
+    _fallarEn = null;
+    _ganchoPrueba = null;
+    try { if (db) db.close(); } catch (e) {}
+    db = null; dbFilePath = null; genFilePath = null; dirty = false;
+    cMem = null; pMem = null; hMem = []; gMem = 0; fMio = null; sMio = null;
+    ultimaImagenConfirmada = null; escrituraBloqueada = null; fsyncAvisado = false;
+    politica = 'local'; wYo = null; registroA33.length = 0;
+  },
+};

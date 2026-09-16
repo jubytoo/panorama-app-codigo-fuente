@@ -1,0 +1,55 @@
+﻿
+=== INTEGRIDAD DE ERROR_CODES ===============================
+codigos declarados: 28 -> PS-1001, PS-1002, PS-1003, PS-1004, PS-1005, PS-1006, PS-1007, PS-1008, PS-1009, PS-1010, PS-1011, PS-1012, PS-1013, PS-1014, PS-1015, PS-1016, PS-1017, PS-1018, PS-1019, PS-2001, PS-2002, PS-2003, PS-2004, PS-2005, PS-3001, PS-3002, PS-3003, PS-4001
+
+  OK   no hay claves duplicadas en ERROR_CODES
+  OK   toda entrada tiene titulo y explicacion
+codigos usados en errorCodeSuffix(): 20 -> PS-1001, PS-1002, PS-1003, PS-1004, PS-1005, PS-1009, PS-1012, PS-1015, PS-1016, PS-1017, PS-1018, PS-1019, PS-2002, PS-2003, PS-2004, PS-2005, PS-3001, PS-3002, PS-3003, PS-4001
+
+  OK   TODOS los codigos de errorCodeSuffix() existen en ERROR_CODES
+  OK      errorCodeSuffix('PS-1001') tiene entrada
+  OK      errorCodeSuffix('PS-1002') tiene entrada
+  OK      errorCodeSuffix('PS-1003') tiene entrada
+  OK      errorCodeSuffix('PS-1004') tiene entrada
+  OK      errorCodeSuffix('PS-1005') tiene entrada
+  OK      errorCodeSuffix('PS-1009') tiene entrada
+  OK      errorCodeSuffix('PS-1012') tiene entrada
+  OK      errorCodeSuffix('PS-1015') tiene entrada
+  OK      errorCodeSuffix('PS-1016') tiene entrada
+  OK      errorCodeSuffix('PS-1017') tiene entrada
+  OK      errorCodeSuffix('PS-1018') tiene entrada
+  OK      errorCodeSuffix('PS-1019') tiene entrada
+  OK      errorCodeSuffix('PS-2002') tiene entrada
+  OK      errorCodeSuffix('PS-2003') tiene entrada
+  OK      errorCodeSuffix('PS-2004') tiene entrada
+  OK      errorCodeSuffix('PS-2005') tiene entrada
+  OK      errorCodeSuffix('PS-3001') tiene entrada
+  OK      errorCodeSuffix('PS-3002') tiene entrada
+  OK      errorCodeSuffix('PS-3003') tiene entrada
+  OK      errorCodeSuffix('PS-4001') tiene entrada
+  OK   TODOS los codigos escritos como "ERROR PS-xxxx" existen en ERROR_CODES
+
+  OK   PS-1016 existe en ERROR_CODES
+  OK      PS-1016 tiene titulo no vacio
+  OK      PS-1016 tiene explicacion
+  OK      PS-1016 se USA de verdad en el wiring
+  OK   PS-1017 existe en ERROR_CODES
+  OK      PS-1017 tiene titulo no vacio
+  OK      PS-1017 tiene explicacion
+  OK      PS-1017 se USA de verdad en el wiring
+  OK   PS-1018 existe en ERROR_CODES
+  OK      PS-1018 tiene titulo no vacio
+  OK      PS-1018 tiene explicacion
+  OK      PS-1018 se USA de verdad en el wiring
+  OK   PS-1019 existe en ERROR_CODES
+  OK      PS-1019 tiene titulo no vacio
+  OK      PS-1019 tiene explicacion
+  OK      PS-1019 se USA de verdad en el wiring
+
+  OK   showErrorCodesDialog() sigue listando TODO ERROR_CODES
+  OK   los cuatro nuevos saldran entre PS-1015 y PS-2001
+  OK   los codigos PS del dashboard tambien existen en ERROR_CODES
+
+=============================================================
+ERROR_CODES: 43 OK, 0 FALLOS
+=============================================================

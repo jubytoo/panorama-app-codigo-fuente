@@ -1,0 +1,142 @@
+**Camino rápido, precedencia, encadenado y durabilidad (v4 rev. 3)** — pedidas
+expresamente
+
+27. **El camino rápido NO se salta el caso 8 (§6.1.a).** Una "versión antigua"
+    (se simula escribiendo el `.sqlite3` por fuera, sin tocar el `.gen` ni
+    `db_commit_id`) deja `C_file === C_disk === C_mem`. Se comprueba que en
+    carpeta COMPARTIDA la escritura siguiente lee los bytes, ve `F_disk ≠ F_mio`
+    y clasifica **caso 8** (regla A1b), **no** descendencia. Con la regla v4
+    rev. 2 esta prueba **falla**: es la prueba de regresión del agujero.
+28. **`C_mem ∈ H_disk` no puede cumplirse trivialmente.** Mismo commit y bytes
+    distintos: se comprueba que la clasificación sale por A1b (caso 8) y **nunca
+    llega a A2**, porque `H_disk` contiene su propio commit y sin la salida
+    previa de A1 daría "descendencia legítima". Complementaria: mismo commit y
+    **mismos bytes** con `mtime` cambiado a mano (`fs.utimesSync`) → **no es
+    conflicto**, se refresca `S_mio` y se sigue.
+29. **A5 es alcanzable.** Se construye un estado que no cumple A1, A2, A3 ni A4
+    y se comprueba que cae en A5 (caso 5) y no en ninguna regla anterior. En la
+    rev. 2, con A4 = "resto", este estado salía por A4: prueba de regresión del
+    orden de evaluación.
+30. **LA SECUENCIA DEL USUARIO (§6.1.c), que la rev. 2 no detectaba.**
+    (a) una versión antigua modifica la BD conservando tamaño y `mtime`;
+    (b) **nuestra app hace una escritura ANTES de cualquier comprobación
+    periódica**; (c) se comprueba qué pasa. Con la política LOCAL (atajo por
+    `stat`) el cambio externo **se pierde y no queda evidencia** — y la prueba
+    lo afirma explícitamente, porque es el límite conocido. Con la política
+    COMPARTIDA (verificación de bytes) el cambio **se detecta antes de escribir**
+    y las dos versiones quedan en disco. Esta prueba es la que justifica que en
+    carpeta compartida no haya atajo.
+31. **Precedencia: el disco divergido gana a la autorreparación (§6.1.b).**
+    Nuestra intención `Y` queda adelantada en el `.gen` (`W_file === W_yo`,
+    `P_file === C_mem`) y **mientras tanto otro equipo escribe `Z`**. Se
+    comprueba que **NO hay reparación silenciosa** y que no se escribe nada
+    encima de `Z`. Tres variantes: `Z` descendiente de lo nuestro (→ recarga
+    silenciosa legítima, si `dirty` es falso), `Z` divergente (→ conflicto), y
+    `Z` con el mismo `commit_id` que esperábamos pero otros bytes (→ conflicto
+    por A1b, no reparación).
+32. **Las CUATRO condiciones de la reparación silenciosa (B1)**: se rompe cada
+    una por separado —`W_file`, `P_file`, `C_disk === C_mem`, y
+    `F_disk === F_mio`— y en las cuatro el resultado es "no reparar".
+33. **Paso 0 con la bandera `dirty`, no con una igualdad (§2.d).** Dos partes:
+    (a) **La igualdad no basta**: se detiene la ejecución entre el paso 3 y el 7
+    de `run()`; ahí la memoria ya está modificada y `C_mem` **todavía coincide**
+    con el commit de `ultimaImagenConfirmada`. Se comprueba que una regla basada
+    en esa igualdad concluiría "no hay cambios pendientes" —que es falso— y que
+    `dirty === true` sí lo detecta.
+    (b) **Efecto**: con `dirty === true` y una descendencia lineal legítima
+    entrante, **no** hay recarga silenciosa; se abre el modal.
+34. **Los tres fallos de §2.d, separados.**
+    (a) fallo **antes** del `rename` → disco intacto, memoria restaurada,
+    `dirty === false`, `ErrorDb('io')` con `aplicado: false`, y **reintentar no
+    duplica**;
+    (b) `rename` **completado** y fallo en el `stat`/hash/bookkeeping → **la
+    memoria NO se restaura**, la operación está en disco, el llamante recibe
+    `aplicado: true`, y se comprueba que **un reintento del mismo `INSERT`
+    duplicaría la fila** — por eso el contrato lo prohíbe;
+    (c) fallo **al restaurar** la memoria → `escrituraBloqueada =
+    'desincronizada'`, `dirty` sigue en `true`, ninguna escritura posterior pasa.
+35. **"Conservar lo mío" encadena sobre `C_disk` (§7.b).** Se comprueba que
+    `parent_commit_id` del commit nuevo **es exactamente `C_disk`** y que su
+    historial contiene `H_disk`. Y después, con una **tercera** instalación, los
+    tres casos de la tabla de §7.b: partiendo de `C_disk` → caso 1, adopción
+    silenciosa; partiendo de la rama descartada → **conflicto**; con trabajo
+    propio divergente → **conflicto**. La adopción silenciosa **no** se
+    generaliza a cualquier tercer equipo.
+36. **"Conservar lo mío" con `.gen` y BD incoherentes**: en el momento de
+    resolver, `C_file ≠ C_disk`. Se comprueba que **no se sobrescribe nada**,
+    que se resuelve primero la incoherencia y que después la resolución sí se
+    puede aplicar.
+37. **Revalidación por bytes, no solo por ids (§7.c)**: entre detectar y
+    resolver, otro equipo escribe bytes distintos **manteniendo los mismos
+    `commit_id`**. Se comprueba que la revalidación lo detecta por `F_disk` y
+    no aplica la resolución.
+38. **Preservación verificada por hash**: la copia del paso 3 de §7.b se compara
+    por `sha256`, no solo por tamaño. Se inyecta una copia truncada y se
+    comprueba que la resolución se aborta.
+
+**Escritura atómica y durabilidad (§4.b, §4.c)**
+
+39. **Bucle de `writeSync` con escritura parcial**: se instrumenta `writeSync`
+    para que devuelva la mitad de los bytes, y luego para que devuelva `0`. En
+    el primer caso el bucle completa la escritura; en el segundo lanza, **no se
+    hace `rename`**, la BD activa no cambia y el temporal se conserva como
+    `.tmp-fallido-<fecha>`.
+40. **`fsync` con fallo REAL vs. no soportado.**
+    (a) `EIO` / `ENOSPC` / `EROFS` → **es un fallo**: se lanza, **no hay
+    `rename`**, la BD activa no se toca, y NO se marca ninguna garantía como
+    rebajada;
+    (b) `EINVAL` / `ENOSYS` / `ENOTSUP` / `EOPNOTSUPP` → se considera no
+    soportado: la escritura **se completa**, se registra **una sola vez** por
+    ubicación y la rebaja queda anotada en `app.log`.
+    La diferencia entre (a) y (b) es el punto que la rev. 2 no hacía.
+41. **`fsync` solo donde toca**: se instrumenta `fs.fsyncSync` y se comprueba
+    que se llama para el `.sqlite3` y **no** para el `.gen`, y siempre **antes**
+    del `renameSync` correspondiente.
+42. **Corte de corriente con pérdida de datos no sincronizados**: el `rename`
+    ocurrió pero el contenido es basura (ceros, truncado, bytes aleatorios). Al
+    arrancar: `integrity_check` falla o falta `db_commit_id` →
+    `escrituraBloqueada = 'bd-ilegible'`, **no** se crea una base de datos
+    vacía, **no** se escribe nada. Se comprueba explícitamente que **un
+    `.sqlite3` de ceros no se confunde con una instalación nueva**.
+43. **Corte con pérdida del `rename`** (el hueco que queda incluso con `fsync`):
+    sobrevive el `.sqlite3` viejo íntegro y un `.tmp-<pid>` huérfano → caso 2,
+    reparación silenciosa.
+44. **CONSERVACIÓN ANTES DE LIMPIAR (§4.c).** Prueba de regresión sobre
+    `db.js:34-41`, que **hoy borra todos los `.tmp-*` al arrancar**: se
+    comprueba que un `.tmp-<pid>` que abre, pasa `integrity_check` y cuyo
+    `db_commit_id` **no** está en `H_disk` **NO se borra**, sino que se renombra
+    a `.tmp-huerfano-<fecha>`. Y que el diálogo de recuperación presenta en
+    listas separadas las **copias completas** y los **testigos**
+    (`.gen.abandonado-…`, `.gen.interrumpido-…`), que no son bases de datos.
+45. **Coste, ya medido** — ver §13. Se repite dentro de la suite como regresión,
+    con umbral: si el ciclo local con `fsync` supera 15 ms de p95 o el de Drive
+    supera 150 ms, la prueba avisa.
+
+**Integración con A1, A2, B2 y los flujos existentes** (dependencias de §14)
+
+46. Fail-stop de B2 → **ninguna** escritura pasa, incluidas las internas y
+    **`vacuum()`**, que hoy no tiene guarda en `main.js:844`.
+47. **Ningún camino levanta el latch `'comprometido'`**: se intenta levantarlo
+    desde la recuperación de Drive, desde la resolución de conflicto y desde los
+    dos interruptores. En los tres, sigue bloqueado.
+48. **Recuperación de rekey de A1 con escrituras bloqueadas**: se provoca un
+    conflicto y se arranca con un journal de rekey pendiente (`main.js:5963`,
+    antes del login). Se comprueba el orden acordado en §14 y que **la sal y el
+    verificador nunca quedan a medias**.
+49. Conflicto durante una restauración de A2.
+50. **Coherencia de Seguridad al adoptar otra BD**: tras `recargarDesdeDisco()`
+    con una BD cuya `security_salt`/`security_verifier` son distintas, se
+    comprueba que `securityKey` se revalida y que, si no encaja, se fuerza el
+    login en vez de seguir con una clave que ya no deriva nada.
+51. **P8 — borrado de archivos antes del `DELETE` (`main.js:3253-3269`)**: se
+    provoca un conflicto que rechaza el `dbmod.run` del paso 3268 y se comprueba
+    el comportamiento acordado en §14 (no debe quedar un proyecto con las filas
+    intactas y los archivos borrados).
+52. **Imposible preservar nuestra imagen**: falla la escritura del
+    `.conflicto-…` tanto en la carpeta de datos como en la local. Se comprueba
+    que **"usar disco" queda deshabilitado** y que la única salida es "decidir
+    luego".
+53. Interruptor de desactivación → comportamiento idéntico al actual.
+54. Re-ejecución de las cinco suites (56 · 98 · 23 · 64 · 84).
+55. Ejecución real aislada: arranque, crear/abrir/editar, y un conflicto
+    provocado escribiendo el `.gen` por fuera con otro `writer`.

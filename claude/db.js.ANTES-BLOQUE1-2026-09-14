@@ -1,0 +1,253 @@
+// Base de datos interna del proyecto, vía sql.js (SQLite compilado a WebAssembly).
+// Se eligió deliberadamente en vez de un módulo nativo (better-sqlite3, etc.):
+// no requiere compilar nada para la arquitectura de Electron ni del sistema
+// operativo destino, así que funciona igual en desarrollo y una vez empaquetado
+// como .exe, sin pasos de "rebuild" nativos.
+const fs = require('fs');
+const path = require('path');
+const initSqlJs = require('sql.js');
+const { app } = require('electron');
+
+let db = null;
+let dbFilePath = null;
+let dirty = false;
+
+async function getDb() {
+  if (db) return db;
+  const wasmPath = require.resolve('sql.js/dist/sql-wasm.wasm');
+  const SQL = await initSqlJs({ wasmBinary: fs.readFileSync(wasmPath) });
+
+  const dir = app.getPath('userData');
+  fs.mkdirSync(dir, { recursive: true });
+  dbFilePath = path.join(dir, 'panorama.sqlite3');
+
+  // v2.0.42: limpieza de temporales huérfanos -- si un arranque anterior se
+  // cortó (cuelgue, corte de luz) exactamente entre escribir
+  // panorama.sqlite3.tmp-<pid> y el renameSync() que lo sustituye por el
+  // real (ver persist() más abajo), ese .tmp se queda huérfano para
+  // siempre -- no corrompe nada (el .sqlite3 real nunca se tocó, que es
+  // justo el punto del patrón atómico) pero se queda ocupando espacio y
+  // sincronizándose con Drive/OneDrive sin necesidad. Se borra aquí, antes
+  // de abrir nada, cualquier resto de un proceso que ya no puede ser este
+  // (distinto pid, o el propio arranque actual si por lo que sea quedó uno
+  // de una ejecución anterior con el mismo pid reciclado por el SO).
+  try {
+    const base = path.basename(dbFilePath);
+    fs.readdirSync(dir)
+      .filter((f) => f.startsWith(`${base}.tmp-`))
+      .forEach((f) => {
+        try { fs.unlinkSync(path.join(dir, f)); } catch (e) { /* no crítico */ }
+      });
+  } catch (e) { /* no crítico -- si falla, como mucho queda el resto de antes */ }
+
+  if (fs.existsSync(dbFilePath)) {
+    db = new SQL.Database(fs.readFileSync(dbFilePath));
+  } else {
+    db = new SQL.Database();
+  }
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS projects(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      client TEXT,
+      partition_name TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS backups(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      reason TEXT,
+      payload TEXT NOT NULL,
+      size INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_backups_project ON backups(project_id, created_at);
+    CREATE TABLE IF NOT EXISTS app_meta(
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
+    CREATE TABLE IF NOT EXISTS meeting_preps(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      meeting_date TEXT,
+      finalidad TEXT,
+      file_path TEXT NOT NULL,
+      encrypted INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_meeting_preps_project ON meeting_preps(project_id, created_at);
+    -- "Evaluación de Candidatos" (v0.1.73): un único documento vivo por
+    -- proyecto (puestos + entrevistas), no un historial de muchos archivos
+    -- como meeting_preps — de ahí project_id como PRIMARY KEY en vez de un
+    -- id autoincremental. Mismo principio que los backups: el JSON en sí
+    -- (que puede crecer con cada puesto/candidato añadido) vive en un
+    -- archivo aparte en disco, NUNCA en esta fila — esta tabla solo guarda
+    -- metadatos ligeros (cuándo se guardó, si el archivo está cifrado) para
+    -- no repetir el error que se corrigió en su día con backups.payload.
+    CREATE TABLE IF NOT EXISTS candidate_evals(
+      project_id INTEGER PRIMARY KEY,
+      updated_at TEXT NOT NULL,
+      encrypted INTEGER NOT NULL DEFAULT 0
+    );
+  `);
+  migrateSchema();
+  persist();
+  return db;
+}
+
+// ------------------------------------------------------------------
+// Por qué existe esto: la versión inicial guardaba el JSON completo de cada
+// backup DENTRO de la propia base de datos (columna `backups.payload`).
+// sql.js mantiene la base de datos entera en memoria y la vuelve a escribir
+// COMPLETA a disco en cada INSERT/UPDATE/DELETE (ver persist() más abajo) —
+// así que si esa columna sigue creciendo (backups de cada proyecto, en cada
+// proyecto que se vaya creando con el tiempo), cada guardado automático
+// (cada ~15s si hay cambios, por cada ventana de proyecto abierta) reescribe
+// un archivo cada vez más grande. Es exactamente el riesgo de "se satura /
+// va más lento con el tiempo" que hay que evitar.
+//
+// La solución: el contenido del backup pasa a vivir SOLO en el archivo
+// .json en disco (que ya se escribía igualmente, ver backup:save en
+// main.js) — la fila en `backups` solo guarda una referencia ligera
+// (`file_path`) y metadatos. Así la base de datos en sí nunca crece más
+// allá de un puñado de bytes por backup, sin importar cuántos proyectos o
+// backups acumules.
+//
+// `file_path` y `encrypted` se añaden con ALTER TABLE (comprobando antes si
+// ya existen, porque SQLite no soporta "ADD COLUMN IF NOT EXISTS" y esto
+// puede ejecutarse sobre una base de datos ya existente de una versión
+// anterior). Las filas antiguas, creadas antes de este cambio, se quedan
+// con su `payload` inline tal cual — restoreProjectBackup() en main.js sabe
+// leer de cualquiera de las dos formas.
+// ------------------------------------------------------------------
+function migrateSchema() {
+  const backupCols = all("PRAGMA table_info(backups)").map((c) => c.name);
+  if (!backupCols.includes('file_path')) {
+    db.run('ALTER TABLE backups ADD COLUMN file_path TEXT');
+  }
+  if (!backupCols.includes('encrypted')) {
+    db.run('ALTER TABLE backups ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0');
+  }
+  // `backup_dir`: nombre de carpeta de backups de este proyecto, fijado UNA
+  // sola vez al crearlo y nunca recalculado. Antes se recalculaba cada vez a
+  // partir del nombre actual del proyecto (id + nombre "slugificado") — si
+  // el proyecto se renombraba (algo que pasa solo con abrir el asistente de
+  // la plantilla y cambiar el título), la siguiente vez apuntaba a OTRA
+  // carpeta distinta, dejando huérfanos los backups antiguos. Con una
+  // columna propia, la carpeta no se mueve aunque el proyecto cambie de
+  // nombre.
+  const projectCols = all("PRAGMA table_info(projects)").map((c) => c.name);
+  if (!projectCols.includes('backup_dir')) {
+    db.run('ALTER TABLE projects ADD COLUMN backup_dir TEXT');
+  }
+  // `kind`: distingue los proyectos normales ('project', valor por defecto —
+  // se rellena solo en las filas ya existentes al añadir la columna) del
+  // singleton interno "Directorio de Talento" ('directorio_talento'). Este
+  // último se guarda como una fila más de `projects` para reutilizar toda la
+  // infraestructura ya existente (partición propia, backups automáticos,
+  // menú Proyecto), pero se excluye del listado normal del launcher — ver
+  // ensureDirectorioTalentoProject() en main.js.
+  if (!projectCols.includes('kind')) {
+    db.run("ALTER TABLE projects ADD COLUMN kind TEXT NOT NULL DEFAULT 'project'");
+  }
+  // `sort_order`: orden manual de las tarjetas en el launcher (v0.1.26,
+  // arrastrar y soltar). NULL en todas las filas hasta que el usuario
+  // arrastra una tarjeta por primera vez — momento en el que se les asigna
+  // a TODAS un valor secuencial de una vez (ver projects:reorder en
+  // main.js). Mientras sea NULL, el listado se sigue ordenando como
+  // siempre (por actividad reciente) — así no cambia nada para quien no
+  // use el arrastre. Los proyectos nuevos se crean con sort_order NULL, así
+  // que si ya hay un orden manual establecido, aparecen al final de ese
+  // orden hasta que el usuario los arrastre a su sitio (ver ORDER BY en
+  // projects:list).
+  if (!projectCols.includes('sort_order')) {
+    db.run('ALTER TABLE projects ADD COLUMN sort_order INTEGER');
+  }
+}
+
+// v2.0.42: escritura atómica -- antes se escribía directamente sobre
+// panorama.sqlite3 con fs.writeFileSync(). Si la app se cerraba en mal
+// momento (corte de luz, cuelgue del proceso, o Google Drive leyendo el
+// archivo justo en ese instante -- la carpeta de datos puede vivir en una
+// unidad sincronizada por Drive/OneDrive) exactamente durante esa escritura,
+// el .sqlite3 podía quedar truncado/corrupto, sin ningún mecanismo de
+// recuperación para ESTE archivo en concreto (los backups por proyecto son
+// independientes de él). Ahora se escribe primero a un archivo temporal en
+// la MISMA carpeta (para que el rename sea atómico -- fs.renameSync entre
+// carpetas distintas no lo es) y solo se sustituye el archivo real una vez
+// la escritura del temporal ha terminado con éxito. Con esto, un corte a
+// mitad de escritura deja como mucho el .tmp a medias -- el .sqlite3 real
+// nunca se toca hasta que la copia nueva está completa en disco.
+function persist() {
+  if (!db || !dbFilePath) return;
+  const data = db.export();
+  const tmpPath = `${dbFilePath}.tmp-${process.pid}`;
+  fs.writeFileSync(tmpPath, Buffer.from(data));
+  fs.renameSync(tmpPath, dbFilePath);
+  dirty = false;
+}
+
+function markDirtyAndPersist() {
+  dirty = true;
+  persist();
+}
+
+function get(sql, params = []) {
+  const stmt = db.prepare(sql);
+  stmt.bind(params);
+  let row = null;
+  if (stmt.step()) row = stmt.getAsObject();
+  stmt.free();
+  return row;
+}
+
+function all(sql, params = []) {
+  const stmt = db.prepare(sql);
+  stmt.bind(params);
+  const rows = [];
+  while (stmt.step()) rows.push(stmt.getAsObject());
+  stmt.free();
+  return rows;
+}
+
+// INSERT/UPDATE/DELETE: ejecuta y persiste a disco inmediatamente (la BD es
+// pequeña — metadatos de proyecto + backups — así que no hace falta batching).
+// OJO: last_insert_rowid() hay que leerlo ANTES de export()/persist() — sql.js
+// resetea ese contador interno al exportar la base de datos, así que se captura
+// aquí mismo, en el mismo tick que el INSERT, y se devuelve ya resuelto.
+function run(sql, params = []) {
+  db.run(sql, params);
+  const idRow = get('SELECT last_insert_rowid() as id');
+  const lastId = idRow ? idRow.id : null;
+  markDirtyAndPersist();
+  return lastId;
+}
+
+function lastInsertRowId() {
+  const row = get('SELECT last_insert_rowid() as id');
+  return row ? row.id : null;
+}
+
+// VACUUM reconstruye el archivo de la base de datos compactado, sin los
+// huecos que deja SQLite tras borrar/actualizar filas grandes (por ejemplo,
+// tras la migración que vacía `backups.payload` de filas antiguas — ver
+// migrateLegacyInlineBackupsToFiles() en main.js). Se llama una sola vez al
+// arrancar, solo si hubo algo que compactar; con la base de datos ya
+// pequeña de por sí (metadatos, sin contenido de backups) tarda milisegundos.
+function vacuum() {
+  if (!db) return;
+  db.run('VACUUM');
+  persist();
+}
+
+module.exports = {
+  getDb,
+  get,
+  all,
+  run,
+  lastInsertRowId,
+  vacuum,
+  getDbPath: () => dbFilePath,
+};
