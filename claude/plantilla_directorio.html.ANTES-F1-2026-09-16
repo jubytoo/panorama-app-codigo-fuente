@@ -763,13 +763,6 @@ function fmtMoney(v){
 function escapeHtml(s){
   return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
-// F1 — misma validación que el dashboard: el logo se guarda siempre como
-// dataURL base64 (<input accept="image/*"> + FileReader.readAsDataURL), así que
-// se admite eso y nada más. Ni `javascript:`, ni rutas, ni URL externas.
-const F1_LOGO_MIME = /^data:image\/(png|jpeg|jpg|gif|webp|bmp|avif|x-icon|vnd\.microsoft\.icon|svg\+xml);base64,[A-Za-z0-9+/=\s]*$/i;
-function logoSrcSeguro(v){
-  return (typeof v === 'string' && F1_LOGO_MIME.test(v)) ? v : null;
-}
 
 // ============================================================
 // PERSISTENCIA
@@ -2567,7 +2560,7 @@ function renderPersonModal(){
             ${p.asignaciones.map(a=>`
               <div class="field-grid" style="margin-bottom:6px;">
                 <div class="field" style="grid-column:1/3;"><label>${escapeHtml(a.proyecto)}</label>
-                  <input type="number" min="0" max="100" data-dedic="${escapeHtml(a.proyecto)}" value="${escapeHtml(p.manual.dedicacion[a.proyecto]??'')}" placeholder="%"></div>
+                  <input type="number" min="0" max="100" data-dedic="${a.proyecto}" value="${p.manual.dedicacion[a.proyecto]??''}" placeholder="%"></div>
               </div>`).join('')}
           </div>
         </div>
@@ -2698,7 +2691,7 @@ function renderAppearancePanel(){
       <label>Logo / banner corporativo</label>
       <input type="file" id="ap-logo-input" accept="image/*" style="display:none;">
       <button class="btn ghost" id="ap-logo-upload-btn">${state.corporateLogo?'Cambiar imagen':'Subir imagen'}</button>
-      ${logoSrcSeguro(state.corporateLogo) ? `<img src="${escapeHtml(logoSrcSeguro(state.corporateLogo))}" class="ap-logo-preview"><button class="btn ghost" id="ap-logo-remove-btn">Quitar</button>` : `<span class="hint">Aparece en la cabecera del dashboard</span>`}
+      ${state.corporateLogo? `<img src="${state.corporateLogo}" class="ap-logo-preview"><button class="btn ghost" id="ap-logo-remove-btn">Quitar</button>` : `<span class="hint">Aparece en la cabecera del dashboard</span>`}
     </div>
     <div class="ap-row">
       <label>Tema</label>
@@ -2864,8 +2857,7 @@ function renderHeaderLogo(){
   const wrap = document.getElementById('corp-logo-wrap');
   const img = document.getElementById('corp-logo-img');
   if(!img || !wrap) return;
-  const logoOk = logoSrcSeguro(state.corporateLogo); // F1: URL activa, se valida el esquema
-  if(logoOk){ img.src = logoOk; wrap.style.display='block'; }
+  if(state.corporateLogo){ img.src = state.corporateLogo; wrap.style.display='block'; }
   else { img.removeAttribute('src'); wrap.style.display='none'; }
 }
 // v2.0.38: ver el mismo hideBootLoading() de plantilla_dashboard.html --

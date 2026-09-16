@@ -43,7 +43,8 @@ verificadas como reales.
 | B5 | **CERRADO** (16 sept 2026) | **Una línea** en `security-window/renderer.js`: `if (els.btnSubmit.disabled) return;`. Medido antes: 2 Enter = 2 IPC, 5 Enter = 5 IPC, click+Enter = 2. Medido después: **1 IPC** en todos los casos y en los cuatro modos. Las capas inferiores **no se tocan** y siguen custodiadas con IPC directos. Batería **68 OK/0**, Electron real **24 OK/0**, una reversión. Ver §B5 |
 | B4 | **CERRADO** (16 sept 2026) | Las **dos mitades del hallazgo original** ya las había absorbido A3.3 (`persist()` → `aplicarYConfirmar()`; `backup:save` → `ejecutarAccionDeArchivo`). El **patrón residual** que quedaba —`projects:reorder` con N commits— **corregido**: una sola mutación anclada. Batería **144 OK/0**, Electron real **17 OK/0**, dos reversiones. Ver §B4 |
 | P15 | **ABIERTO — baja** *(15 sept 2026)* | **Las líneas de `app.log` anteriores a B3 sí llevan la ruta completa** dentro del mensaje del error (`EPERM … 'C:\Users\<usuario>\…'`). B3 sanea las suyas con `motivoSinRutas()`; las ~140 anteriores no. Ver §P15 |
-| F1 | **ABIERTO** | Sin tocar |
+| F1 | **CERRADO** *(16 sept 2026)* | **Interpretación de datos como HTML — corregida por contexto.** Ningún dato importado/persistido puede ya convertirse en markup, atributo, cierre de `<script>`, handler inline, selector roto ni URL activa. Batería **139 OK/0** (exigente), Electron real **47 OK/0** (4 arranques), **6 reversiones** por familias (**19 OK/0**). Cinco archivos tocados. Ver §F1. *(Diagnóstico previo, conservado abajo.)* |
+| F1 *(diagnóstico)* | — | Interpretación de datos como HTML. **Diagnóstico cerrado; sin implementar.** Patrón **global en el dashboard** (19 campos se interpretan y ejecutan al abrir, sin interacción); vía persistente más grave: **título importado horneado** en `projects/<id>/dashboard.html`, que ejecuta en el **arranque**. Propagación cruzada a Preparación y Directorio. Evaluación y Directorio casi todo escapado (residuos: peso/fecha/id de Evaluación, `data-dedic` del Directorio). **Barreras reales:** `contextIsolation:true` + `sandbox:true` + sin Node en las 4 ventanas → **no es RCE**; pero `psConfirm` sobrescribible, puente con 25 métodos, **sin CSP** (F2) y `window.open` sin handler (F3). Batería `f1/` (**100** descriptiva + **34** Electron real, 3 arranques, con marcadores inocuos). Ver §F1 |
 
 ## Aplazadas explícitamente por el usuario
 
@@ -1148,4 +1149,158 @@ global. Lo más relevante que **sigue abierto**:
   cortadas → **C1-A CERRADO**. La retirada de lo histórico, **C1-B, DIFERIDA**.
 - **E2** — `computeServiceEndWarning` duplicada y ya divergida entre `main.js` y
   el dashboard. → **ABIERTO.**
-- **F1** — 76 `innerHTML` sin función de escape en el dashboard. → **ABIERTO.**
+- **F1** — 76 `innerHTML` sin función de escape en el dashboard. → **ABIERTO —
+  DIAGNOSTICADO (16 sept 2026), sin implementar.** Ver §F1 más abajo.
+
+---
+
+## §F1 — Interpretación de datos como HTML (frontend). DIAGNÓSTICO, sin implementar
+
+Ronda de **solo diagnóstico** (16 sept 2026). No se ha tocado ni una línea de
+producción: `main.js`, `dashboard/`, `directorio/`, `preparacion-reunion/` y
+`evaluacion-candidatos/` intactos por SHA-256 antes y después. Batería en
+`claude/pruebas-a33/f1/` (`test-f1-sinks.js` **100 OK/0** descriptiva +
+`electron-f1.ps1` **34 OK/0** en la app real, 3 arranques, con marcadores
+**inocuos**: una `<b>`, un `data-f1a` y una `<img>` con `onerror` que solo pone
+un atributo en `<html>` — sin red, sin APIs sensibles, sin acciones
+destructivas). El informe completo se entregó en el chat de esta ronda.
+
+**Qué es F1, medido:** el dashboard construye su HTML con plantillas y mete los
+datos del usuario **sin escapar** en ~20 interpolaciones. Las otras tres
+plantillas (Directorio, Evaluación, Preparación) **sí** tienen función de escape
+y la usan bien en el texto; les quedan residuos en atributos.
+
+**Severidad real (sin exagerar):** **NO es RCE.** Las 4 ventanas medidas tienen
+`contextIsolation:true` **y `sandbox:true`** y no exponen Node al mundo principal
+(`require`/`process` = `undefined`, confirmado también en el mundo aislado). Un
+`onerror` inyectado ejecuta JS del renderer, no del sistema. Lo que sí hay
+alrededor: `window.psConfirm` es **sobrescribible** (y `main.js` confía en su
+respuesta para eliminar/restaurar), el puente `panoramaBridge` expone 25 métodos
+(entre ellos `saveBackup`, `projectMenuAction` que llega a `proyecto-eliminar`,
+los de CV), **no hay CSP** (F2) y **no hay `setWindowOpenHandler`** (F3) —
+`window.open` abre una `BrowserWindow`, aunque la hija **no** hereda el puente.
+La batería **no** invocó ninguna de esas APIs desde el contenido inyectado: la
+exposición **solo se documenta**.
+
+**Fuentes que llegan de verdad a los sinks (C/D/E/F):** importación de proyecto
+desde `.json` de terceros (`projects:create` valida forma, no contenido);
+importación por bloque de CSV/Excel; **backups** de otros equipos; y el
+**Directorio**, que consolida el Equipo de todos los proyectos (propagación entre
+ventanas). En uso normal es *self-XSS*; deja de serlo con contenido ajeno.
+
+**Vías reproducidas en Electron real (todas con marcador inocuo):**
+- **Dashboard, al ABRIR sin tocar nada:** 19 campos se interpretan y ejecutan
+  (hito/riesgo títulos, mitigación/contingencia, skills, roles de columna,
+  alias/rol de equipo, cobertura, fase, **logo** que rompe `src`). Los **id**
+  importados rompen atributos. Una `<textarea>` (obs. de materialización) saca el
+  marcador al abrir el formulario de edición. → **persistente por carga**.
+- **Título horneado (lo más grave):** el `projectTitle` importado se hornea en
+  `projects/<id>/dashboard.html` dentro del `<script id="factory-seed">`; un
+  `</script>` en el nombre **cierra el script** y su `<img>` queda como hermano
+  del seed → **se ejecuta en el arranque, antes de cualquier `render()` y del
+  asistente de onboarding**, y persiste en el archivo (reaparece al reabrir).
+- **Preparación de Reunión:** interpreta y ejecuta los textos del **backup**
+  (títulos de hito/riesgo, rol) en sus "candidatos"; un id con comillas rompe el
+  `onclick` inline de "Mencionar / Ya lo saben / Omitir".
+- **Evaluación de Candidatos:** el texto libre queda **literal** (usa
+  `escapeHtml`/`escapeAttr`), pero **peso y fecha** van crudos a `<td>`/`value=`
+  y se interpretan; un id de tarea con comillas además **rompe el `querySelector`**
+  de `applyEvalFilter` (efecto incidental: la pantalla deja de pintar bien).
+- **Directorio:** el nombre de proyecto rompe el atributo `data-dedic`; el resto
+  (nombre/rol con `escapeHtml`) queda literal.
+
+**Sink que NO es defecto pese a ir crudo:** la etiqueta de versión del historial
+va a `select.innerHTML`; Chromium **descarta ahí las etiquetas ajenas** (contexto
+de parseo `in select`), así que queda como texto. **Seguro hoy por el parser, no
+por escape** — si esa etiqueta se pintara en otro sitio, ejecutaría.
+
+**Reparación mínima propuesta (NO implementada, por patrón):**
+1. **Texto** → `escapeHtml` (la app **no necesita** admitir HTML de usuario: no
+   admitirlo). Portar al dashboard la misma `escapeHtml` que ya usan las otras
+   tres plantillas y aplicarla en las ~20 interpolaciones de datos + en los
+   valores de atributo (incluidas `value="…"` y `data-*`).
+2. **Título horneado** → al hornear el seed, escapar `<`/`>` como `<`/`>`
+   dentro del JSON (o insertar por `textContent` del nodo, no por `String.replace`
+   con `$`, que además interpreta `$&`/`$'`). Es el sink de `main.js`
+   (`writeFactorySeedIntoTemplate`).
+3. **`onclick` inline de Preparación** → construir los botones con `data-*` +
+   listener, no interpolando el id en el `onclick`.
+4. **`psConfirm`/borrado** → no hacer depender una acción destructiva de una
+   función del mundo principal sobrescribible (endurecimiento aparte de F1).
+
+**Riesgos de regresión a vigilar:** el markup **legítimo** que debe seguir
+interpretándose (banderas `<span class="flag">…`, badges, SVG del rail con
+números ya controlados, `modal.js` que ya usa `textContent`, los builders ya
+escapados de Directorio/Evaluación/Launcher). Un reemplazo ciego de `innerHTML`
+por `textContent` **rompería** esas estructuras — de ahí que la propuesta sea por
+patrón, no masiva.
+
+**Qué `innerHTML` NO tocar:** los literales estáticos, los que solo interpolan
+constantes/enum o números ya validados (KPIs, SVG del rail), `vendor/modal.js`
+(usa `textContent`), y los builders de Directorio/Evaluación/Preparación/Launcher
+que ya escapan.
+
+---
+
+### F1 — IMPLEMENTADO Y CERRADO (16 sept 2026)
+
+Reparación **por contexto**, no un reemplazo masivo: los 76 `innerHTML` del
+dashboard siguen ahí (se escapó el **dato**, no se reescribió la vista).
+
+| Archivo | Qué se hizo |
+|---|---|
+| `dashboard/plantilla_dashboard.html` | `escapeHtml` (texto/RCDATA) y `escapeAttr` (atributo) propias — era la única plantilla sin escape. ~19 sinks de texto, 6 `<textarea>`, 40 atributos con id, y los 42 escapes ad hoc (`&quot;`/`&lt;`) normalizados. El `<select>` del historial pasa a construirse por DOM. El logo se valida y se asigna por `img.src` |
+| `main.js` | `serializarSeedParaScript`: `<` → `<` (escape JSON válido, round-trip exacto) y el reemplazo pasa a **función** para quitarle semántica a `$&`/`$'`/`` $` ``/`$1`. Únicas dos funciones tocadas |
+| `preparacion-reunion/…` | Fuera el `onclick` con el id: `data-seg-id` + listener delegado. El markup propio del guion se conserva y el **dato** dentro va con `esc()`. `desescapar()` para que el `.txt` no salga con entidades |
+| `evaluacion-candidatos/…` | Peso y fecha escapados; 46 atributos con id; los 9 selectores construidos con `CSS.escape` |
+| `directorio/…` | `data-dedic` escapado (su lector ya leía por `dataset`, round-trip exacto) y el logo validado |
+
+**Dos sinks aparecieron durante la implementación**, no en el diagnóstico: el
+`<option>` de la lista de perfiles de cobertura y `${top.title}` del panel de
+riesgo destacado. Los encontró la propia batería al volverse exigente.
+
+**Qué NO se tocó:** `psConfirm`, `projectMenuAction`, el puente y los borrados
+(defensa en profundidad, otro hallazgo); F2 (CSP) y F3 (`window.open`), que
+siguen abiertos con su numeración; `preload*`, `security*` y `db.js`.
+
+**Pruebas:** `f1/test-f1-sinks.js` **139 OK/0** (exigente: si alguien quita un
+escape, se pone roja), `f1/electron-f1.ps1` **47 OK/0** en la app real (importar
+con marcadores, reinicio, título horneado y proyecto horneado ANTES de F1),
+`f1/revertir-f1.js` + `comprobar-reversiones-f1.js` **19 OK/0** (seis
+reversiones, cada una rompe solo lo suyo).
+
+**Efecto conocido, heredado (no causado por F1):** un proyecto cuyo archivo ya
+estaba horneado roto *antes* de F1 tiene el seed ilegible; al reabrirlo se
+rehornea con los valores de fábrica. No se pierde nada del usuario — sus datos
+viven en `localStorage`/backups, no en el seed — y desde F1 no vuelve a pasar.
+Medido en el modo `d` del arnés.
+
+**Pendiente separado, menor:** `guionAsText` (`preparacion:1091`) borra con
+`replace(/<[^>]+>/g,'')` cualquier tramo entre `<` y `>` del texto ordinario al
+exportar el guion. F1 solo le añadió el `desescapar()` imprescindible. Queda
+anotado como defecto funcional menor, sin corregir.
+
+### Validación limpia (17 sept 2026) — 52 OK / 0
+
+Ronda añadida a petición del usuario: **datos ORDINARIOS**, sin ningún marcador.
+`f1/electron-f1-limpio.ps1` + `real-run/f1-limpio.js`, con capturas de las cinco
+pantallas. Textos de prueba con caracteres legítimos: `I+D & Calidad`,
+`Cliente "Norte"`, `Nivel < 3`, `A > B`, `José Álvarez`, `Diseño & Operaciones`.
+Resultado: todo se ve **exactamente como se escribió**, sin una sola entidad
+(`&amp;`, `&lt;`…) a la vista, sin markup, con el markup legítimo intacto y los
+controles respondiendo. **No hay doble escape.** El guion exportado a `.txt`
+sale con el texto exacto. Logos: el válido se ve, el inexistente no pinta nada,
+el inválido se ignora sin dejar `<img>` roto.
+
+### P17 — icono roto en la barra de título del dashboard horneado *(incidental, ANTERIOR a F1)*
+
+**No es de F1 y no se ha tocado.** `dashboard/plantilla_dashboard.html` tiene
+**dos** `<img src="../assets/icon-256.png">` (`:453`, pantalla de carga; `:458`,
+barra de título) y `fixVendorScriptPaths` (`main.js:2575`) los reescribe con
+`String.replace` de patrón **cadena**, que sustituye **solo la primera**. La
+segunda conserva la ruta relativa, que desde `projects/<id>/` no resuelve: el
+iconito de la barra de título sale roto en **todo** dashboard horneado.
+Medido: 3 ocurrencias en la plantilla, **idénticas antes y después de F1**, y la
+única imagen rota de la página en los tres casos de logo. Es la misma familia de
+defecto que F1 corrigió en el seed (`String.replace` mal usado), pero en otra
+función y fuera del alcance autorizado. **Pendiente, sin corregir.**

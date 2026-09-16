@@ -115,7 +115,7 @@ abordado, y no debe abordarse mientras A3.3 siga abierto.
 
 | # | Estado | Nota |
 |---|---|---|
-| **F1** | **ABIERTO** | 76 `innerHTML` sin escapar en el dashboard |
+| **F1** | **CERRADO** *(16 sept 2026)* | Corregido **por contexto** (texto/atributo/selector/handler/script/URL), sin reemplazo masivo: los 76 `innerHTML` siguen ahí, se escapó el dato. Batería **139 OK/0**, Electron real **47 OK/0**, 6 reversiones **19 OK/0**. Ver `pendientes-abiertos.md` §F1. *(Diagnóstico previo)* 76 `innerHTML` sin escapar en el dashboard (batería `f1/`: 100 descriptiva + 34 Electron real; producción intacta). Confirmado en la app real: 19 campos del dashboard se interpretan al abrir; **título importado horneado** ejecuta en el arranque (persistente); Preparación y Directorio reciben la propagación; Evaluación/Directorio casi todo escapado. **`contextIsolation`+`sandbox`+sin Node → no es RCE**; residuos: `psConfirm` sobrescribible, sin CSP (F2), `window.open` sin handler (F3). Ver §F1 y `pendientes-abiertos.md` §F1 |
 | **F2** | **PENDIENTE** | Ninguna ventana declara CSP |
 | **F3** | **PENDIENTE** | Sin `setWindowOpenHandler` ni guardia de `will-navigate` |
 | **F4** | **PENDIENTE** | Los CV siguen sin cifrarse. El Bloque 5 ordena su **ciclo de vida** (D4a/D4b), que es otra cosa |
@@ -888,6 +888,29 @@ sin dependencias de DOM, cargable por los dos lados.
 # F. Seguridad
 
 ## F1. El dashboard inyecta datos del usuario en `innerHTML` sin escapar, y es la única plantilla sin función de escape — [MEDIDO]
+
+> **CERRADO (16 sept 2026).** Reparado por contexto: `escapeHtml`/`escapeAttr`
+> propias en el dashboard, `<textarea>` y atributos con id escapados, `<select>`
+> del historial por DOM, logo validado, seed horneado con `<`→`<` y
+> reemplazo por función, `onclick` de Preparación sustituido por listener,
+> selectores de Evaluación con `CSS.escape` y `data-dedic` del Directorio
+> escapado. **Los 76 `innerHTML` siguen ahí**: se escapó el dato, no se
+> reescribió la vista. Batería exigente **139 OK/0**, Electron real **47 OK/0**,
+> seis reversiones **19 OK/0**. Detalle completo en `pendientes-abiertos.md`
+> §F1. F2 y F3 **siguen abiertos**, fuera de F1.
+>
+> **Diagnóstico previo (16 sept 2026) — reproducido en Electron real.** Reproducido con marcadores **inocuos** en la app real (batería
+> `claude/pruebas-a33/f1/`, 34 OK/0 en 3 arranques; producción intacta): al abrir
+> un proyecto importado se interpretan y ejecutan **19 campos** del dashboard sin
+> tocar nada; la vía persistente más grave es el **título importado horneado** en
+> `projects/<id>/dashboard.html` (un `</script>` en el nombre cierra el
+> `factory-seed` y su `<img>` ejecuta **en el arranque**); la Preparación y el
+> Directorio reciben la propagación entre ventanas. **Severidad acotada por las
+> barreras:** `contextIsolation:true` **+ `sandbox:true`** + sin Node en las 4
+> ventanas → **no es RCE**. El detalle, las fuentes C/D/E/F, la reparación por
+> patrón y los `innerHTML` que **no** hay que tocar están en
+> `pendientes-abiertos.md` §F1. **Sigue ABIERTO** (pendiente de autorizar la
+> implementación).
 
 | Plantilla | Asignaciones a `innerHTML` | Función de escape |
 |---|---|---|

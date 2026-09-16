@@ -91,7 +91,7 @@ adelanta fases.
 | **P13** — frescura del origen | **ABIERTO / ACEPTADO TEMPORALMENTE — baja-media** | **Lanzador = snapshot del último backup persistido. Dashboard abierto = estado vivo.** Decisión del usuario: no se cambia la fuente ahora. B1 **no** lo empeora. Ver §16.5 |
 | **E3–E5, E7** | **PENDIENTE** | Barra de título, tema fijo, colores, `THEME_KEYS` |
 | **E6** — fallo al exportar invisible | **CERRADO su mitad de guardado; PENDIENTE la de exportar** | |
-| **F1** — 76 `innerHTML` sin escapar | **ABIERTO** | |
+| **F1** — 76 `innerHTML` sin escapar | **CERRADO** (16 sept 2026) | **Interpretación de datos como HTML, corregida por contexto** (texto / atributo / `<textarea>` / selector / handler / `<script>` / URL). Los 76 `innerHTML` siguen ahí: se escapó el **dato**, no se reescribió la vista. 5 archivos: dashboard (helpers propios, era la única plantilla sin escape), `main.js` (seed `<`→`<` + replacement **function** contra `$&`/`$'`), Preparación (`onclick`→listener), Evaluación (`CSS.escape` en 9 selectores, peso/fecha), Directorio (`data-dedic`). Batería **139 OK/0** (exigente), Electron real **47 OK/0** (4 arranques), **6 reversiones 19 OK/0**. No se tocó `psConfirm`/puente ni F2/F3. Ver `pendientes-abiertos.md` §F1 |
 | **F2–F4** | **PENDIENTE** | Sin CSP, sin `setWindowOpenHandler`, CV nunca cifrados |
 | **P1** | **PENDIENTE — aceptado** | Backup duplicado de `startup` tras restaurar |
 | **P2** | **CERRADO** (15 sept 2026) | Identidad en los `'closed'` de meeting y candidatos, **provocada en Electron real**: `RA-8`, `map.get(X) === B` sobre los Map reales, con control negativo y con la reversión `I-p2-delete-ciego` dejando el mapa vacío |
@@ -1041,7 +1041,12 @@ node_modules\electron\dist\electron.exe claude\pruebas-a33\a2\test-cableado.js
   garantías multi-PC/Drive (§20). No empezar sin autorización expresa.
 - **P16** — particiones de Chromium dentro de la carpeta sincronizada. Va con
   P14 y con A3.3 Bloque 8 / ciclo de vida de Drive.
-- **F1** — 76 `innerHTML` sin escapar. Sin diagnosticar todavía.
+- **F1** — **CERRADO el 16 sept 2026.** Corregido por contexto en 5 archivos;
+  los 76 `innerHTML` siguen ahí (se escapó el dato). Batería exigente 139 OK/0,
+  Electron real 47 OK/0, 6 reversiones 19 OK/0. `main.js` pasa a
+  `0BC92A46…` (solo el horneado del seed). Ver `pendientes-abiertos.md` §F1.
+  **F2 (CSP) y F3 (`window.open`) siguen abiertos**, fuera de F1, igual que
+  `psConfirm`/puente (defensa en profundidad, sin autorizar).
 - **P14** — `app.log` en Drive (§17.5). Va con A3.3 Bloque 8 / ciclo de vida
   de Drive; no tiene sentido abordarlo suelto.
 - **P15** — rutas completas en las líneas antiguas de `app.log` (§17.6). El

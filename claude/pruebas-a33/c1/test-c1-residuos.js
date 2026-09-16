@@ -1278,8 +1278,11 @@ const shaBuf = (b) => crypto.createHash('sha256').update(b).digest('hex');
     /'Abrir con datos locales \(temporal\)'/.test(SRC) && /const defaultUserDataDir = app\.getPath\('userData'\);/.test(SRC));
   ok('C1-P2 C2 (.asar en la carpeta sincronizada) es otro hallazgo y sigue abierto',
     /\| \*\*C2\*\* \| \*\*PENDIENTE\*\*/.test(DOC('auditoria-2026-09-13.md')));
-  ok('C1-P3 P14/P15, F1 y D4 no se tocan aquí',
-    /\| P14 \| \*\*ABIERTO/.test(DOC('pendientes-abiertos.md')) && /\| F1 \| \*\*ABIERTO\*\*/.test(DOC('pendientes-abiertos.md')));
+  // 16 sept 2026: F1 se implementó en su propia ronda (autorizada aparte), así
+  // que ya no está «ABIERTO». Lo que esta aserción custodia sigue siendo lo
+  // mismo — que C1 no lo tocó —, solo cambia el estado esperado de F1.
+  ok('C1-P3 P14/P15 y D4 no se tocan aquí; F1 se cerró en su propia ronda',
+    /\| P14 \| \*\*ABIERTO/.test(DOC('pendientes-abiertos.md')) && /\| F1 \| \*\*CERRADO/.test(DOC('pendientes-abiertos.md')));
 
   // =========================================================================
   seccion('C1-Z. GUARDIÁN');

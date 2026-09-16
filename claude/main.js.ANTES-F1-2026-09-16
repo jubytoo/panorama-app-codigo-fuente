@@ -2595,28 +2595,11 @@ function readCurrentFactorySeed(projectId) {
   return null;
 }
 
-// F1 — el seed va DENTRO de un <script>, y ahí el parser de HTML no entiende
-// de comillas JSON: la secuencia `</script` cierra el bloque aunque esté en
-// mitad de un string. Un nombre de proyecto importado que la contenga (viene
-// de projects:create, que valida la FORMA del .json pero no el contenido de
-// los textos) partía el archivo horneado en dos y todo lo que seguía pasaba a
-// ser markup del documento, ejecutándose en el ARRANQUE, antes de cualquier
-// render. Se escapa `<` como `<`: es un escape JSON válido, así que
-// `JSON.parse` devuelve el `<` original —el valor se recupera EXACTO— pero la
-// secuencia `</script` no llega a existir literalmente en el archivo.
-function serializarSeedParaScript(seed) {
-  return JSON.stringify(seed).replace(/</g, '\\u003c');
-}
-
 function writeFactorySeedIntoTemplate(projectId, seed) {
-  const seedTag = `<script type="application/json" id="factory-seed">${serializarSeedParaScript(seed)}</script>`;
+  const seedTag = `<script type="application/json" id="factory-seed">${JSON.stringify(seed)}</script>`;
   const html = fixVendorScriptPaths(readStockTemplate()).replace(
     /<script type="application\/json" id="factory-seed">[\s\S]*?<\/script>/,
-    // F1 — replacement FUNCTION, no string: como cadena, `$&`, `$'`, '$`' y
-    // `$1` son patrones de String.replace, así que un título con `$'` copiaba
-    // el resto de la plantilla dentro del seed y `$&` reinyectaba la etiqueta.
-    // Eso no lo arregla ningún escape de HTML: hay que quitarle la semántica.
-    () => seedTag
+    seedTag
   );
   fs.writeFileSync(projectDashboardFile(projectId), html, 'utf8');
 }

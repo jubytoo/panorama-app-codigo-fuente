@@ -790,49 +790,6 @@ function defaultState(){
 }
 
 let state = defaultState();
-
-// ============================================================
-// F1 — ESCAPE POR CONTEXTO
-//
-// Esta plantilla era la única de las cuatro sin función de escape: los datos
-// del usuario (que pueden venir de un .json importado, de un CSV/Excel o del
-// backup de otro equipo) se interpolaban crudos y el navegador los
-// interpretaba como HTML. Ver claude/pendientes-abiertos.md §F1.
-//
-// Son DOS funciones a propósito, no una: el contexto manda.
-//   · escapeHtml  -> contenido de TEXTO y de <textarea> (RCDATA). Neutraliza
-//                    `<` y `&`, así que `<b>F1</b>` se ve literalmente y NUNCA
-//                    crea un <b>; y un `</textarea>` se queda DENTRO del valor
-//                    (el navegador decodifica las entidades al leer `.value`,
-//                    así que el dato vuelve exacto).
-//   · escapeAttr  -> valores de atributo entre comillas dobles. Además de lo
-//                    anterior neutraliza `"` (que es lo que cierra el atributo
-//                    e inyecta atributos nuevos) y `'`.
-//
-// Lo que NO se arregla con esto, y por eso va aparte: los selectores CSS
-// construidos con datos (no existen en esta plantilla), el JSON dentro de un
-// <script> (eso es main.js, ver writeFactorySeedIntoTemplate) y las URL
-// activas (ver logoSrcSeguro más abajo).
-// ============================================================
-const F1_HTML = { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' };
-function escapeHtml(s){
-  return (s == null ? '' : String(s)).replace(/[&<>]/g, c => F1_HTML[c]);
-}
-function escapeAttr(s){
-  return (s == null ? '' : String(s)).replace(/[&<>"']/g, c => F1_HTML[c]);
-}
-
-// F1 — el logo se guarda SIEMPRE como dataURL base64 (ver renderAppearancePanel:
-// <input accept="image/*"> + FileReader.readAsDataURL), y de ahí sale también
-// la imagen del informe PowerPoint. Se admite exactamente eso y nada más: ni
-// `javascript:`, ni rutas del disco, ni URL externas, que nunca han formado
-// parte del contrato de este campo. Devuelve null si no encaja, y quien llama
-// simplemente no pinta la imagen.
-const F1_LOGO_MIME = /^data:image\/(png|jpeg|jpg|gif|webp|bmp|avif|x-icon|vnd\.microsoft\.icon|svg\+xml);base64,[A-Za-z0-9+/=\s]*$/i;
-function logoSrcSeguro(v){
-  return (typeof v === 'string' && F1_LOGO_MIME.test(v)) ? v : null;
-}
-
 function slugify(s){
   return (s||'').toString().toLowerCase()
     .normalize('NFD').replace(/[\u0300-\u036f]/g,'') // quita acentos
@@ -906,7 +863,7 @@ function renderAppearancePanel(){
       <label>Logo / banner corporativo</label>
       <input type="file" id="ap-logo-input" accept="image/*" style="display:none;">
       <button class="btn ghost" id="ap-logo-upload-btn">${state.corporateLogo ? 'Cambiar imagen' : 'Subir imagen'}</button>
-      ${logoSrcSeguro(state.corporateLogo) ? `<img src="${escapeAttr(logoSrcSeguro(state.corporateLogo))}" class="ap-logo-preview"><button class="btn ghost" id="ap-logo-remove-btn">Quitar</button>` : `<span class="hint">Aparecerá en la cabecera del dashboard y en el informe ejecutivo (PowerPoint)</span>`}
+      ${state.corporateLogo ? `<img src="${state.corporateLogo}" class="ap-logo-preview"><button class="btn ghost" id="ap-logo-remove-btn">Quitar</button>` : `<span class="hint">Aparecerá en la cabecera del dashboard y en el informe ejecutivo (PowerPoint)</span>`}
     </div>
     <div class="ap-row">
       <label>Tema</label>
@@ -2074,7 +2031,7 @@ function sanitizeFilename(s){
 function showGateDownloadStep(resolve){
   renderGateOverlay(gateBoxOpen('Guarda tu copia de trabajo', `
     <p style="font-size:12px; color:var(--ink-soft); line-height:1.5; margin:0 0 16px;">
-      Proyecto configurado: <strong style="color:var(--ink);">${escapeHtml(state.projectTitle)}</strong>.
+      Proyecto configurado: <strong style="color:var(--ink);">${state.projectTitle}</strong>.
       Descarga esta copia — tiene el nombre y la fecha ya incrustados de fábrica. A partir de ahora
       usa <u>este archivo descargado</u> para trabajar en este proyecto, no la plantilla en blanco
       original (guárdala para el próximo proyecto nuevo que empieces).
@@ -2982,7 +2939,7 @@ function showProjectMismatchConfirm(parsed, importedTitle){
   const el = document.getElementById('import-mode-prompt');
   el.style.display = 'block';
   el.innerHTML = `<div class="confirm-bar" style="flex-wrap:wrap; justify-content:center;">
-    ⚠️ Este archivo parece pertenecer a otro proyecto ("${escapeHtml(importedTitle)}"), no al que tienes abierto ahora ("${escapeHtml(state.projectTitle)}"). ¿Seguro que quieres importarlo aquí?
+    ⚠️ Este archivo parece pertenecer a otro proyecto ("${importedTitle}"), no al que tienes abierto ahora ("${state.projectTitle}"). ¿Seguro que quieres importarlo aquí?
     <button class="btn danger" id="mismatch-confirm-yes">Sí, importar de todas formas</button>
     <button class="btn ghost" id="mismatch-confirm-no">Cancelar</button>
   </div>`;
@@ -3139,19 +3096,19 @@ function milestoneCompleted(m, today){ return milestoneStatus(m, today).done; }
 function riskLevel(r){ const c=r.p*r.i; return c>6?'rojo':(c>=3?'amarillo':'verde'); }
 
 function confirmDeleteBar(type, id, label){
-  return `<div class="confirm-bar">Eliminar "${escapeHtml(label)}" — no se puede deshacer.
-    <button class="btn danger" data-confirm-yes="${escapeAttr(type)}:${escapeAttr(id)}">Sí, eliminar</button>
+  return `<div class="confirm-bar">Eliminar "${label}" — no se puede deshacer.
+    <button class="btn danger" data-confirm-yes="${type}:${id}">Sí, eliminar</button>
     <button class="btn ghost" data-confirm-no="1">Cancelar</button></div>`;
 }
 // v0.1.97: "ventanita" de posponer aviso — se abre en el sitio del propio hito recurrente
 // (mismo patrón que confirmDeleteBar/confirm-bar) con presets 7/14/30 días + un campo a mano.
 function milestoneSnoozeBar(m){
-  return `<div class="snooze-bar">Posponer el aviso de "${escapeHtml(m.label)}":
-    <button class="btn" data-snooze-apply="${escapeAttr(m.id)}|7">7 días</button>
-    <button class="btn" data-snooze-apply="${escapeAttr(m.id)}|14">14 días</button>
-    <button class="btn" data-snooze-apply="${escapeAttr(m.id)}|30">30 días</button>
+  return `<div class="snooze-bar">Posponer el aviso de "${m.label}":
+    <button class="btn" data-snooze-apply="${m.id}|7">7 días</button>
+    <button class="btn" data-snooze-apply="${m.id}|14">14 días</button>
+    <button class="btn" data-snooze-apply="${m.id}|30">30 días</button>
     <input type="number" id="snooze-custom-days" min="1" step="1" placeholder="nº días">
-    <button class="btn" data-snooze-apply-custom="${escapeAttr(m.id)}">Aplicar</button>
+    <button class="btn" data-snooze-apply-custom="${m.id}">Aplicar</button>
     <button class="btn ghost" data-snooze-cancel="1">Cancelar</button></div>`;
 }
 
@@ -3318,23 +3275,8 @@ function render(){
   document.getElementById('clock-time').textContent = today.toLocaleTimeString('es-ES', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
   document.getElementById('page-title').textContent = `Service Overview — ${state.projectTitle}`;
   document.title = `Service Overview — ${state.projectTitle}`;
-  // F1: el logo es una URL activa, así que no se interpola dentro del HTML —
-  // se valida el esquema (logoSrcSeguro) y se asigna por DOM. Un valor que no
-  // sea una imagen dataURL base64 simplemente no se pinta.
   const logoSlot = document.getElementById('header-logo-banner');
-  if(logoSlot){
-    logoSlot.textContent = '';
-    const logoOk = logoSrcSeguro(state.corporateLogo);
-    if(logoOk){
-      const caja = document.createElement('div');
-      caja.style.cssText = 'margin-bottom:16px; padding:10px 16px; background:#fff; border-radius:8px; display:inline-block; box-shadow:var(--shadow);';
-      const img = document.createElement('img');
-      img.style.cssText = 'height:56px; max-width:420px; object-fit:contain; display:block;';
-      img.src = logoOk;
-      caja.appendChild(img);
-      logoSlot.appendChild(caja);
-    }
-  }
+  if(logoSlot) logoSlot.innerHTML = state.corporateLogo ? `<div style="margin-bottom:16px; padding:10px 16px; background:#fff; border-radius:8px; display:inline-block; box-shadow:var(--shadow);"><img src="${state.corporateLogo}" style="height:56px; max-width:420px; object-fit:contain; display:block;"></div>` : '';
   document.getElementById('cfg-start').value = state.serviceStart;
   document.getElementById('cfg-end').value = state.serviceEnd;
   // P12: sin rango valido, `fmt()` de una Invalid Date imprimia "INVALID DATE →
@@ -3415,7 +3357,7 @@ function renderTitleEdit(){
   const slot = document.getElementById('title-edit-slot');
   if(!ui.editingTitle){ slot.innerHTML = ''; return; }
   slot.innerHTML = `<div class="inline-form" style="max-width:420px; margin-bottom:12px;">
-    <label>Nombre del servicio <input type="text" id="title-edit-input" value="${escapeAttr(state.projectTitle)}" placeholder="p.ej. Soporte N1, Mantenimiento Aplicativo..."></label>
+    <label>Nombre del servicio <input type="text" id="title-edit-input" value="${state.projectTitle.replace(/"/g,'&quot;')}" placeholder="p.ej. Soporte N1, Mantenimiento Aplicativo..."></label>
     <div class="btn-row">
       <button class="btn primary" id="title-save">Guardar</button>
       <button class="btn ghost" id="title-cancel">Cancelar</button>
@@ -3448,7 +3390,7 @@ function renderRolesEdit(){
   slot.innerHTML = `<div class="inline-form" style="max-width:620px; margin-bottom:12px;">
     <div class="hint" style="display:block; margin-bottom:6px;">Estos nombres son los que aparecen como columnas en la Skill Matrix (tabla, formularios y exportaciones CSV/Excel). "+ Añadir columna" suma una columna nueva (nivel 1 para todos los skills al guardar); "Quitar última columna" la quita (se pierde el nivel guardado ahí).</div>
     <div class="fld-row" style="flex-wrap:wrap;">
-      ${draft.map((name,i)=> `<label>Columna ${i+1} <input type="text" id="roles-edit-${i}" value="${escapeAttr(name||'')}" placeholder="p.ej. Técnico Senior"></label>`).join('')}
+      ${draft.map((name,i)=> `<label>Columna ${i+1} <input type="text" id="roles-edit-${i}" value="${(name||'').replace(/"/g,'&quot;')}" placeholder="p.ej. Técnico Senior"></label>`).join('')}
     </div>
     <div class="btn-row">
       <button class="btn ghost" id="roles-add">+ Añadir columna</button>
@@ -3505,25 +3447,6 @@ function renderUndoButtons(){
 
 let historyVersionsCache = []; // última lista mostrada en el desplegable (de carpeta o interna), para poder recuperar el origen exacto al restaurar
 
-// F1 — el desplegable de versiones se construye por DOM, no por innerHTML.
-// La etiqueta (`h.label`) y el id vienen del historial, y el historial ENTRA
-// con el proyecto importado (`parsed.history` en projects:create) o con un
-// backup de otro equipo: es dato controlable. Antes iba crudo a
-// `select.innerHTML`; no ejecutaba porque el parser de Chromium descarta las
-// etiquetas ajenas dentro de <select>, pero eso es una propiedad del parser,
-// no una defensa de la aplicación. Con `textContent`/`value` el dato no puede
-// ser markup en ningún caso, y el texto se ve tal cual se guardó.
-function opcionHistorial(valor, texto){
-  const o = document.createElement('option');
-  o.value = valor == null ? '' : String(valor);
-  o.textContent = texto;
-  return o;
-}
-function pintarOpciones(sel, opciones){
-  sel.textContent = '';
-  for(const o of opciones) sel.appendChild(o);
-}
-
 async function renderHistoryPanel(){
   const sel = document.getElementById('history-select');
   const emptyHint = document.getElementById('history-empty-hint');
@@ -3545,7 +3468,7 @@ async function renderHistoryPanel(){
       }catch(e){ /* archivo corrupto o inaccesible: se omite de la lista */ }
     }
     if(metas.length === 0){
-      pintarOpciones(sel, [opcionHistorial('', '— aún no hay copias en la carpeta vinculada —')]);
+      sel.innerHTML = '<option value="">— aún no hay copias en la carpeta vinculada —</option>';
       emptyHint.textContent = 'Se guardará una copia automáticamente en la carpeta con cada cambio que hagas.';
       btn.disabled = true; btn.style.opacity = .5;
       historyVersionsCache = [];
@@ -3553,18 +3476,18 @@ async function renderHistoryPanel(){
       btn.disabled = false; btn.style.opacity = 1;
       emptyHint.textContent = '';
       const sorted = metas.slice().reverse(); // más reciente primero
-      pintarOpciones(sel, sorted.map(m=>{
+      sel.innerHTML = sorted.map(m=>{
         const d = new Date(m.exportedAt);
         const dLabel = fmt(d) + ', ' + d.toTimeString().slice(0,5);
-        return opcionHistorial(m.id, dLabel + (m.encrypted ? ' 🔒' : ''));
-      }));
+        return `<option value="${m.id}">${dLabel}${m.encrypted ? ' 🔒' : ''}</option>`;
+      }).join('');
       historyVersionsCache = sorted;
     }
   } else {
     // Sin carpeta vinculada: se usa el historial interno del navegador, como hasta ahora.
     if(sourceNote) sourceNote.textContent = 'foto interna de este proyecto (no es la carpeta de backups automáticos en disco) — se guarda 1 vez al día, la primera vez que abres el proyecto en una fecha distinta a tu último cambio';
     if(history.length === 0){
-      pintarOpciones(sel, [opcionHistorial('', '— aún no hay versiones guardadas —')]);
+      sel.innerHTML = '<option value="">— aún no hay versiones guardadas —</option>';
       emptyHint.textContent = 'Esto es distinto de la carpeta de backups automáticos (esa guarda una copia cada vez que hay cambios; aquí solo se guarda 1 copia al día). Se guardará la primera vez que abras el proyecto en un día distinto al de tu último cambio (no hace falta hacer nada).';
       btn.disabled = true;
       btn.style.opacity = .5;
@@ -3574,10 +3497,10 @@ async function renderHistoryPanel(){
       btn.style.opacity = 1;
       emptyHint.textContent = '';
       const sortedHist = history.slice().reverse().map(h=>({ ...h, source:'history' }));
-      pintarOpciones(sel, sortedHist.map(h => {
+      sel.innerHTML = sortedHist.map(h => {
         const dLabel = fmt(new Date(h.date+'T00:00:00')) + (h.time ? ', '+h.time : '');
-        return opcionHistorial(h.id, dLabel + (h.label ? ' · '+h.label : ''));
-      }));
+        return `<option value="${h.id}">${dLabel}${h.label ? ' · '+h.label : ''}</option>`;
+      }).join('');
       historyVersionsCache = sortedHist;
     }
   }
@@ -3641,8 +3564,8 @@ function renderRailWindowControls(){
     </div>
     ${ui.railCustomOpen ? `<div class="inline-form" style="margin-top:6px;">
       <div class="fld-row">
-        <label>Desde <input type="date" id="rail-custom-start" value="${escapeAttr(mode==='custom' && w ? w.start : '')}"></label>
-        <label>Hasta <input type="date" id="rail-custom-end" value="${escapeAttr(mode==='custom' && w ? w.end : '')}"></label>
+        <label>Desde <input type="date" id="rail-custom-start" value="${mode==='custom' && w ? w.start : ''}"></label>
+        <label>Hasta <input type="date" id="rail-custom-end" value="${mode==='custom' && w ? w.end : ''}"></label>
       </div>
       <div class="btn-row">
         <button class="btn primary" id="rail-custom-go">Aplicar</button>
@@ -3895,8 +3818,8 @@ function renderMilestones(today){
       return `<div class="ms-row">${confirmDeleteBar('milestone', m.id, m.label)}</div>`;
     }
     if(ui.confirmComplete === m.id){
-      return `<div class="ms-row"><div class="confirm-bar">Marcar "${escapeHtml(m.label)}" como completado hoy (${fmt(today)})${(m.entregables&&m.entregables.length)?' — sus entregables se marcarán como entregados':''}.
-        <button class="btn primary" data-confirm-complete-yes="${escapeAttr(m.id)}">Sí, completar</button>
+      return `<div class="ms-row"><div class="confirm-bar">Marcar "${m.label}" como completado hoy (${fmt(today)})${(m.entregables&&m.entregables.length)?' — sus entregables se marcarán como entregados':''}.
+        <button class="btn primary" data-confirm-complete-yes="${m.id}">Sí, completar</button>
         <button class="btn ghost" data-confirm-complete-no="1">Cancelar</button></div></div>`;
     }
     if(ui.snoozingMilestone === m.id) return `<div class="ms-row">${milestoneSnoozeBar(m)}</div>`;
@@ -3907,18 +3830,18 @@ function renderMilestones(today){
     const entCount = (m.entregables||[]).length;
     const selected = ui.selectedMilestoneId === m.id;
     return `
-      <div class="ms-row ${selected?'selected':''}" data-select-milestone="${escapeAttr(m.id)}">
+      <div class="ms-row ${selected?'selected':''}" data-select-milestone="${m.id}">
         <span class="ms-semaforo ${st.semaforo}" title="${st.texto}"></span>
         ${m.recurrente ? '<span title="Recurrente">🚩</span>' : ''}
-        ${hasDetail ? `<button class="icon-btn" data-toggle-ms-detail="${escapeAttr(m.id)}" title="${expanded?'Ocultar':'Ver'} detalle">${expanded?'▾':'▸'}</button>` : ''}
-        <span class="ms-label">${escapeHtml(m.label)}${entCount ? ` <span class="ent-tipo-badge" title="${entCount} entregable(s)">📎 ${entCount}</span>` : ''}</span>
+        ${hasDetail ? `<button class="icon-btn" data-toggle-ms-detail="${m.id}" title="${expanded?'Ocultar':'Ver'} detalle">${expanded?'▾':'▸'}</button>` : ''}
+        <span class="ms-label">${m.label}${entCount ? ` <span class="ent-tipo-badge" title="${entCount} entregable(s)">📎 ${entCount}</span>` : ''}</span>
         <span class="ms-date">Prevista: ${fmt(new Date(m.date+'T00:00:00'))}${m.actualDate ? ' · Real: '+fmt(new Date(m.actualDate+'T00:00:00')) : ''}</span>
         <span class="ms-status-text ${st.semaforo}">${st.texto}</span>
-        ${(!st.done && !m.recurrente) ? `<button class="icon-btn" data-quick-complete="${escapeAttr(m.id)}" title="Marcar como completado hoy">✓</button>` : ''}
-        ${(m.recurrente && (st.semaforo==='rojo' || st.semaforo==='ambar')) ? `<button class="icon-btn ms-snooze-btn" data-snooze-milestone="${escapeAttr(m.id)}" title="Posponer este aviso X días sin tocar la fecha estimada">⏰</button>` : ''}
-        ${st.pospuesto ? `<button class="icon-btn ms-snooze-btn" data-snooze-clear="${escapeAttr(m.id)}" title="Quitar la posposición y volver al aviso normal">⏰</button>` : ''}
-        <button class="icon-btn" data-edit-milestone="${escapeAttr(m.id)}">✎</button>
-        <button class="icon-btn" data-del-milestone="${escapeAttr(m.id)}">🗑</button>
+        ${(!st.done && !m.recurrente) ? `<button class="icon-btn" data-quick-complete="${m.id}" title="Marcar como completado hoy">✓</button>` : ''}
+        ${(m.recurrente && (st.semaforo==='rojo' || st.semaforo==='ambar')) ? `<button class="icon-btn ms-snooze-btn" data-snooze-milestone="${m.id}" title="Posponer este aviso X días sin tocar la fecha estimada">⏰</button>` : ''}
+        ${st.pospuesto ? `<button class="icon-btn ms-snooze-btn" data-snooze-clear="${m.id}" title="Quitar la posposición y volver al aviso normal">⏰</button>` : ''}
+        <button class="icon-btn" data-edit-milestone="${m.id}">✎</button>
+        <button class="icon-btn" data-del-milestone="${m.id}">🗑</button>
       </div>
       ${hasDetail && expanded ? milestoneDetailHtml(m) : ''}`;
   }).join('');
@@ -3945,13 +3868,13 @@ function milestoneDetailHtml(m){
   if(m.recurrente) list.sort((a,b)=> (b.fecha||'').localeCompare(a.fecha||''));
   const entHtml = list.map(e=>{
     const isUrl = e.ruta && /^https?:\/\//i.test(e.ruta);
-    const rutaHtml = e.ruta ? (isUrl ? ` → <a href="${escapeAttr(e.ruta)}" target="_blank" rel="noopener" style="color:var(--cyan);">${escapeHtml(e.ruta)}</a>` : ` → ${escapeHtml(e.ruta)}`) : '';
+    const rutaHtml = e.ruta ? (isUrl ? ` → <a href="${e.ruta.replace(/"/g,'&quot;')}" target="_blank" rel="noopener" style="color:var(--cyan);">${e.ruta.replace(/</g,'&lt;')}</a>` : ` → ${e.ruta.replace(/</g,'&lt;')}`) : '';
     const fechaHtml = (m.recurrente && e.fecha) ? `<span class="hint" style="margin-right:4px;">${fmt(new Date(e.fecha+'T00:00:00'))}</span>` : '';
-    return `<div class="ms-entregable-item">${fechaHtml}<span class="ent-tipo-badge">${escapeHtml(e.tipo||'')}</span><b>${escapeHtml(e.nombre||'')}</b>${rutaHtml}
-      <button class="ent-status-toggle" data-toggle-ent="${escapeAttr(m.id)}|${escapeAttr(e.id)}" style="color:${e.entregado?'var(--green)':'var(--amber)'};" title="Clic para cambiar el estado">${e.entregado?'✓ Entregado':'⏳ Pendiente'}</button></div>`;
+    return `<div class="ms-entregable-item">${fechaHtml}<span class="ent-tipo-badge">${(e.tipo||'').replace(/</g,'&lt;')}</span><b>${(e.nombre||'').replace(/</g,'&lt;')}</b>${rutaHtml}
+      <button class="ent-status-toggle" data-toggle-ent="${m.id}|${e.id}" style="color:${e.entregado?'var(--green)':'var(--amber)'};" title="Clic para cambiar el estado">${e.entregado?'✓ Entregado':'⏳ Pendiente'}</button></div>`;
   }).join('');
   return `<div class="ms-detail">
-    ${m.descripcion ? `<div class="ms-desc">${escapeHtml(m.descripcion)}</div>` : ''}
+    ${m.descripcion ? `<div class="ms-desc">${m.descripcion.replace(/</g,'&lt;')}</div>` : ''}
     ${entHtml}
   </div>`;
 }
@@ -3959,13 +3882,13 @@ function entregableRowHtml(idx, ent, showFecha){
   ent = ent || { id:'', tipo:'Acta', tipoCustom:'', nombre:'', ruta:'', entregado:false, fecha:'' };
   const tipoOptions = ['Acta','Informe','Otro'].map(t=>
     `<option value="${t}" ${ent.tipo===t?'selected':''}>${t}</option>`).join('');
-  return `<div class="entregable-row" data-ent-row="${idx}" data-ent-id="${escapeAttr(ent.id)}">
+  return `<div class="entregable-row" data-ent-row="${idx}" data-ent-id="${ent.id||''}">
     <select class="ent-tipo">${tipoOptions}</select>
-    <input type="text" class="ent-tipo-custom" placeholder="Nombra el tipo" value="${escapeAttr(ent.tipoCustom||'')}" style="display:${ent.tipo==='Otro'?'inline-block':'none'};">
-    <input type="text" class="ent-nombre" placeholder="Nombre del entregable" value="${escapeAttr(ent.nombre||'')}">
-    <input type="date" class="ent-fecha" value="${escapeAttr(ent.fecha)}" title="Fecha de esta reunión/entrega" style="display:${showFecha?'inline-block':'none'};">
+    <input type="text" class="ent-tipo-custom" placeholder="Nombra el tipo" value="${(ent.tipoCustom||'').replace(/"/g,'&quot;')}" style="display:${ent.tipo==='Otro'?'inline-block':'none'};">
+    <input type="text" class="ent-nombre" placeholder="Nombre del entregable" value="${(ent.nombre||'').replace(/"/g,'&quot;')}">
+    <input type="date" class="ent-fecha" value="${ent.fecha||''}" title="Fecha de esta reunión/entrega" style="display:${showFecha?'inline-block':'none'};">
     <label class="ent-done-toggle" title="Marca cuando ya esté entregado"><input type="checkbox" class="ent-entregado" ${ent.entregado?'checked':''}> Entregado</label>
-    <input type="text" class="ent-ruta" placeholder="¿Dónde está? (ruta o enlace)" value="${escapeAttr(ent.ruta||'')}" style="display:${ent.entregado?'inline-block':'none'};">
+    <input type="text" class="ent-ruta" placeholder="¿Dónde está? (ruta o enlace)" value="${(ent.ruta||'').replace(/"/g,'&quot;')}" style="display:${ent.entregado?'inline-block':'none'};">
     <button type="button" class="icon-btn" data-ent-remove="1">🗑</button>
   </div>`;
 }
@@ -4058,13 +3981,13 @@ function milestoneAddForm(){
 function milestoneEditForm(m){
   return `<div class="inline-form">
     <div class="fld-row">
-      <label>Nombre <input type="text" id="ms-edit-label" value="${escapeAttr(m.label)}"></label>
-      <label>Fecha estimada <input type="date" id="ms-edit-date" value="${escapeAttr(m.date)}"></label>
-      <label id="ms-edit-actual-wrap">Fecha real (vacío = aún no ha ocurrido) <input type="date" id="ms-edit-actual" value="${escapeAttr(m.actualDate)}"></label>
+      <label>Nombre <input type="text" id="ms-edit-label" value="${m.label.replace(/"/g,'&quot;')}"></label>
+      <label>Fecha estimada <input type="date" id="ms-edit-date" value="${m.date}"></label>
+      <label id="ms-edit-actual-wrap">Fecha real (vacío = aún no ha ocurrido) <input type="date" id="ms-edit-actual" value="${m.actualDate||''}"></label>
     </div>
     <label style="flex-direction:row; align-items:center; gap:6px; display:flex;"><input type="checkbox" id="ms-edit-recurrente" style="width:auto;" ${m.recurrente?'checked':''}> 🔁 Recurrente (reunión periódica, sin fecha de cierre)</label>
     <div class="fld-row">
-      <label style="width:100%;">Descripción / resumen (opcional) <textarea id="ms-edit-desc" rows="2" style="width:100%; box-sizing:border-box;">${escapeHtml(m.descripcion||'')}</textarea></label>
+      <label style="width:100%;">Descripción / resumen (opcional) <textarea id="ms-edit-desc" rows="2" style="width:100%; box-sizing:border-box;">${(m.descripcion||'').replace(/</g,'&lt;')}</textarea></label>
     </div>
     <label class="entregable-toggle"><input type="checkbox" id="ms-edit-has-ent"> 📎 Entregables</label>
     <div id="ms-edit-ent-container" style="display:none; margin-top:6px;">
@@ -4075,7 +3998,7 @@ function milestoneEditForm(m){
       </div>
     </div>
     <div class="btn-row">
-      <button class="btn primary" data-ms-save-edit="${escapeAttr(m.id)}">Guardar cambios</button>
+      <button class="btn primary" data-ms-save-edit="${m.id}">Guardar cambios</button>
       <button class="btn ghost" data-ms-cancel-edit="1">Cancelar</button>
     </div>
   </div>`;
@@ -4241,9 +4164,9 @@ function renderRisks(){
         <span class="rh-id">${topIsMaterialized ? '⚠ MATERIALIZADO' : 'En seguimiento'}</span>
         <span class="rh-crit">C${top.p*top.i} · ${riskLevel(top).toUpperCase()}</span>
       </div>
-      <div class="rh-title">${escapeHtml(top.title)}</div>
-      <div class="rh-mit"><b>Mitigación:</b> ${escapeHtml(top.mitigacion || '—')}</div>
-      <div class="rh-mit"><b>Contingencia:</b> ${escapeHtml(top.contingencia || '—')}</div>
+      <div class="rh-title">${top.title}</div>
+      <div class="rh-mit"><b>Mitigación:</b> ${top.mitigacion || '—'}</div>
+      <div class="rh-mit"><b>Contingencia:</b> ${top.contingencia || '—'}</div>
     </div>` : `<div class="hint" style="display:block; margin-bottom:10px;">No hay riesgos activos actualmente (todos cerrados).</div>`;
 
   const sorted = state.risks.slice().sort((a,b)=> (b.p*b.i)-(a.p*a.i));
@@ -4273,14 +4196,14 @@ function renderRisks(){
     const expanded = !!ui.expandedRisks[r.id];
     return `<div class="risk-item">
       <div class="risk-row ${rowClass}">
-        <button class="risk-status-btn ${r.status}" data-cycle-risk-status="${escapeAttr(r.id)}" title="Clic para cambiar de estado">${riskStatusLabel(r.status)}</button>
-        <button class="icon-btn" data-toggle-risk-detail="${escapeAttr(r.id)}" title="${expanded?'Ocultar':'Ver'} mitigación/contingencia">${expanded?'▾':'▸'}</button>
-        <span class="risk-title" title="${escapeAttr(r.id)}">${escapeHtml(r.title)}</span>
+        <button class="risk-status-btn ${r.status}" data-cycle-risk-status="${r.id}" title="Clic para cambiar de estado">${riskStatusLabel(r.status)}</button>
+        <button class="icon-btn" data-toggle-risk-detail="${r.id}" title="${expanded?'Ocultar':'Ver'} mitigación/contingencia">${expanded?'▾':'▸'}</button>
+        <span class="risk-title" title="${r.id}">${r.title}</span>
         ${dateHint}
         <span class="risk-crit ${lvl}">C${r.p*r.i}</span>
         <div class="risk-actions">
-          <button class="icon-btn" data-edit-risk="${escapeAttr(r.id)}">✎</button>
-          <button class="icon-btn" data-del-risk="${escapeAttr(r.id)}">🗑</button>
+          <button class="icon-btn" data-edit-risk="${r.id}">✎</button>
+          <button class="icon-btn" data-del-risk="${r.id}">🗑</button>
         </div>
       </div>
       ${expanded ? riskDetailHtml(r) : ''}
@@ -4296,11 +4219,11 @@ function renderRisks(){
 function riskDetailHtml(r){
   // v2.0.9: si hay responsable asignado a ese plan, se ve debajo del texto, discreto -- si no se
   // ha rellenado (riesgos anteriores a la 2.0.9, o el usuario no lo usa), no deja hueco vacío.
-  const respMit = r.respMitigacion ? `<div class="rdc-resp">Responsable: ${escapeHtml(r.respMitigacion)}</div>` : '';
-  const respCont = r.respContingencia ? `<div class="rdc-resp">Responsable: ${escapeHtml(r.respContingencia)}</div>` : '';
+  const respMit = r.respMitigacion ? `<div class="rdc-resp">Responsable: ${r.respMitigacion.replace(/</g,'&lt;')}</div>` : '';
+  const respCont = r.respContingencia ? `<div class="rdc-resp">Responsable: ${r.respContingencia.replace(/</g,'&lt;')}</div>` : '';
   const cards = `<div class="risk-detail-grid">
-    <div class="risk-detail-card mit"><div class="rdc-label">🛡️ Mitigación</div><div>${escapeHtml(r.mitigacion||'—')}</div>${respMit}</div>
-    <div class="risk-detail-card cont"><div class="rdc-label">🧯 Contingencia</div><div>${escapeHtml(r.contingencia||'—')}</div>${respCont}</div>
+    <div class="risk-detail-card mit"><div class="rdc-label">🛡️ Mitigación</div><div>${(r.mitigacion||'—').replace(/</g,'&lt;')}</div>${respMit}</div>
+    <div class="risk-detail-card cont"><div class="rdc-label">🧯 Contingencia</div><div>${(r.contingencia||'—').replace(/</g,'&lt;')}</div>${respCont}</div>
   </div>`;
   // v2.0.8: observaciones ligadas a cada evento (materialización/cierre) — solo se muestran si el
   // riesgo ha llegado a ese estado (igual criterio que showMat/showClose en riskFieldsTemplate), y
@@ -4312,13 +4235,13 @@ function riskDetailHtml(r){
   // v2.0.10: se muestra el bloque si hay observación O responsable (antes exigía observación
   // sí o sí -- si solo se rellenaba el responsable, no se veía en ningún sitio pese a estar guardado).
   if(r.fechaMaterializacion && (r.obsMaterializacion || r.respMaterializacion)){
-    const resp = r.respMaterializacion ? `<div class="rdo-resp">Responsable: ${escapeHtml(r.respMaterializacion)}</div>` : '';
-    const texto = r.obsMaterializacion ? `<div>${escapeHtml(r.obsMaterializacion)}</div>` : '';
+    const resp = r.respMaterializacion ? `<div class="rdo-resp">Responsable: ${r.respMaterializacion.replace(/</g,'&lt;')}</div>` : '';
+    const texto = r.obsMaterializacion ? `<div>${r.obsMaterializacion.replace(/</g,'&lt;')}</div>` : '';
     obs += `<div class="risk-detail-obs"><b>Observaciones (materialización)</b><span class="rdo-date">${fmt(new Date(r.fechaMaterializacion+'T00:00:00'))}</span>${texto}${resp}</div>`;
   }
   if(r.fechaCierre && (r.obsCierre || r.respCierre)){
-    const resp = r.respCierre ? `<div class="rdo-resp">Responsable: ${escapeHtml(r.respCierre)}</div>` : '';
-    const texto = r.obsCierre ? `<div>${escapeHtml(r.obsCierre)}</div>` : '';
+    const resp = r.respCierre ? `<div class="rdo-resp">Responsable: ${r.respCierre.replace(/</g,'&lt;')}</div>` : '';
+    const texto = r.obsCierre ? `<div>${r.obsCierre.replace(/</g,'&lt;')}</div>` : '';
     obs += `<div class="risk-detail-obs"><b>Observaciones (cierre)</b><span class="rdo-date">${fmt(new Date(r.fechaCierre+'T00:00:00'))}</span>${texto}${resp}</div>`;
   }
   return cards + obs;
@@ -4337,7 +4260,7 @@ function riskFieldsTemplate(prefix, r){
   const showClose = isEdit && !!r.fechaCierre;
   return `
     <div class="fld-row">
-      <label>Título <input type="text" id="${prefix}-title" value="${escapeAttr(r.title||'')}" placeholder="Descripción breve del riesgo"></label>
+      <label>Título <input type="text" id="${prefix}-title" value="${(r.title||'').replace(/"/g,'&quot;')}" placeholder="Descripción breve del riesgo"></label>
       <label>Categoría
         <select id="${prefix}-cat">
           <option value="Contractual" ${r.category==='Contractual'?'selected':''}>Contractual</option>
@@ -4346,7 +4269,7 @@ function riskFieldsTemplate(prefix, r){
       </label>
     </div>
     <div class="fld-row">
-      <label>Fecha de detección <input type="date" id="${prefix}-detect" value="${escapeAttr(r.fechaDeteccion||todayStr())}"></label>
+      <label>Fecha de detección <input type="date" id="${prefix}-detect" value="${r.fechaDeteccion||todayStr()}"></label>
       ${isEdit ? `<div class="fld-row" style="flex:1; margin-top:14px;">
         <label class="rk-check-label"><input type="checkbox" id="${prefix}-chk-mat" ${showMat?'checked':''}> Materializado</label>
         <label class="rk-check-label"><input type="checkbox" id="${prefix}-chk-close" ${showClose?'checked':''}> Cerrado</label>
@@ -4354,15 +4277,15 @@ function riskFieldsTemplate(prefix, r){
     </div>
     ${isEdit ? `
     <div class="fld-row" data-rk-group="mat" style="${showMat?'':'display:none;'}">
-      <label>Fecha de materialización (editable) <input type="date" id="${prefix}-mat" value="${escapeAttr(r.fechaMaterializacion)}"></label>
+      <label>Fecha de materialización (editable) <input type="date" id="${prefix}-mat" value="${r.fechaMaterializacion||''}"></label>
     </div>
-    <label data-rk-group="mat" style="${showMat?'':'display:none;'}">Observaciones de materialización <textarea id="${prefix}-obsmat" placeholder="Qué pasó al materializarse, cómo se gestionó...">${escapeHtml(r.obsMaterializacion)}</textarea></label>
-    <label data-rk-group="mat" style="${showMat?'':'display:none;'}">Responsable de materialización <input type="text" id="${prefix}-resp-mat" value="${escapeAttr(r.respMaterializacion||'')}" placeholder="Quién gestionó la materialización"></label>
+    <label data-rk-group="mat" style="${showMat?'':'display:none;'}">Observaciones de materialización <textarea id="${prefix}-obsmat" placeholder="Qué pasó al materializarse, cómo se gestionó...">${r.obsMaterializacion||''}</textarea></label>
+    <label data-rk-group="mat" style="${showMat?'':'display:none;'}">Responsable de materialización <input type="text" id="${prefix}-resp-mat" value="${(r.respMaterializacion||'').replace(/"/g,'&quot;')}" placeholder="Quién gestionó la materialización"></label>
     <div class="fld-row" data-rk-group="close" style="${showClose?'':'display:none;'}">
-      <label>Fecha de cierre (editable) <input type="date" id="${prefix}-close" value="${escapeAttr(r.fechaCierre)}"></label>
+      <label>Fecha de cierre (editable) <input type="date" id="${prefix}-close" value="${r.fechaCierre||''}"></label>
     </div>
-    <label data-rk-group="close" style="${showClose?'':'display:none;'}">Observaciones de cierre <textarea id="${prefix}-obsclose" placeholder="Cómo quedó cerrado el riesgo...">${escapeHtml(r.obsCierre)}</textarea></label>
-    <label data-rk-group="close" style="${showClose?'':'display:none;'}">Responsable de cierre <input type="text" id="${prefix}-resp-close" value="${escapeAttr(r.respCierre||'')}" placeholder="Quién gestionó el cierre"></label>` : ''}
+    <label data-rk-group="close" style="${showClose?'':'display:none;'}">Observaciones de cierre <textarea id="${prefix}-obsclose" placeholder="Cómo quedó cerrado el riesgo...">${r.obsCierre||''}</textarea></label>
+    <label data-rk-group="close" style="${showClose?'':'display:none;'}">Responsable de cierre <input type="text" id="${prefix}-resp-close" value="${(r.respCierre||'').replace(/"/g,'&quot;')}" placeholder="Quién gestionó el cierre"></label>` : ''}
     <div class="fld-row">
       <label>Probabilidad (1-4)
         <select id="${prefix}-p">${[1,2,3,4].map(v=>`<option value="${v}" ${r.p===v?'selected':''}>${v}</option>`).join('')}</select>
@@ -4371,10 +4294,10 @@ function riskFieldsTemplate(prefix, r){
         <select id="${prefix}-i">${[1,2,3,4].map(v=>`<option value="${v}" ${r.i===v?'selected':''}>${v}</option>`).join('')}</select>
       </label>
     </div>
-    <label>Mitigación <textarea id="${prefix}-mit" placeholder="Acción de mitigación">${escapeHtml(r.mitigacion)}</textarea></label>
-    <label>Responsable de mitigación <input type="text" id="${prefix}-resp-mit" value="${escapeAttr(r.respMitigacion||'')}" placeholder="Quién ejecuta la mitigación"></label>
-    <label>Contingencia <textarea id="${prefix}-cont" placeholder="Plan si el riesgo se materializa">${escapeHtml(r.contingencia)}</textarea></label>
-    <label>Responsable de contingencia <input type="text" id="${prefix}-resp-cont" value="${escapeAttr(r.respContingencia||'')}" placeholder="Quién ejecuta la contingencia"></label>`;
+    <label>Mitigación <textarea id="${prefix}-mit" placeholder="Acción de mitigación">${r.mitigacion||''}</textarea></label>
+    <label>Responsable de mitigación <input type="text" id="${prefix}-resp-mit" value="${(r.respMitigacion||'').replace(/"/g,'&quot;')}" placeholder="Quién ejecuta la mitigación"></label>
+    <label>Contingencia <textarea id="${prefix}-cont" placeholder="Plan si el riesgo se materializa">${r.contingencia||''}</textarea></label>
+    <label>Responsable de contingencia <input type="text" id="${prefix}-resp-cont" value="${(r.respContingencia||'').replace(/"/g,'&quot;')}" placeholder="Quién ejecuta la contingencia"></label>`;
 }
 function riskAddForm(){
   return `<div class="inline-form">${riskFieldsTemplate('rk-new')}
@@ -4383,7 +4306,7 @@ function riskAddForm(){
 }
 function riskEditForm(r){
   return `<div class="inline-form">${riskFieldsTemplate('rk-edit', r)}
-    <div class="btn-row"><button class="btn primary" data-rk-save-edit="${escapeAttr(r.id)}">Guardar cambios</button><button class="btn ghost" data-rk-cancel-edit="1">Cancelar</button></div>
+    <div class="btn-row"><button class="btn primary" data-rk-save-edit="${r.id}">Guardar cambios</button><button class="btn ghost" data-rk-cancel-edit="1">Cancelar</button></div>
   </div>`;
 }
 function attachRiskEvents(){
@@ -4533,9 +4456,9 @@ function renderSkills(){
   state.skills.forEach(s=>{ if(!groups.includes(s.group)) groups.push(s.group); });
   const gridCols = skillMatrixGridCols();
 
-  let html = `<div class="sm-head-row" style="grid-template-columns:${gridCols};"><span></span>${state.skillMatrixRoles.map(r=>`<span>${escapeHtml(r)}</span>`).join('')}<span></span></div>`;
+  let html = `<div class="sm-head-row" style="grid-template-columns:${gridCols};"><span></span>${state.skillMatrixRoles.map(r=>`<span>${r}</span>`).join('')}<span></span></div>`;
   groups.forEach(g=>{
-    html += `<div class="sm-group-label">${escapeHtml(g)}</div>`;
+    html += `<div class="sm-group-label">${g}</div>`;
     state.skills.filter(s=>s.group===g).forEach(s=>{
       if(ui.confirmDelete && ui.confirmDelete.type==='skill' && ui.confirmDelete.id===s.id){
         html += `<div class="sm-row" style="grid-template-columns:1fr;">${confirmDeleteBar('skill', s.id, s.name)}</div>`;
@@ -4543,11 +4466,11 @@ function renderSkills(){
       }
       if(ui.editingSkill === s.id){ html += skillEditForm(s); return; }
       html += `<div class="sm-row" style="grid-template-columns:${gridCols};">
-        <div class="sm-name">${escapeHtml(s.name)}${s.pending?'<span class="sm-pending">● pendiente cliente</span>':''}</div>
-        ${(s.levels||[]).map((v,i)=> `<div class="sm-cell" style="${cellColor(v)}" data-cycle-skill="${escapeAttr(s.id)}" data-field="${i}">${v}</div>`).join('')}
+        <div class="sm-name">${s.name}${s.pending?'<span class="sm-pending">● pendiente cliente</span>':''}</div>
+        ${(s.levels||[]).map((v,i)=> `<div class="sm-cell" style="${cellColor(v)}" data-cycle-skill="${s.id}" data-field="${i}">${v}</div>`).join('')}
         <div class="risk-actions">
-          <button class="icon-btn" data-edit-skill="${escapeAttr(s.id)}">✎</button>
-          <button class="icon-btn" data-del-skill="${escapeAttr(s.id)}">🗑</button>
+          <button class="icon-btn" data-edit-skill="${s.id}">✎</button>
+          <button class="icon-btn" data-del-skill="${s.id}">🗑</button>
         </div>
       </div>`;
     });
@@ -4591,11 +4514,11 @@ function skillFieldsTemplate(prefix, s){
   const lvl = (id,val)=> `<select id="${id}">${[1,2,3].map(v=>`<option value="${v}" ${val===v?'selected':''}>${v}</option>`).join('')}</select>`;
   return `
     <div class="fld-row">
-      <label>Skill <input type="text" id="${prefix}-name" value="${escapeAttr(s.name||'')}" placeholder="Nombre de la habilidad"></label>
-      <label>Grupo <input type="text" id="${prefix}-group" value="${escapeAttr(s.group)}"></label>
+      <label>Skill <input type="text" id="${prefix}-name" value="${(s.name||'').replace(/"/g,'&quot;')}" placeholder="Nombre de la habilidad"></label>
+      <label>Grupo <input type="text" id="${prefix}-group" value="${s.group.replace(/"/g,'&quot;')}"></label>
     </div>
     <div class="fld-row">
-      ${state.skillMatrixRoles.map((r,i)=> `<label>${escapeHtml(r)} ${lvl(prefix+'-lvl-'+i, s.levels[i] != null ? s.levels[i] : 1)}</label>`).join('')}
+      ${state.skillMatrixRoles.map((r,i)=> `<label>${r} ${lvl(prefix+'-lvl-'+i, s.levels[i] != null ? s.levels[i] : 1)}</label>`).join('')}
       <label style="flex-direction:row; align-items:center; gap:6px;"><input type="checkbox" id="${prefix}-pending" style="width:auto;" ${s.pending?'checked':''}> Pendiente cliente</label>
     </div>`;
 }
@@ -4606,7 +4529,7 @@ function skillAddForm(){
 }
 function skillEditForm(s){
   return `<div class="inline-form" style="margin:6px 0;">${skillFieldsTemplate('sk-edit', s)}
-    <div class="btn-row"><button class="btn primary" data-sk-save-edit="${escapeAttr(s.id)}">Guardar cambios</button><button class="btn ghost" data-sk-cancel-edit="1">Cancelar</button></div>
+    <div class="btn-row"><button class="btn primary" data-sk-save-edit="${s.id}">Guardar cambios</button><button class="btn ghost" data-sk-cancel-edit="1">Cancelar</button></div>
   </div>`;
 }
 function attachSkillFormEvents(){
@@ -4635,7 +4558,7 @@ function statusPillHTML(t){
     return `<span class="status-pill rotado"><span class="dot" style="background:var(--ink-faint)"></span>Rotado — salió ${dateLabel}</span>`;
   }
   const active = t.status === 'activo';
-  let html = `<button class="status-pill ${active?'active':'pending'}" data-toggle-team="${escapeAttr(t.id)}">
+  let html = `<button class="status-pill ${active?'active':'pending'}" data-toggle-team="${t.id}">
     <span class="dot" style="background:${active?'var(--green)':'var(--amber)'}"></span>${active?'Activo':'Pendiente'}
   </button>`;
   if(t.scheduledExit){
@@ -4671,16 +4594,16 @@ function renderTeam(){
     if(ui.rotatingTeamId === t.id) return rotationFormRow(t);
     if(ui.completingCandidateId === t.id) return candidateFoundFormRow(t);
     return `<tr>
-      <td>${escapeHtml(t.alias || '—')}</td>
-      <td>${escapeHtml(t.role)}${t.pendingCandidate ? ' <span class="sm-pending">● en búsqueda</span>' : ''}</td>
-      <td style="font-family:var(--mono)">${escapeHtml(t.dateDisplay)}</td>
+      <td>${t.alias || '—'}</td>
+      <td>${t.role}${t.pendingCandidate ? ' <span class="sm-pending">● en búsqueda</span>' : ''}</td>
+      <td style="font-family:var(--mono)">${t.dateDisplay}</td>
       <td>${statusPillHTML(t)}</td>
       <td><div class="team-actions">
-        ${t.pendingCandidate ? `<button class="icon-btn" data-found-quick="${escapeAttr(t.id)}" title="Marcar candidato encontrado / completar incorporación">🔍</button>` : ''}
-        <button class="icon-btn" data-cov-quick="${escapeAttr(t.id)}" title="Registrar cobertura / ausencia de este perfil">🔄</button>
-        <button class="icon-btn" data-rot-quick="${escapeAttr(t.id)}" title="Marcar rotación / salida del proyecto" ${t.status==='rotado'?'disabled style="opacity:.3;"':''}>🚪</button>
-        <button class="icon-btn" data-edit-team="${escapeAttr(t.id)}">✎</button>
-        <button class="icon-btn" data-del-team="${escapeAttr(t.id)}">🗑</button>
+        ${t.pendingCandidate ? `<button class="icon-btn" data-found-quick="${t.id}" title="Marcar candidato encontrado / completar incorporación">🔍</button>` : ''}
+        <button class="icon-btn" data-cov-quick="${t.id}" title="Registrar cobertura / ausencia de este perfil">🔄</button>
+        <button class="icon-btn" data-rot-quick="${t.id}" title="Marcar rotación / salida del proyecto" ${t.status==='rotado'?'disabled style="opacity:.3;"':''}>🚪</button>
+        <button class="icon-btn" data-edit-team="${t.id}">✎</button>
+        <button class="icon-btn" data-del-team="${t.id}">🗑</button>
       </div></td>
     </tr>`;
   }).join('');
@@ -4693,12 +4616,12 @@ function teamFieldsTemplate(prefix, t){
   let extra = '';
   const linkedMembers = t.lastRotationId ? state.team.filter(m => m.createdByRotationId === t.lastRotationId) : [];
   const linkedNote = linkedMembers.length
-    ? `<label style="flex-direction:row; align-items:center; gap:6px; align-self:center;"><input type="checkbox" id="${prefix}-cleanup-linked" style="width:auto;"> Eliminar también: ${linkedMembers.map(m=>`"${m.alias!=='—'?escapeHtml(m.alias)+' — ':''}${escapeHtml(m.role)}${m.pendingCandidate?' (en búsqueda)':''}"`).join(', ')} — creados por esta rotación</label>`
+    ? `<label style="flex-direction:row; align-items:center; gap:6px; align-self:center;"><input type="checkbox" id="${prefix}-cleanup-linked" style="width:auto;"> Eliminar también: ${linkedMembers.map(m=>`"${m.alias!=='—'?m.alias+' — ':''}${m.role}${m.pendingCandidate?' (en búsqueda)':''}"`).join(', ')} — creados por esta rotación</label>`
     : '';
   if(t.scheduledExit){
     extra += `
     <div class="fld-row" style="background:var(--amber-bg); padding:8px; border-radius:6px;">
-      <label>Fecha de salida prevista <input type="date" id="${prefix}-scheduled" value="${escapeAttr(t.scheduledExit)}"></label>
+      <label>Fecha de salida prevista <input type="date" id="${prefix}-scheduled" value="${t.scheduledExit}"></label>
       <label style="flex-direction:row; align-items:center; gap:6px; align-self:center;"><input type="checkbox" id="${prefix}-cancel-scheduled" style="width:auto;"> Cancelar la salida prevista (el perfil deja de tener rotación programada)</label>
     </div>
     ${linkedNote ? `<div class="fld-row" style="background:var(--red-bg); padding:8px; border-radius:6px;">${linkedNote}</div>` : ''}`;
@@ -4706,18 +4629,18 @@ function teamFieldsTemplate(prefix, t){
   if(t.status === 'rotado'){
     extra += `
     <div class="fld-row" style="background:var(--surface-2); padding:8px; border-radius:6px;">
-      <label>Fecha en que salió <input type="date" id="${prefix}-rotationdate" value="${escapeAttr(t.rotationDate)}"></label>
+      <label>Fecha en que salió <input type="date" id="${prefix}-rotationdate" value="${t.rotationDate||''}"></label>
       <label style="flex-direction:row; align-items:center; gap:6px; align-self:center;"><input type="checkbox" id="${prefix}-revert-rotation" style="width:auto;"> Revertir rotación (vuelve a estar activo)</label>
     </div>
     ${linkedNote ? `<div class="fld-row" style="background:var(--red-bg); padding:8px; border-radius:6px;">${linkedNote}</div>` : ''}`;
   }
   return `
     <div class="fld-row">
-      <label>Nombre <input type="text" id="${prefix}-alias" value="${escapeAttr(t.alias||'')}" placeholder="p.ej. Nombre 5"></label>
-      <label>Rol <input type="text" id="${prefix}-role" value="${escapeAttr(t.role||'')}" placeholder="p.ej. Técnico N1-2 (perfil 3)"></label>
+      <label>Nombre <input type="text" id="${prefix}-alias" value="${(t.alias||'').replace(/"/g,'&quot;')}" placeholder="p.ej. Nombre 5"></label>
+      <label>Rol <input type="text" id="${prefix}-role" value="${(t.role||'').replace(/"/g,'&quot;')}" placeholder="p.ej. Técnico N1-2 (perfil 3)"></label>
     </div>
     <div class="fld-row">
-      <label>Fecha <input type="date" id="${prefix}-date" value="${escapeAttr(t.date)}"></label>
+      <label>Fecha <input type="date" id="${prefix}-date" value="${t.date||''}"></label>
       <label>Estado
         <select id="${prefix}-status">
           <option value="activo" ${t.status==='activo'?'selected':''}>Activo</option>
@@ -4728,9 +4651,9 @@ function teamFieldsTemplate(prefix, t){
     </div>
     ${prefix==='tm-new' ? '<div class="hint" style="display:block; margin:-2px 0 4px;">Estado "Pendiente" con Nombre en blanco = plaza en búsqueda de candidato (sin nombre aún) -- deja "Nombre" vacío y se creará como vacante, igual que al rotar un perfil sin sustituto todavía.</div>' : ''}
     <div class="fld-row">
-      <label>DNI/NIE <input type="text" id="${prefix}-dni" value="${escapeAttr(t.dni||'')}" placeholder="opcional"></label>
-      <label>Email <input type="email" id="${prefix}-email" value="${escapeAttr(t.email||'')}" placeholder="opcional"></label>
-      <label>Teléfono <input type="tel" id="${prefix}-telefono" value="${escapeAttr(t.telefono||'')}" placeholder="opcional"></label>
+      <label>DNI/NIE <input type="text" id="${prefix}-dni" value="${(t.dni||'').replace(/"/g,'&quot;')}" placeholder="opcional"></label>
+      <label>Email <input type="email" id="${prefix}-email" value="${(t.email||'').replace(/"/g,'&quot;')}" placeholder="opcional"></label>
+      <label>Teléfono <input type="tel" id="${prefix}-telefono" value="${(t.telefono||'').replace(/"/g,'&quot;')}" placeholder="opcional"></label>
     </div>${extra}`;
 }
 function teamAddForm(){
@@ -4740,14 +4663,14 @@ function teamAddForm(){
 }
 function teamEditRow(t){
   return `<tr><td colspan="5"><div class="inline-form">${teamFieldsTemplate('tm-edit', t)}
-    <div class="btn-row"><button class="btn primary" data-tm-save-edit="${escapeAttr(t.id)}">Guardar cambios</button><button class="btn ghost" data-tm-cancel-edit="1">Cancelar</button></div>
+    <div class="btn-row"><button class="btn primary" data-tm-save-edit="${t.id}">Guardar cambios</button><button class="btn ghost" data-tm-cancel-edit="1">Cancelar</button></div>
   </div></td></tr>`;
 }
 function candidateFoundFormRow(t){
   return `<tr><td colspan="5"><div class="inline-form">
     <div class="fld-row">
       <label>Nombre <input type="text" id="cand-alias" placeholder="p.ej. Nombre 5"></label>
-      <label>Rol <input type="text" id="cand-role" value="${escapeAttr(t.role)}"></label>
+      <label>Rol <input type="text" id="cand-role" value="${t.role.replace(/"/g,'&quot;')}"></label>
     </div>
     <div class="fld-row">
       <label>Fecha <input type="date" id="cand-date" value="${todayStr()}"></label>
@@ -4759,7 +4682,7 @@ function candidateFoundFormRow(t){
       <label>Teléfono <input type="tel" id="cand-telefono" placeholder="opcional"></label>
     </div>
     <div class="btn-row">
-      <button class="btn primary" data-cand-save="${escapeAttr(t.id)}">Confirmar incorporación</button>
+      <button class="btn primary" data-cand-save="${t.id}">Confirmar incorporación</button>
       <button class="btn ghost" data-cand-cancel="1">Cancelar</button>
     </div>
   </div></td></tr>`;
@@ -4768,7 +4691,7 @@ function rotationFormRow(t){
   const searching = !!ui.rotSearching;
   return `<tr><td colspan="5"><div class="inline-form">
     <div class="fld-row">
-      <label>Perfil que sale <input type="text" value="${escapeAttr(t.role)}" disabled></label>
+      <label>Perfil que sale <input type="text" value="${t.role.replace(/"/g,'&quot;')}" disabled></label>
       <label>Fecha de salida (real o prevista) <input type="date" id="rot-date" value="${todayStr()}"></label>
       <label>Motivo
         <select id="rot-motivo">
@@ -4786,7 +4709,7 @@ function rotationFormRow(t){
     </div>
     <label>Notas <textarea id="rot-notes" placeholder="Detalle opcional"></textarea></label>
     <div class="btn-row">
-      <button class="btn primary" data-rot-save="${escapeAttr(t.id)}">Confirmar rotación</button>
+      <button class="btn primary" data-rot-save="${t.id}">Confirmar rotación</button>
       <button class="btn ghost" data-rot-cancel="1">Cancelar</button>
     </div>
   </div></td></tr>`;
@@ -5042,12 +4965,12 @@ function renderCoverage(){
           <div class="cov-row">
             <span class="cov-badge salida">🚪 Salida</span>
             <div class="cov-body">
-              <div class="cov-title">${escapeHtml(c.roleSnapshot)} — ${escapeHtml(c.motivo)}</div>
-              <div class="cov-meta">${fmt(new Date(c.fecha+'T00:00:00'))}${c.sustituidoPor ? ' · sustituido por: '+escapeHtml(c.sustituidoPor) : ' · sin sustitución registrada'}</div>
+              <div class="cov-title">${c.roleSnapshot} — ${c.motivo}</div>
+              <div class="cov-meta">${fmt(new Date(c.fecha+'T00:00:00'))}${c.sustituidoPor ? ' · sustituido por: '+c.sustituidoPor : ' · sin sustitución registrada'}</div>
               <div class="cov-meta" style="color:var(--ink-faint);">registrado: ${fmtDateTime(c.loggedAt)}</div>
-              ${c.notas ? `<div class="cov-notes">${escapeHtml(c.notas)}</div>` : ''}
+              ${c.notas ? `<div class="cov-notes">${c.notas}</div>` : ''}
             </div>
-            <div class="cov-actions"><button class="icon-btn" data-del-coverage="${escapeAttr(c.id)}">🗑</button></div>
+            <div class="cov-actions"><button class="icon-btn" data-del-coverage="${c.id}">🗑</button></div>
           </div>
         </div>`;
       }
@@ -5056,12 +4979,12 @@ function renderCoverage(){
           <div class="cov-row">
             <span class="cov-badge entrada">🆕 Entrada</span>
             <div class="cov-body">
-              <div class="cov-title">${escapeHtml(c.roleSnapshot)}${c.predecesor ? ' — sustituye a '+escapeHtml(c.predecesor) : ''}</div>
+              <div class="cov-title">${c.roleSnapshot}${c.predecesor ? ' — sustituye a '+c.predecesor : ''}</div>
               <div class="cov-meta">${fmt(new Date(c.fecha+'T00:00:00'))}</div>
               <div class="cov-meta" style="color:var(--ink-faint);">registrado: ${fmtDateTime(c.loggedAt)}</div>
-              ${c.notas ? `<div class="cov-notes">${escapeHtml(c.notas)}</div>` : ''}
+              ${c.notas ? `<div class="cov-notes">${c.notas}</div>` : ''}
             </div>
-            <div class="cov-actions"><button class="icon-btn" data-del-coverage="${escapeAttr(c.id)}">🗑</button></div>
+            <div class="cov-actions"><button class="icon-btn" data-del-coverage="${c.id}">🗑</button></div>
           </div>
         </div>`;
       }
@@ -5071,14 +4994,14 @@ function renderCoverage(){
         <div class="cov-row ${ongoing?'':'finished'}">
           <span class="cov-badge ${ongoing?'ongoing':'finished'}">🔄 ${ongoing?'En curso':'Finalizada'}</span>
           <div class="cov-body">
-            <div class="cov-title">${escapeHtml(c.roleSnapshot)} — ${escapeHtml(c.motivo)}</div>
-            <div class="cov-meta">${fmt(new Date(c.fechaInicio+'T00:00:00'))} → ${c.fechaFin ? fmt(new Date(c.fechaFin+'T00:00:00')) : 'sin fecha de fin'} · cubierto por: ${escapeHtml(c.cubiertoPor || '—')}</div>
+            <div class="cov-title">${c.roleSnapshot} — ${c.motivo}</div>
+            <div class="cov-meta">${fmt(new Date(c.fechaInicio+'T00:00:00'))} → ${c.fechaFin ? fmt(new Date(c.fechaFin+'T00:00:00')) : 'sin fecha de fin'} · cubierto por: ${c.cubiertoPor || '—'}</div>
             <div class="cov-meta" style="color:var(--ink-faint);">registrado: ${fmtDateTime(c.loggedAt)}</div>
-            ${c.notas ? `<div class="cov-notes">${escapeHtml(c.notas)}</div>` : ''}
+            ${c.notas ? `<div class="cov-notes">${c.notas}</div>` : ''}
           </div>
           <div class="cov-actions">
-            <button class="icon-btn" data-edit-coverage="${escapeAttr(c.id)}">✎</button>
-            <button class="icon-btn" data-del-coverage="${escapeAttr(c.id)}">🗑</button>
+            <button class="icon-btn" data-edit-coverage="${c.id}">✎</button>
+            <button class="icon-btn" data-del-coverage="${c.id}">🗑</button>
           </div>
         </div>
       </div>`;
@@ -5096,8 +5019,8 @@ function coverageFieldsTemplate(prefix, c){
     <div class="fld-row">
       <label>Perfil afectado
         <select id="${prefix}-role">
-          ${roleOptions.map(r=>`<option value="${escapeAttr(r)}" ${c.roleSnapshot===r?'selected':''}>${escapeHtml(r)}</option>`).join('')}
-          ${(!currentRoleInOptions && c.roleSnapshot) ? `<option value="${escapeAttr(c.roleSnapshot)}" selected>${escapeHtml(c.roleSnapshot)} (ya no está en Equipo)</option>` : ''}
+          ${roleOptions.map(r=>`<option value="${r.replace(/"/g,'&quot;')}" ${c.roleSnapshot===r?'selected':''}>${r}</option>`).join('')}
+          ${(!currentRoleInOptions && c.roleSnapshot) ? `<option value="${c.roleSnapshot.replace(/"/g,'&quot;')}" selected>${c.roleSnapshot} (ya no está en Equipo)</option>` : ''}
         </select>
       </label>
       <label>Motivo
@@ -5107,16 +5030,16 @@ function coverageFieldsTemplate(prefix, c){
       </label>
     </div>
     <div class="fld-row">
-      <label>Desde <input type="date" id="${prefix}-start" value="${escapeAttr(c.fechaInicio)}"></label>
-      <label>Hasta (vacío = en curso) <input type="date" id="${prefix}-end" value="${escapeAttr(c.fechaFin)}"></label>
-      <label>Cubierto por <input type="text" id="${prefix}-cover" value="${escapeAttr(c.cubiertoPor||'')}" placeholder="p.ej. perfil de otro contrato del grupo"></label>
+      <label>Desde <input type="date" id="${prefix}-start" value="${c.fechaInicio||''}"></label>
+      <label>Hasta (vacío = en curso) <input type="date" id="${prefix}-end" value="${c.fechaFin||''}"></label>
+      <label>Cubierto por <input type="text" id="${prefix}-cover" value="${(c.cubiertoPor||'').replace(/"/g,'&quot;')}" placeholder="p.ej. perfil de otro contrato del grupo"></label>
     </div>
     <div class="fld-row">
-      <label>DNI/NIE (de quien cubre) <input type="text" id="${prefix}-dni" value="${escapeAttr(c.dni||'')}" placeholder="opcional"></label>
-      <label>Email (de quien cubre) <input type="email" id="${prefix}-email" value="${escapeAttr(c.email||'')}" placeholder="opcional"></label>
-      <label>Teléfono (de quien cubre) <input type="tel" id="${prefix}-telefono" value="${escapeAttr(c.telefono||'')}" placeholder="opcional"></label>
+      <label>DNI/NIE (de quien cubre) <input type="text" id="${prefix}-dni" value="${(c.dni||'').replace(/"/g,'&quot;')}" placeholder="opcional"></label>
+      <label>Email (de quien cubre) <input type="email" id="${prefix}-email" value="${(c.email||'').replace(/"/g,'&quot;')}" placeholder="opcional"></label>
+      <label>Teléfono (de quien cubre) <input type="tel" id="${prefix}-telefono" value="${(c.telefono||'').replace(/"/g,'&quot;')}" placeholder="opcional"></label>
     </div>
-    <label>Notas <textarea id="${prefix}-notes" placeholder="Detalle opcional">${escapeHtml(c.notas)}</textarea></label>`;
+    <label>Notas <textarea id="${prefix}-notes" placeholder="Detalle opcional">${c.notas||''}</textarea></label>`;
 }
 function coverageAddForm(){
   return `<div class="inline-form">${coverageFieldsTemplate('cov-new')}
@@ -5125,7 +5048,7 @@ function coverageAddForm(){
 }
 function coverageEditForm(c){
   return `<div class="inline-form">${coverageFieldsTemplate('cov-edit', c)}
-    <div class="btn-row"><button class="btn primary" data-cov-save-edit="${escapeAttr(c.id)}">Guardar cambios</button><button class="btn ghost" data-cov-cancel-edit="1">Cancelar</button></div>
+    <div class="btn-row"><button class="btn primary" data-cov-save-edit="${c.id}">Guardar cambios</button><button class="btn ghost" data-cov-cancel-edit="1">Cancelar</button></div>
   </div>`;
 }
 function attachCoverageEvents(){
@@ -5280,10 +5203,10 @@ function renderPhases(){
       ? `desde ${desdeTxt} hasta ${hastaTxt || 'fin del servicio'}`
       : (hastaTxt ? `hasta ${hastaTxt}` : 'hasta fin del servicio');
     return `<div class="ms-row">
-      <span class="ms-label">${escapeHtml(p.name)}</span>
+      <span class="ms-label">${p.name}</span>
       <span class="ms-date">${dateLabel}</span>
-      <button class="icon-btn" data-edit-phase="${escapeAttr(p.id)}">✎</button>
-      ${state.phases.length > 1 ? `<button class="icon-btn" data-del-phase="${escapeAttr(p.id)}">🗑</button>` : ''}
+      <button class="icon-btn" data-edit-phase="${p.id}">✎</button>
+      ${state.phases.length > 1 ? `<button class="icon-btn" data-del-phase="${p.id}">🗑</button>` : ''}
     </div>`;
   }).join('');
   attachPhaseEvents();
@@ -5293,10 +5216,10 @@ function renderPhases(){
 function phaseEditForm(p){
   return `<div class="inline-form">
     <div class="fld-row">
-      <label>Nombre <input type="text" id="ph-edit-name" value="${escapeAttr(p.name)}"></label>
-      <label>Fin de fase (vacío = hasta fin del servicio) <input type="date" id="ph-edit-end" value="${escapeAttr(p.endDate)}"></label>
+      <label>Nombre <input type="text" id="ph-edit-name" value="${p.name.replace(/"/g,'&quot;')}"></label>
+      <label>Fin de fase (vacío = hasta fin del servicio) <input type="date" id="ph-edit-end" value="${p.endDate||''}"></label>
     </div>
-    <div class="btn-row"><button class="btn primary" data-ph-save-edit="${escapeAttr(p.id)}">Guardar</button><button class="btn ghost" data-ph-cancel-edit="1">Cancelar</button></div>
+    <div class="btn-row"><button class="btn primary" data-ph-save-edit="${p.id}">Guardar</button><button class="btn ghost" data-ph-cancel-edit="1">Cancelar</button></div>
   </div>`;
 }
 function phaseAddForm(){
@@ -5423,7 +5346,7 @@ document.getElementById('btn-prorroga').addEventListener('click', ()=>{
         <label class="rk-check-label"><input type="radio" name="prorroga-mode" id="prorroga-mode-estimate" value="estimate"> Estimar según contrato (aún sin confirmar)</label>
       </div>
       <div class="fld-row">
-        <label>Nueva fecha fin estimada <input type="date" id="prorroga-new-end" value="${escapeAttr(state.serviceEnd)}"></label>
+        <label>Nueva fecha fin estimada <input type="date" id="prorroga-new-end" value="${state.serviceEnd}"></label>
       </div>
       <div class="btn-row">
         <button class="btn primary" id="prorroga-save">Confirmar prórroga</button>
@@ -5707,7 +5630,7 @@ try{
   box.innerHTML = `<div style="max-width:520px;">
     <h2 style="color:#e2596b; margin:0 0 10px; font-size:15px;">No se ha podido iniciar el dashboard</h2>
     <p style="font-size:12px; line-height:1.6; color:#93a3b5;">Ha ocurrido un error inesperado al cargar los datos. Revisa la consola del navegador (F12) para más detalle, o recarga la página. Si el problema persiste, usa una copia de seguridad exportada anteriormente.</p>
-    <p style="font-size:11px; color:#546578; margin-top:10px;">Detalle técnico: ${String((err && err.message) || err).replace(/[&<>]/g, ch=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[ch]))}</p>
+    <p style="font-size:11px; color:#546578; margin-top:10px;">Detalle técnico: ${(err && err.message) ? err.message.replace(/</g,'&lt;') : String(err)}</p>
   </div>`;
   document.body.appendChild(box);
 }

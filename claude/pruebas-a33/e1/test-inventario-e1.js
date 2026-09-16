@@ -226,6 +226,12 @@ if (fs.existsSync(PRE_INDEX)) {
 //         -> F81F0A3D… (ronda C1-A, 16 sept 2026): inventario de residuos al
 //            arrancar (solo lectura, una línea en app.log) y los mensajes del
 //            rekey que prometían "se resuelve sola". Tampoco toca el lanzador.
+//         -> 0BC92A46… (ronda F1, 16 sept 2026): el factory-seed horneado deja
+//            de poder cerrar su propio <script>. `serializarSeedParaScript`
+//            escapa `<` como `<` (escape JSON válido: el valor se recupera
+//            EXACTO con JSON.parse) y el reemplazo pasa a ser una FUNCIÓN, para
+//            que `$&`/`$'`/`$1` del título no tengan semántica. Son las dos
+//            únicas funciones tocadas en main.js. Tampoco toca el lanzador.
 //
 //   db.js    1B16381F… (intacto desde el Bloque 1 hasta B3)
 //         -> B03C81FF… (ronda B4, 16 sept 2026): **SOLO COMENTARIOS**. Dos
@@ -237,7 +243,7 @@ if (fs.existsSync(PRE_INDEX)) {
 // `dashboard/plantilla_dashboard.html` NO esta en esta tabla a proposito: E1 no
 // lo toca ni lo miraba, y lo han modificado P12 y E2 por su cuenta.
 const HASHES_TRAS_A2 = {
-  'main.js': 'F81F0A3D3DF0AA1F9E2B8F5024A69F4AAC3C86DB201EE2F3E27DC4C7DD32A952',
+  'main.js': '0BC92A4672E51B9C19C57461CAF973667A2FE34CBACE2816F9CCEA1CEE6F09BE',
   'preload.js': 'AA77316F3FDB384D582F8270213A846EE1A1D2E067784EE17DF8D65CC1F6A27B',
   'preload-launcher.js': '01D38C31D5FB9B23E5AD9FC617DEB7E3960E88EBF5A0ACF89C9C8EDDAA21ECFD',
   'preload-backup-picker.js': '19D2D1BAD74F774797E5F129F99FFAF2A19BF77E370BF1727161447B326D3061',

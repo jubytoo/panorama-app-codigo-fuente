@@ -1065,15 +1065,15 @@ function puestoNameWrapHtml(puesto) {
   if (editingPuestoNameId === puesto.id) {
     return `
         <div class="name-edit-wrap editing">
-          <input type="text" class="name-edit-input" value="${escapeAttr(puesto.name)}" data-puesto="${escapeAttr(puesto.id)}">
-          <button type="button" class="btn-name-ok" data-action="save-puesto-name" data-id="${escapeAttr(puesto.id)}" title="Aceptar">✓</button>
-          <button type="button" class="btn-name-cancel" data-action="cancel-puesto-name" data-id="${escapeAttr(puesto.id)}" title="Cancelar">✕</button>
+          <input type="text" class="name-edit-input" value="${escapeAttr(puesto.name)}" data-puesto="${puesto.id}">
+          <button type="button" class="btn-name-ok" data-action="save-puesto-name" data-id="${puesto.id}" title="Aceptar">✓</button>
+          <button type="button" class="btn-name-cancel" data-action="cancel-puesto-name" data-id="${puesto.id}" title="Cancelar">✕</button>
         </div>`;
   }
   return `
         <div class="name-edit-wrap">
           <span class="name-display">${highlightMatches(puesto.name)}</span>
-          <button type="button" class="name-edit-icon-btn" data-action="edit-puesto-name" data-id="${escapeAttr(puesto.id)}" title="Editar nombre del puesto" aria-label="Editar nombre del puesto">✎</button>
+          <button type="button" class="name-edit-icon-btn" data-action="edit-puesto-name" data-id="${puesto.id}" title="Editar nombre del puesto" aria-label="Editar nombre del puesto">✎</button>
         </div>`;
 }
 
@@ -1082,7 +1082,7 @@ function puestoNameWrapHtml(puesto) {
 // (mismo patrón de actualización dirigida del DOM usado desde 0.1.81
 // para no perder lo que se estuviera editando en otro campo).
 function refreshPuestoNameWrap(puesto) {
-  const card = document.querySelector(`.card[data-puesto-card="${CSS.escape(String(puesto.id))}"]`);
+  const card = document.querySelector(`.card[data-puesto-card="${puesto.id}"]`);
   if (!card) return;
   const oldWrap = card.querySelector('.name-edit-wrap');
   if (!oldWrap) return;
@@ -1114,40 +1114,40 @@ function renderPuestos() {
         ${puestoNameWrapHtml(puesto)}
         <div class="actions">
           ${okBadge}
-          <button class="btn btn-danger" data-action="del-puesto" data-id="${escapeAttr(puesto.id)}">Eliminar</button>
+          <button class="btn btn-danger" data-action="del-puesto" data-id="${puesto.id}">Eliminar</button>
         </div>
       </div>
       <div class="card-body">
         <div class="row-flex">
-          <div class="field"><label>Formación mínima</label><input type="text" placeholder="Ej: FP Superior" value="${escapeAttr(puesto.formacionMinima)}" data-action="puesto-field" data-field="formacionMinima" data-puesto="${escapeAttr(puesto.id)}"></div>
-          <div class="field"><label>Años mínimos</label><input type="number" min="0" step="1" placeholder="Ej: 5" value="${escapeAttr(puesto.aniosMinimos)}" data-action="puesto-field" data-field="aniosMinimos" data-puesto="${escapeAttr(puesto.id)}"></div>
-          <div class="field"><label>SBA de referencia</label><input type="text" placeholder="Ej: 40.000 - 45.000 € brutos/año" value="${escapeAttr(puesto.sbaReferencia)}" data-action="puesto-field" data-field="sbaReferencia" data-puesto="${escapeAttr(puesto.id)}"></div>
+          <div class="field"><label>Formación mínima</label><input type="text" placeholder="Ej: FP Superior" value="${escapeAttr(puesto.formacionMinima)}" data-action="puesto-field" data-field="formacionMinima" data-puesto="${puesto.id}"></div>
+          <div class="field"><label>Años mínimos</label><input type="number" min="0" step="1" placeholder="Ej: 5" value="${escapeAttr(puesto.aniosMinimos)}" data-action="puesto-field" data-field="aniosMinimos" data-puesto="${puesto.id}"></div>
+          <div class="field"><label>SBA de referencia</label><input type="text" placeholder="Ej: 40.000 - 45.000 € brutos/año" value="${escapeAttr(puesto.sbaReferencia)}" data-action="puesto-field" data-field="sbaReferencia" data-puesto="${puesto.id}"></div>
         </div>
         ${puesto.tasks.length === 0 ? '<div class="empty-hint">Sin tareas todavía.</div>' : `
         <div style="margin-bottom:6px">
-          <button type="button" class="btn btn-ghost" data-action="toggle-puesto-tasks" data-id="${escapeAttr(puesto.id)}" style="font-size:11px;padding:4px 9px">${expandedPuestoIds.has(puesto.id) ? 'Ocultar tareas' : 'Ver tareas'}</button>
+          <button type="button" class="btn btn-ghost" data-action="toggle-puesto-tasks" data-id="${puesto.id}" style="font-size:11px;padding:4px 9px">${expandedPuestoIds.has(puesto.id) ? 'Ocultar tareas' : 'Ver tareas'}</button>
         </div>
-        <div class="puesto-tasks-wrap" data-id="${escapeAttr(puesto.id)}"${expandedPuestoIds.has(puesto.id) ? '' : ' hidden'}>
+        <div class="puesto-tasks-wrap" data-id="${puesto.id}"${expandedPuestoIds.has(puesto.id) ? '' : ' hidden'}>
         <table class="tasks">
           <thead><tr><th style="width:55%">Tarea</th><th style="width:20%">Peso (0-5)</th><th></th></tr></thead>
           <tbody>
             ${puesto.tasks.map(t => `
               <tr>
-                <td><input type="text" value="${escapeAttr(t.name)}" data-action="task-name" data-puesto="${escapeAttr(puesto.id)}" data-task="${escapeAttr(t.id)}"></td>
-                <td><input type="number" min="0" max="5" step="1" value="${escapeAttr(t.weight)}" data-action="task-weight" data-puesto="${escapeAttr(puesto.id)}" data-task="${escapeAttr(t.id)}"></td>
-                <td><button class="btn btn-danger" data-action="del-task" data-puesto="${escapeAttr(puesto.id)}" data-task="${escapeAttr(t.id)}">✕</button></td>
+                <td><input type="text" value="${escapeAttr(t.name)}" data-action="task-name" data-puesto="${puesto.id}" data-task="${t.id}"></td>
+                <td><input type="number" min="0" max="5" step="1" value="${t.weight}" data-action="task-weight" data-puesto="${puesto.id}" data-task="${t.id}"></td>
+                <td><button class="btn btn-danger" data-action="del-task" data-puesto="${puesto.id}" data-task="${t.id}">✕</button></td>
               </tr>
               <tr class="task-guide-row">
                 <td colspan="3">
                   <label class="task-guide-label">Guía de esta tarea (qué preguntar, qué mirar — se ve también al puntuar en Evaluaciones)</label>
-                  <textarea class="task-guide" placeholder="Ej: preguntar por experiencia con systemd, revisar journalctl, pedir que explique un incidente real de disco lleno…" data-action="task-guide" data-puesto="${escapeAttr(puesto.id)}" data-task="${escapeAttr(t.id)}">${escapeHtml(t.guide || '')}</textarea>
+                  <textarea class="task-guide" placeholder="Ej: preguntar por experiencia con systemd, revisar journalctl, pedir que explique un incidente real de disco lleno…" data-action="task-guide" data-puesto="${puesto.id}" data-task="${t.id}">${escapeHtml(t.guide || '')}</textarea>
                 </td>
               </tr>`).join('')}
           </tbody>
         </table>
         </div>`}
         <div class="add-task-row">
-          <button class="btn btn-secondary" data-action="add-task" data-puesto="${escapeAttr(puesto.id)}">+ Añadir tarea</button>
+          <button class="btn btn-secondary" data-action="add-task" data-puesto="${puesto.id}">+ Añadir tarea</button>
         </div>
       </div>`;
     list.appendChild(card);
@@ -1191,7 +1191,7 @@ function renderEvaluaciones() {
       : `<span class="badge badge-noapto">NO APTO — ${st.score.toFixed(1)}/5</span>`;
 
     const puestoOptions = ['<option value="">-- elige puesto --</option>']
-      .concat(state.puestos.map(p => `<option value="${escapeAttr(p.id)}" ${p.id === ev.puestoId ? 'selected' : ''}>${escapeHtml(p.name)}</option>`)).join('');
+      .concat(state.puestos.map(p => `<option value="${p.id}" ${p.id === ev.puestoId ? 'selected' : ''}>${escapeHtml(p.name)}</option>`)).join('');
 
     const card = document.createElement('div');
     card.className = 'card';
@@ -1199,35 +1199,35 @@ function renderEvaluaciones() {
     card.innerHTML = `
       <div class="card-header">
         <span class="name">${escapeHtml(ev.candidato || '(sin nombre)')}</span>
-        <div class="actions">${badge}<button class="btn btn-secondary" data-action="export-eval" data-id="${escapeAttr(ev.id)}" title="Exportar candidato, tareas con comentarios y borrador de feedback en un único archivo">Exportar informe (.txt)</button><button class="btn btn-danger" data-action="del-eval" data-id="${escapeAttr(ev.id)}">Eliminar</button></div>
+        <div class="actions">${badge}<button class="btn btn-secondary" data-action="export-eval" data-id="${ev.id}" title="Exportar candidato, tareas con comentarios y borrador de feedback en un único archivo">Exportar informe (.txt)</button><button class="btn btn-danger" data-action="del-eval" data-id="${ev.id}">Eliminar</button></div>
       </div>
       <div class="card-body">
         <div class="row-flex">
-          <div class="field"><label>Candidato</label><input type="text" value="${escapeAttr(ev.candidato)}" data-action="ev-field" data-field="candidato" data-id="${escapeAttr(ev.id)}"></div>
-          <div class="field"><label>Puesto</label><select data-action="ev-puesto" data-id="${escapeAttr(ev.id)}">${puestoOptions}</select></div>
-          <div class="field"><label>Fecha entrevista</label><input type="date" value="${escapeAttr(ev.fecha)}" data-action="ev-field" data-field="fecha" data-id="${escapeAttr(ev.id)}"></div>
+          <div class="field"><label>Candidato</label><input type="text" value="${escapeAttr(ev.candidato)}" data-action="ev-field" data-field="candidato" data-id="${ev.id}"></div>
+          <div class="field"><label>Puesto</label><select data-action="ev-puesto" data-id="${ev.id}">${puestoOptions}</select></div>
+          <div class="field"><label>Fecha entrevista</label><input type="date" value="${ev.fecha || ''}" data-action="ev-field" data-field="fecha" data-id="${ev.id}"></div>
         </div>
         <div class="row-flex">
           <div class="field">
             <label>Formación${puesto && puesto.formacionMinima ? ` <span class="min-hint">(mínimo del puesto: ${escapeHtml(puesto.formacionMinima)})</span>` : ''}</label>
-            <input type="text" placeholder="Ej: FP Superior, Ingeniería Informática…" value="${escapeAttr(ev.formacion)}" data-action="ev-field" data-field="formacion" data-id="${escapeAttr(ev.id)}">
+            <input type="text" placeholder="Ej: FP Superior, Ingeniería Informática…" value="${escapeAttr(ev.formacion)}" data-action="ev-field" data-field="formacion" data-id="${ev.id}">
           </div>
           <div class="field">
             <label>Años de experiencia${puesto && puesto.aniosMinimos !== '' && puesto.aniosMinimos != null ? ` <span class="min-hint">(mínimo del puesto: ${escapeHtml(puesto.aniosMinimos)})</span>` : ''}</label>
-            <input type="number" min="0" step="1" placeholder="Ej: 6" value="${escapeAttr(ev.aniosExperiencia)}" data-action="ev-field" data-field="aniosExperiencia" data-id="${escapeAttr(ev.id)}">
+            <input type="number" min="0" step="1" placeholder="Ej: 6" value="${escapeAttr(ev.aniosExperiencia)}" data-action="ev-field" data-field="aniosExperiencia" data-id="${ev.id}">
             ${puesto && puesto.aniosMinimos !== '' && puesto.aniosMinimos != null && ev.aniosExperiencia !== '' && ev.aniosExperiencia != null && Number(ev.aniosExperiencia) < Number(puesto.aniosMinimos) ? '<div class="min-warning">⚠ Por debajo del mínimo</div>' : ''}
           </div>
         </div>
         <div class="row-flex">
-          <div class="field"><label>TAP</label><input type="text" value="${escapeAttr(ev.tap)}" data-action="ev-field" data-field="tap" data-id="${escapeAttr(ev.id)}"></div>
-          <div class="field"><label>Manager</label><input type="text" value="${escapeAttr(ev.manager)}" data-action="ev-field" data-field="manager" data-id="${escapeAttr(ev.id)}"></div>
-          <div class="field"><label>Entrevistador</label><input type="text" value="${escapeAttr(ev.entrevistador)}" data-action="ev-field" data-field="entrevistador" data-id="${escapeAttr(ev.id)}"></div>
-          <div class="field"><label>Teléfono</label><input type="tel" value="${escapeAttr(ev.telefono)}" data-action="ev-field" data-field="telefono" data-id="${escapeAttr(ev.id)}"></div>
+          <div class="field"><label>TAP</label><input type="text" value="${escapeAttr(ev.tap)}" data-action="ev-field" data-field="tap" data-id="${ev.id}"></div>
+          <div class="field"><label>Manager</label><input type="text" value="${escapeAttr(ev.manager)}" data-action="ev-field" data-field="manager" data-id="${ev.id}"></div>
+          <div class="field"><label>Entrevistador</label><input type="text" value="${escapeAttr(ev.entrevistador)}" data-action="ev-field" data-field="entrevistador" data-id="${ev.id}"></div>
+          <div class="field"><label>Teléfono</label><input type="tel" value="${escapeAttr(ev.telefono)}" data-action="ev-field" data-field="telefono" data-id="${ev.id}"></div>
         </div>
         <div class="row-flex">
           <div class="field">
             <label>SBA valorado (cambio)${puesto && puesto.sbaReferencia ? ` <span class="min-hint">(referencia del puesto: ${escapeHtml(puesto.sbaReferencia)})</span>` : ''}</label>
-            <input type="text" placeholder="Ej: 42.000 € brutos/año" value="${escapeAttr(ev.sba)}" data-action="ev-field" data-field="sba" data-id="${escapeAttr(ev.id)}">
+            <input type="text" placeholder="Ej: 42.000 € brutos/año" value="${escapeAttr(ev.sba)}" data-action="ev-field" data-field="sba" data-id="${ev.id}">
           </div>
         </div>
         <div class="cv-row">
@@ -1235,37 +1235,37 @@ function renderEvaluaciones() {
           <div class="cv-controls">
             ${ev.cvFileName ? `
               <span class="cv-filename">📄 ${escapeHtml(ev.cvFileName)}</span>
-              <button class="btn btn-secondary" data-action="ver-cv" data-id="${escapeAttr(ev.id)}">Ver CV</button>
-              <button class="btn btn-secondary" data-action="cambiar-cv" data-id="${escapeAttr(ev.id)}">Cambiar</button>
-              <button class="btn btn-danger" data-action="quitar-cv" data-id="${escapeAttr(ev.id)}">Quitar</button>
+              <button class="btn btn-secondary" data-action="ver-cv" data-id="${ev.id}">Ver CV</button>
+              <button class="btn btn-secondary" data-action="cambiar-cv" data-id="${ev.id}">Cambiar</button>
+              <button class="btn btn-danger" data-action="quitar-cv" data-id="${ev.id}">Quitar</button>
             ` : `
-              <button class="btn btn-secondary" data-action="adjuntar-cv" data-id="${escapeAttr(ev.id)}">+ Adjuntar CV</button>
+              <button class="btn btn-secondary" data-action="adjuntar-cv" data-id="${ev.id}">+ Adjuntar CV</button>
             `}
           </div>
         </div>
         ${!puesto ? '<div class="empty-hint">Elige un puesto para cargar sus tareas.</div>' :
           (puesto.tasks.length === 0 ? '<div class="empty-hint">Ese puesto todavía no tiene tareas — añádelas en la pestaña Puestos.</div>' : `
         <div style="margin-bottom:6px">
-          <button type="button" class="btn btn-ghost" data-action="toggle-tasks" data-id="${escapeAttr(ev.id)}" style="font-size:11px;padding:4px 9px">${expandedEvalIds.has(ev.id) ? 'Ocultar tareas' : 'Ver tareas'}</button>
+          <button type="button" class="btn btn-ghost" data-action="toggle-tasks" data-id="${ev.id}" style="font-size:11px;padding:4px 9px">${expandedEvalIds.has(ev.id) ? 'Ocultar tareas' : 'Ver tareas'}</button>
         </div>
-        <div class="eval-tasks-wrap" data-id="${escapeAttr(ev.id)}"${expandedEvalIds.has(ev.id) ? '' : ' hidden'}>
+        <div class="eval-tasks-wrap" data-id="${ev.id}"${expandedEvalIds.has(ev.id) ? '' : ' hidden'}>
         <table class="tasks">
           <thead><tr><th style="width:34%">Tarea</th><th style="width:10%">Peso (0-5)</th><th style="width:10%">Nota</th><th>Comentario</th></tr></thead>
           <tbody>
             ${puesto.tasks.map(t => {
               const n = ev.notas[t.id] || {};
               return `<tr>
-                <td><span class="task-name-display" data-task-name="${escapeAttr(t.id)}">${escapeHtml(t.name)}</span>${t.guide ? `
+                <td><span class="task-name-display" data-task-name="${t.id}">${escapeHtml(t.name)}</span>${t.guide ? `
                   <details class="eval-guide-details">
                     <summary>Ver guía</summary>
                     <div class="eval-task-guide">${renderGuideRich(t.guide)}</div>
                   </details>` : ''}</td>
-                <td>${escapeHtml(t.weight)}</td>
-                <td><select data-action="ev-nota" data-id="${escapeAttr(ev.id)}" data-task="${escapeAttr(t.id)}">
+                <td>${t.weight}</td>
+                <td><select data-action="ev-nota" data-id="${ev.id}" data-task="${t.id}">
                   <option value="">-</option>
                   ${NOTA_OPTS.map(v => `<option value="${v}" ${Number(n.nota) === v ? 'selected' : ''}>${v}</option>`).join('')}
                 </select></td>
-                <td><input type="text" value="${escapeAttr(n.comentario || '')}" data-action="ev-comentario" data-id="${escapeAttr(ev.id)}" data-task="${escapeAttr(t.id)}"></td>
+                <td><input type="text" value="${escapeAttr(n.comentario || '')}" data-action="ev-comentario" data-id="${ev.id}" data-task="${t.id}"></td>
               </tr>`;
             }).join('')}
           </tbody>
@@ -1273,10 +1273,10 @@ function renderEvaluaciones() {
         </div>`)}
         <div class="feedback-box">
           <label style="font-size:11.5px;color:var(--cyan);font-weight:bold">Borrador de feedback (editable)</label>
-          <textarea data-action="ev-feedback" data-id="${escapeAttr(ev.id)}">${escapeHtml(ev.feedbackEdited != null ? ev.feedbackEdited : feedbackDraft(ev))}</textarea>
+          <textarea data-action="ev-feedback" data-id="${ev.id}">${escapeHtml(ev.feedbackEdited != null ? ev.feedbackEdited : feedbackDraft(ev))}</textarea>
           <div class="feedback-actions">
-            <button class="btn btn-secondary" data-action="copy-feedback" data-id="${escapeAttr(ev.id)}">Copiar</button>
-            <button class="btn btn-ghost" data-action="reset-feedback" data-id="${escapeAttr(ev.id)}">Regenerar automático</button>
+            <button class="btn btn-secondary" data-action="copy-feedback" data-id="${ev.id}">Copiar</button>
+            <button class="btn btn-ghost" data-action="reset-feedback" data-id="${ev.id}">Regenerar automático</button>
             <span class="copy-note" id="copyNote-${ev.id}"></span>
           </div>
         </div>
@@ -1456,8 +1456,8 @@ function applyPuestosFilter() {
     // el campo) y la guía es un <textarea> (igual, campo entero).
     let anyTaskMatch = false;
     puesto.tasks.forEach(t => {
-      const nameInput = card.querySelector(`input[data-action="task-name"][data-task="${CSS.escape(String(t.id))}"]`);
-      const guideTextarea = card.querySelector(`textarea[data-action="task-guide"][data-task="${CSS.escape(String(t.id))}"]`);
+      const nameInput = card.querySelector(`input[data-action="task-name"][data-task="${t.id}"]`);
+      const guideTextarea = card.querySelector(`textarea[data-action="task-guide"][data-task="${t.id}"]`);
       markFieldMatch(nameInput, t.name);
       markFieldMatch(guideTextarea, t.guide);
       if (fieldMatches(t.name) || fieldMatches(t.guide)) anyTaskMatch = true;
@@ -1515,9 +1515,9 @@ function applyEvalFilter() {
     if (puesto) {
       puesto.tasks.forEach(t => {
         const n = ev.notas[t.id] || {};
-        const nameSpanTask = card.querySelector(`span[data-task-name="${CSS.escape(String(t.id))}"]`);
+        const nameSpanTask = card.querySelector(`span[data-task-name="${t.id}"]`);
         if (nameSpanTask) nameSpanTask.innerHTML = highlightMatches(t.name);
-        const comentarioInput = card.querySelector(`input[data-action="ev-comentario"][data-task="${CSS.escape(String(t.id))}"]`);
+        const comentarioInput = card.querySelector(`input[data-action="ev-comentario"][data-task="${t.id}"]`);
         markFieldMatch(comentarioInput, n.comentario || '');
         if (fieldMatches(t.name) || fieldMatches(n.comentario || '')) anyTaskMatch = true;
       });
@@ -1761,7 +1761,7 @@ document.getElementById('puestosList').addEventListener('click', e => {
     // DOM directo, sin renderPuestos(), para no perder lo que se
     // estuviera editando en otro campo de la misma tarjeta.
     const id = t.dataset.id;
-    const wrap = document.querySelector(`.puesto-tasks-wrap[data-id="${CSS.escape(String(id))}"]`);
+    const wrap = document.querySelector(`.puesto-tasks-wrap[data-id="${id}"]`);
     if (!wrap) return;
     const willExpand = wrap.hidden;
     wrap.hidden = !willExpand;
@@ -1778,7 +1778,7 @@ document.getElementById('puestosList').addEventListener('click', e => {
   } else if (action === 'save-puesto-name') {
     const puesto = puestoById(t.dataset.id);
     if (!puesto) return;
-    const card = document.querySelector(`.card[data-puesto-card="${CSS.escape(String(puesto.id))}"]`);
+    const card = document.querySelector(`.card[data-puesto-card="${puesto.id}"]`);
     const input = card ? card.querySelector('.name-edit-input') : null;
     const val = input ? input.value.trim() : '';
     if (val) { puesto.name = val; saveState(true); }
@@ -1887,7 +1887,7 @@ document.getElementById('evalList').addEventListener('click', e => {
     document.body.appendChild(a); a.click(); a.remove();
     URL.revokeObjectURL(url);
   } else if (action === 'copy-feedback') {
-    const ta = document.querySelector(`textarea[data-action="ev-feedback"][data-id="${CSS.escape(String(t.dataset.id))}"]`);
+    const ta = document.querySelector(`textarea[data-action="ev-feedback"][data-id="${t.dataset.id}"]`);
     const note = document.getElementById('copyNote-' + t.dataset.id);
     const text = ta.value;
     const done = () => { note.textContent = '✓ Copiado'; setTimeout(() => note.textContent = '', 1800); };
@@ -1982,7 +1982,7 @@ document.getElementById('evalList').addEventListener('click', e => {
     // DOM directo, sin renderEvaluaciones(), para no perder nada que se
     // estuviera editando en otros campos de la misma tarjeta.
     const id = t.dataset.id;
-    const wrap = document.querySelector(`.eval-tasks-wrap[data-id="${CSS.escape(String(id))}"]`);
+    const wrap = document.querySelector(`.eval-tasks-wrap[data-id="${id}"]`);
     if (!wrap) return;
     const willExpand = wrap.hidden;
     wrap.hidden = !willExpand;
