@@ -243,6 +243,17 @@ if (fs.existsSync(PRE_INDEX)) {
 //            auxiliares) y su llamada en las 10 BrowserWindow: la ventana hija
 //            se deniega siempre y http(s) sale a `shell.openExternal`. SÍ toca
 //            el lanzador, pero solo para aplicarle la política.
+//         -> E7D596A8… (ronda F2, 17 sept 2026): Content-Security-Policy por
+//            cabecera. `CSP_PERFILES`, `perfilCspDeDocumento`,
+//            `instalarCspEnSesion` y su registro en `session-created`, más el
+//            import de `fileURLToPath`. No toca el código del lanzador: le da
+//            su política (sin `unsafe-inline` en scripts) desde fuera.
+//         -> 2D05E00B… (ronda P9, 17 sept 2026): un solo lector de
+//            `location.json` con estados explícitos (`leerConfigUbicacion`);
+//            presente pero inutilizable detiene el arranque (PS-1020) en vez
+//            de caer en silencio a la carpeta por defecto; guardas en
+//            `decidirCrearSiAusente`, `syncDriveSyncGuardWithLocation` y el
+//            rescate PS-1007. No toca el lanzador.
 //
 //   db.js    1B16381F… (intacto desde el Bloque 1 hasta B3)
 //         -> B03C81FF… (ronda B4, 16 sept 2026): **SOLO COMENTARIOS**. Dos
@@ -254,7 +265,7 @@ if (fs.existsSync(PRE_INDEX)) {
 // `dashboard/plantilla_dashboard.html` NO esta en esta tabla a proposito: E1 no
 // lo toca ni lo miraba, y lo han modificado P12 y E2 por su cuenta.
 const HASHES_TRAS_A2 = {
-  'main.js': '16AB5F53B57F961927F36A23058CB7CDC043D76446C5AFF6F885E47CECFE4890',
+  'main.js': '2D05E00B53B8C45E6823E8629579D303FB69E2B0A24E53DCBE7700897E5F30F9',
   'preload.js': 'AA77316F3FDB384D582F8270213A846EE1A1D2E067784EE17DF8D65CC1F6A27B',
   'preload-launcher.js': '01D38C31D5FB9B23E5AD9FC617DEB7E3960E88EBF5A0ACF89C9C8EDDAA21ECFD',
   'preload-backup-picker.js': '19D2D1BAD74F774797E5F129F99FFAF2A19BF77E370BF1727161447B326D3061',

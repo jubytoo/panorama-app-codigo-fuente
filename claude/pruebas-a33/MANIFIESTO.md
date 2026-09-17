@@ -120,8 +120,10 @@ Modificado: `a2/test-cableado.js` (+19 aserciones `REST-FLUSH-1..5`).
 | `c1/` | **C1 — residuos. C1-A cerrado, C1-B diferido.** Desde la ronda C1-A, `test-c1-residuos.js` (**165 OK / 0**) tiene una sección **`C1-A` que EXIGE**: el inventario de arranque deja exactamente una línea con los recuentos esperados, sin rutas (A1); no escribe, no crea, no mueve, no descifra de más, no entra en las cachés de Chromium, con **espías** de `fs`, `dbmod` y `securitymod` (A2); detecta y no elimina el intercalado, el `.tmp-fallido` y la partición huérfana (A3–A5); «Eliminar evaluación» e «Importar» retiran el CV solo con `aplicado+verificado`, sobre las **ramas reales del HTML** (A6–A8); los mensajes ya no prometen «se resuelve sola» (A9). Cinco aserciones descriptivas del diagnóstico (`C1-D3/D4`, `C1-E8b/c`, `C1-E9c`) se **invirtieron**, con nota. `revertir-c1.js` + `comprobar-reversiones-c1.js`: **siete reversiones**, cada una rompe solo lo suyo. `medir-inventario-vivo.js`: el inventario REAL sobre la carpeta de datos, con `fs` y `dbmod` que **lanzan** ante cualquier escritura. `electron-c1.ps1` (**31 OK / 0**, cuatro arranques). *Lo que sigue es la descripción del diagnóstico:* `test-c1-residuos.js` nació como batería **descriptiva** (122 OK / 0: da verde porque describe lo que HAY). Fabrica en sandbox las familias de residuo —backup huérfano anterior e intercalado, fila sin archivo, `.tmp-fallido` íntegro, `.tmp` completo y `.tmp` muerto, tmp de acción sin journal, journal propio/ajeno/ilegible/resuelto, proyecto borrado, CV huérfano, restos de rekey y de restauración, sonda de escritura— con las funciones **reales** de `main.js` y el `db.js` real, e **inyecta fallos de `fs`** acotados al sandbox. `C1-D` demuestra que el «contar y registrar» aprobado **no existe**; `C1-E9c` demuestra el mensaje engañoso del rekey; `C1-R` evalúa como **modelo** el arreglo de la auditoría y enseña por qué es inseguro. `electron-c1.ps1` (**10 OK / 0**, app real + `real-run/c1-particion.js`) mide qué queda de la partición de un proyecto borrado. `inventario-vivo.js` es el inventario de los datos **reales**, de **solo lectura** e imprimiendo solo agregados; comprueba la BD viva, la de P10 y el nº de entradas antes y después (exit 98 si algo cambia). **No confundir los `C1-*` de aquí con el corte `C1` de la matriz del Bloque 4** |
 | `f1/` | **F1 — interpretación de datos como HTML. CERRADO (16 sept 2026).** `test-f1-sinks.js` (**139 OK / 0**) pasó de descriptiva a **EXIGENTE**: ejecuta los constructores reales del dashboard **con los helpers reales del propio archivo** y exige que cada campo quede *inerte* (ni etiqueta, ni handler, ni atributo roto) sin dejar de verse; `</textarea>` dentro del valor; logo solo `data:image/*;base64`; y **round-trip exacto del factory-seed** con `</script>`, `$&`, `$'`, `` $` ``, `$1`, `<`, `>`, `&`, comillas, acentos y emoji. Custodia además lo que NO debe tocarse (markup propio, enums, `modal.js`, builders ya escapados). `electron-f1.ps1` (**47 OK / 0**, cuatro arranques) lo exige en la app real: importar con marcadores, reinicio, título horneado y **un proyecto horneado ANTES de F1** (que debe seguir abriendo). `revertir-f1.js` + `comprobar-reversiones-f1.js` (**19 OK / 0**): **seis reversiones por familias** —texto del dashboard, seed inseguro, `onclick` de Preparación, selector de Evaluación, `data-dedic` del Directorio y logo crudo—, cada una rompe **solo lo suyo**. *Lo que sigue es la descripción del diagnóstico previo:* **SOLO DIAGNÓSTICO — no se había tocado producción.** `test-f1-sinks.js` (**100 OK / 0**, **descriptiva**: da verde porque describe los sinks que HAY) inventaria y ejecuta los constructores reales del dashboard, la Preparación, la Evaluación, el Directorio, el lanzador y de `main.js` (horneado del `factory-seed`, `String.replace` con `$`), clasificando cada interpolación por fuente y por si escapa. `electron-f1.ps1` (**34 OK / 0**, app real + `real-run/f1-inyeccion.js`) demuestra con **marcadores inocuos** (una `<b>`, un `data-f1a`, y una `<img>` con `onerror` que solo pone un atributo en `<html>` — **sin red, sin APIs sensibles, sin acciones destructivas**): al abrir un proyecto importado se interpretan 19 campos del dashboard; el id importado rompe atributos; el sink del `<select>` del historial queda **inerte por el parser**, no por escape; la Evaluación deja el texto literal pero **peso y fecha** van crudos; el título importado **horneado** en `dashboard.html` se ejecuta en el **arranque** (persistente); y el nombre de proyecto rompe el `data-dedic` del Directorio. **Barreras medidas:** `contextIsolation:true`, `sandbox:true`, sin Node en el mundo principal de todas las ventanas, `psConfirm` sobrescribible, **sin CSP** (F2), y `window.open` sin `setWindowOpenHandler` (F3) cuya ventana hija **no** hereda el puente. `f1-inyeccion.js` **no** invoca ninguna API del puente desde el contenido inyectado: la exposición **solo se documenta** |
 | `p17/` | **P17 — el horneado dejaba assets sin resolver. CERRADO (17 sept 2026).** `fixVendorScriptPaths` encadenaba nueve `String.replace(cadena, cadena)`, con DOS defectos de la misma familia: con patrón de cadena solo se sustituye la **primera** coincidencia (y `src="../assets/icon-256.png"` aparece **dos** veces, en el dashboard **y** en el Directorio: el icono de la barra de título salía roto), y la URL iba como **cadena de reemplazo**, donde `$&`/`` $` ``/`$'` tienen semántica (medido antes del arreglo: con `$'` el horneado pasaba de 373 KB a **189 MB** y dejaba **2210** rutas sin resolver). Corregido con **un solo patrón** para los nueve: regex **global** + **función** de reemplazo. `test-p17-assets.js` (**70 OK / 0**, EXIGENTE) ejecuta la función REAL contra las dos plantillas: cero relativos, los dos iconos resueltos, custodia de los nueve patrones, **equivalencia byte a byte** al deshacer solo los assets, y los cuatro casos `$&`/`$'`/`` $` ``/`$1`. `electron-p17.ps1` (**16 OK / 0**) lo exige en la app real sobre el dashboard **y** el Directorio horneados. `revertir-p17.js` + `comprobar-reversiones-p17.js` (**6 OK / 0**): al volver a `String.replace(cadena, cadena)` reaparecen **los dos** defectos |
-| `f2f3/` | **F2 (sin CSP) — ABIERTO, diagnosticado. F3 (sin `setWindowOpenHandler`) — CERRADO el 17 sept 2026.** Desde la implementación de F3, `test-f2f3.js` (**63 OK / 0**) **EXIGE** la política: helper único, ventana hija denegada siempre, `new URL` como validador (no `startsWith`), rechazo de `openExternal` capturado, rastro sin la URL entera, la política en las 10 ventanas, y la navegación interna legítima (recarga, ancla y `blob:`) preservada; ejecuta además el validador real contra 11 destinos denegados y 2 permitidos. `electron-f2f3.ps1` (**35 OK / 0**) lo exige en la app real con un **espía sobre `shell.openExternal`** —sin abrir Internet— cubriendo `about:blank`, `file://`, `data:`, `javascript:`, esquema inventado, URL malformada, `http`/`https` válidos, el enlace de entregable, `will-navigate`, `location.reload()` y `blob:`. `revertir-f3.js` + `comprobar-reversiones-f3.js` (**5 OK / 0**) y `electron-f3-revertido.ps1` (**4 OK / 0**), que reproduce las tres señales del defecto. *Lo que sigue describe el diagnóstico previo de los dos:* **DIAGNÓSTICO, sin implementar.** Dos hallazgos separados que comparten superficie. `test-f2f3.js` (**45 OK / 0**, descriptiva) recupera los dos hallazgos originales **literalmente** y mide: 0 CSP por `<meta>` **y** 0 por cabecera; de qué depende cada ventana (7 con `<script>` en línea, 9 con estilos en línea, 0 recursos externos, 1 Worker, `blob:` solo para descargar); `eval`/`new Function` **ausentes en el código propio** y presentes solo en mammoth/pdf.js; y la superficie de F3 (0 `window.open` del producto, **un** `target="_blank"`, 0 guardianes, 10 `new BrowserWindow`). `electron-f2f3.ps1` (**23 OK / 0**) lo mide en la app real: prueba una **CSP candidata** contra scripts/estilos en línea, vendor por `file://`, Worker de pdf.js y descargas `blob:`, y contesta la pregunta decisiva —**`unsafe-eval` NO hace falta**: con `new Function` bloqueado, mammoth lee un `.docx` real y pdf.js abre un `.pdf` real construidos por la propia batería—; y reproduce F3 (que venía **[LEÍDO]**): `window.open` abre `BrowserWindow`, es la «ventana negra» (`Electron` / `about:blank`), y la hija **no** hereda puente ni Node |
-| `real-run/` | Envoltorios que cargan el `main.js` REAL dentro de Electron. **Ojo con dos homonimias:** `b5.js` y `b4.js` son de los **Bloques 5 y 4 de A3.3**, no de los hallazgos B4/B5 de la auditoría; esos son `b4-reorder.js` y `b5-reentrancia.js`. `c1-particion.js` es de C1; `f1-inyeccion.js` y `f1-limpio.js` son de F1; `p17-assets.js` es de P17 |
+| `f2f3/` | **F2 (sin CSP) — CERRADO el 17 sept 2026 (su batería vive en `f2/`). F3 (sin `setWindowOpenHandler`) — CERRADO el 17 sept 2026.** Desde F2, seis anclajes de esta batería que describían «sin CSP» se actualizaron con su nota (`F2-A12`, `F2-B13`, `F2-B14`, `F2/F3-Z2..Z4`); sigue en **63 OK / 0**. Desde la implementación de F3, `test-f2f3.js` (**63 OK / 0**) **EXIGE** la política: helper único, ventana hija denegada siempre, `new URL` como validador (no `startsWith`), rechazo de `openExternal` capturado, rastro sin la URL entera, la política en las 10 ventanas, y la navegación interna legítima (recarga, ancla y `blob:`) preservada; ejecuta además el validador real contra 11 destinos denegados y 2 permitidos. `electron-f2f3.ps1` (**35 OK / 0**) lo exige en la app real con un **espía sobre `shell.openExternal`** —sin abrir Internet— cubriendo `about:blank`, `file://`, `data:`, `javascript:`, esquema inventado, URL malformada, `http`/`https` válidos, el enlace de entregable, `will-navigate`, `location.reload()` y `blob:`. `revertir-f3.js` + `comprobar-reversiones-f3.js` (**5 OK / 0**) y `electron-f3-revertido.ps1` (**4 OK / 0**), que reproduce las tres señales del defecto. *Lo que sigue describe el diagnóstico previo de los dos:* **DIAGNÓSTICO, sin implementar.** Dos hallazgos separados que comparten superficie. `test-f2f3.js` (**45 OK / 0**, descriptiva) recupera los dos hallazgos originales **literalmente** y mide: 0 CSP por `<meta>` **y** 0 por cabecera; de qué depende cada ventana (7 con `<script>` en línea, 9 con estilos en línea, 0 recursos externos, 1 Worker, `blob:` solo para descargar); `eval`/`new Function` **ausentes en el código propio** y presentes solo en mammoth/pdf.js; y la superficie de F3 (0 `window.open` del producto, **un** `target="_blank"`, 0 guardianes, 10 `new BrowserWindow`). `electron-f2f3.ps1` (**23 OK / 0**) lo mide en la app real: prueba una **CSP candidata** contra scripts/estilos en línea, vendor por `file://`, Worker de pdf.js y descargas `blob:`, y contesta la pregunta decisiva —**`unsafe-eval` NO hace falta**: con `new Function` bloqueado, mammoth lee un `.docx` real y pdf.js abre un `.pdf` real construidos por la propia batería—; y reproduce F3 (que venía **[LEÍDO]**): `window.open` abre `BrowserWindow`, es la «ventana negra» (`Electron` / `about:blank`), y la hija **no** hereda puente ni Node |
+| `f2/` | **F2 — Content-Security-Policy. CERRADO (17 sept 2026).** Por **cabecera** desde un único punto de `main.js`, con **cuatro perfiles** (`cerrado`, `sinScriptEnLinea`, `interfaz`, `lectorDeActas`). `test-f2.js` (**97 OK / 0**, EXIGENTE): el texto EXACTO de cada perfil; `unsafe-eval` ausente en la política **y** en el código; sin `file:` (redundante con `'self'` en `file://`), sin comodines ni hosts; `data:` solo en `img-src`; `blob:` solo en el `worker-src` de Preparación; el reparto documento→perfil **ejecutado** con la función real (las 10 ventanas, mayúsculas, `%20`, asar, Drive, `..`, UNC, URL rota → `cerrado`); el enganche **ejecutado** con dobles (mapa que lanza → `cerrado`); el inventario de plantillas que sostiene cada perfil; y el arranque del Worker de pdf.js por `blob:`. `electron-f2-lab.ps1` + `real-run/f2-laboratorio.js` (**41 OK / 0**): **el motor**, sin cargar el producto —cabecera con `file://` y asar, `'self'` = `file:`, modo REAL/FAKE del Worker de pdf.js, descargas sin `blob:`, frame/object/form/base, red contra un servidor **local** que cuenta visitas con su control sin CSP, `executeJavaScript` con `default-src 'none'`, control de `unsafe-eval` y **Workers `file:` sin CSP frente a `blob:` que la heredan**—. `electron-f2.ps1` + `real-run/f2-csp.js` (**212 OK / 0**): **la app real**, las 10 ventanas con su política EFECTIVA (leída del evento de violación de Chromium), recursos, exportaciones reales (CSV/Excel/PowerPoint con logo, Directorio, Evaluación, guion), actas `.docx`/`.pdf` por `handleActaFile` con Worker real, corte de red y de incrustados en 8 ventanas con **cero visitas**, restauración, proyecto **creado con el `main.js` pre-F2** (fase A sin CSP → fase B con CSP, también en **solo lectura**) y proyecto nuevo; más el diagnóstico `pptx` (ventana oculta, con y sin F2). `revertir-f2.js` + `comprobar-reversiones-f2.js` (**31 OK / 0**): **diez familias**, cada una tumba exactamente lo que anuncia. `electron-f2-revertido.ps1` (**7 OK / 0**): sin CSP salen fetch e imagen remotos; con `unsafe-eval` vuelve `new Function`; con `worker-src 'none'` el acta se lee pero sin Worker real |
+| `p9/` | **P9 — `location.json` presente pero inutilizable. CERRADO (17 sept 2026), ALTO / INTEGRIDAD.** `test-p9-location.js` (**282 OK / 0**) pasó de descriptiva a **EXIGENTE**. Ejecuta las funciones REALES —el lector único `leerConfigUbicacion`, el arranque a nivel de módulo, `decidirCrearSiAusente`, `handleFatalStartupError` (con `original-fs`), `syncDriveSyncGuardWithLocation` y `detenerArranquePorConfigUbicacion`— con un **espía de escrituras**, y cubre P9-1..P9-14: ~80 variantes de bytes; permisos denegados o bloqueos con dobles de `fs`; el rescate sin copias ante una config inválida; la protección intacta; la parada de `whenReady` en primer lugar, con su aviso exacto (solo «Cerrar», sin rutas); lo que **no** es P9 (`[REGISTRA]`: JSON válido con ruta inaccesible, el `.bat` y el instalador); y el `location.json` real de esta máquina en **solo lectura** (`P9-Z3`). `electron-p9.ps1` (**111 OK / 0**, 32 casos) lo exige en la app real: cero ventanas, ninguna BD abierta ni creada, residuo, compartida, `location.json` y registro intactos, protección sin tocar; archivo **bloqueado de verdad** por otro proceso (EBUSY) y carpeta en su lugar (EISDIR). Admite `P9_SOLO`, `P9_MAIN_FUENTE` y `P9_SALIDA_JSON`. `revertir-p9.js` + `comprobar-reversiones-p9.js` (**29 OK / 0**): **siete familias** —A BOM, B inválido = ausente, C sin ruta absoluta, D creación local, E abrir el residuo, F rescate por defecto, G protección sin guarda—, cada una tumba **solo** lo suyo. `electron-p9-revertido.ps1` (**14 OK / 0**): A–E en la app real, con su garantía de sandbox. *Lo que sigue es la descripción del diagnóstico:* `test-p9-location.js` (**137 OK / 0**, DESCRIPTIVA) recupera el hallazgo literal; inventaria lectores (tres en `main.js` y `Restaurar-backup.bat`), escritores (app e instalador) y el borrador; mide `JSON.parse`/`readFileSync` con BOM, UTF-16 y ANSI; **ejecuta** las lecturas reales contra ~33 variantes de bytes y contra errores de lectura (dobles de `fs` acotados); el arranque a nivel de módulo (unidad no montada, acceso denegado, relativa, inexistente, ANSI); la decisión de A3.3 en la carpeta por defecto; el efecto sobre la protección de apagado; y una **copia** del `.bat` en sandbox (sin copias de asar: sale antes de copiar). `electron-p9.ps1` + `real-run/p9-ubicacion.js` (**48 OK / 0**, 26 arranques): qué BD abre la app real en cada caso, con una BD «compartida» y otra «residual» identificables, variantes sin residuo, con registro y con registro corrupto, la protección de apagado activa (marca en el sandbox) y una **copia** del residuo real de P10 (solo se muestra **cuántos** proyectos). El arnés **bloquea y anota** `reg`/`schtasks`/`powershell`/`wscript`/`cscript`/`cmd` y cualquier copia de `original-fs` fuera del sandbox, y compara al final el **valor** de la entrada de HKCU\…\Run |
+| `real-run/` | Envoltorios que cargan el `main.js` REAL dentro de Electron. **Ojo con dos homonimias:** `b5.js` y `b4.js` son de los **Bloques 5 y 4 de A3.3**, no de los hallazgos B4/B5 de la auditoría; esos son `b4-reorder.js` y `b5-reentrancia.js`. `c1-particion.js` es de C1; `f1-inyeccion.js` y `f1-limpio.js` son de F1; `p17-assets.js` es de P17; `f2-csp.js` y `f2-laboratorio.js` son de F2 (el laboratorio **no** carga `main.js`); `p9-ubicacion.js` es de P9. `f2-csp.js` admite `F2_MAIN_FUENTE`, y `p9-ubicacion.js` admite `P9_MAIN_FUENTE` (solo copias de `p9/revertidos/`): los dos compilan otra fuente **como si fuera** el `main.js` del proyecto (sus `require` relativos resuelven igual), sin copiar nada a la raíz |
 | `lock-harness/`, `nucleo-a33/`, `probe/`, y los sueltos de la raíz | Material de rondas anteriores (A1, A2 original, B2, `setMeta`, benchmarks). Se conservan como histórico |
 
 ---
@@ -133,7 +135,61 @@ REGRESIÓN AUTOMATIZADA COMPLETA:  1745 OK / 0 FALLOS   (16 sept 2026, tras C1-A
 TODOS LOS test-*.js, TRAS F1:     2961 OK / 0 FALLOS   (16 sept 2026, tras F1)
 TODOS LOS test-*.js, TRAS P17:    3031 OK / 0 FALLOS   (17 sept 2026, tras P17)
 TODOS LOS test-*.js, TRAS F3:     3094 OK / 0 FALLOS   (17 sept 2026, tras F3)
+TODOS LOS test-*.js, TRAS F2:     3191 OK / 0 FALLOS   (17 sept 2026, tras F2)
+TODOS LOS test-*.js, CON P9:      3328 OK / 0 FALLOS   (17 sept 2026, diagnóstico de P9)
+TODOS LOS test-*.js, TRAS P9:     3475 OK / 0 FALLOS   (17 sept 2026, P9 implementado; 3518 con comun/)
 ```
+
+> **P9 implementado** mueve `main.js` (`E7D596A8…` → `2D05E00B…`).
+>
+> **Cuadre de la cifra.** Respecto a la tabla por archivo de F2 cambian solo
+> dos baterías:
+>
+> - `p9/`: **+282**, ahora exigente (antes 137 descriptivas).
+> - `bloque3/test-error-codes.js`: 44 → **45**. Genera una aserción por cada
+>   código usado con `errorCodeSuffix`, y ahora está PS-1020.
+>
+> **`nucleo-a33` no es estable: da 394 o 395 según la tirada**, sin relación
+> con P9. Medido hoy: en 8 tiradas seguidas, 7 dieron 394 y 1 dio 395. Tiene
+> una rama que depende del tiempo: «LOCAL, peor caso (mismo tamaño y mismo
+> mtime)» añade una línea cuando se reproduce. Así cuadran las dos cifras:
+>
+> - La **3191** de F2 cuadra con una tirada en 394. Es razonado, no medido: su
+>   tabla por archivo suma 3192 con 395, y la salida de esa tirada no se
+>   conserva.
+> - La regresión de P9 salió con **395**: 3475 = 3192 + 282 + 1. Con 394
+>   serían 3474 = 3191 + 282 + 1.
+>
+> Se lanza con el `node` del sistema, como siempre. Con el Node de Electron
+> (`ELECTRON_RUN_AS_NODE`), `c1/` falla con «Invalid package …asar»: el `fs`
+> parcheado de Electron trata como paquete el `.asar` de mentira que fabrica
+> esa batería. Es un artefacto del entorno, no de P9.
+>
+> **Saltaron tres arneses, y ninguno por una regresión de producto:**
+>
+> - `bloque2/test-wiring.js` **revienta** con
+>   `ReferenceError: configUbicacionNoResuelta is not defined`.
+>   `decidirCrearSiAusente` consulta esa variable nueva y el ámbito del arnés no
+>   la declaraba. Se declara, con su nota. Medido con la versión de HEAD.
+> - `bloque3/test-error-codes.js`: el anclaje de orden esperaba PS-2001 justo
+>   detrás de PS-1019, y ahora va PS-1020 en medio. Se mantiene la intención:
+>   los cuatro de A3.3 salen **seguidos**.
+> - `e1/test-inventario-e1.js` (`E1-M4`): el hash de `main.js`.
+
+> 3328 = 3191 + las **137** de `p9/` (descriptiva; se cuenta igual que se contó
+> `f2f3/` cuando era diagnóstico). Ninguna otra batería ha cambiado: P9 no
+> toca producción.
+>
+> **BD viva:** durante la ronda de P9 su huella pasó de `D5C3FF53…` a
+> `C26323D1…` por una **sesión real del usuario**, entre dos tiradas del arnés.
+> Todas las tiradas dieron idéntica frente a su propio inicio. La línea base
+> está actualizada, con su motivo, en `comun/baseline-bd-viva.json`.
+
+> **Criterio del recuento** (el mismo desde F1): las 18 carpetas `nucleo-a33`,
+> `bloque1..5`, `a2`, `e1`, `p12`, `e2`, `b1`, `b3`, `b4`, `b5`, `c1`, `f1`,
+> `p17`, `f2f3` —más `f2` desde esta ronda—, sumando el **resumen final** de cada
+> `test-*.js`. `comun/test-guardia.js` (**43 / 0**) va aparte. 3191 = 3094 + las
+> **97** de `f2/`: ninguna otra batería ha ganado ni perdido aserciones.
 
 La primera cifra es la del núcleo, como se venía contando. La segunda es la
 tirada **completa** de esta ronda —todos los `test-*.js` de `nucleo-a33`,
@@ -142,8 +198,12 @@ sumados— para dejar constancia de que F1 no rompió nada: núcleo y bloques
 **2657**, más **C1 165** y **F1 139**. Aparte: reversiones de F1 **19 OK/0** y
 las 7 de C1-A, que siguen rompiendo cada una por lo suyo.
 
-Contra `main.js` = `16AB5F53B57F961927F36A23058CB7CDC043D76446C5AFF6F885E47CECFE4890`
-(tras F3; antes `434BB294…` tras P17, `0BC92A46…` tras F1, `F81F0A3D…` tras C1-A) y
+Contra `main.js` = `2D05E00B53B8C45E6823E8629579D303FB69E2B0A24E53DCBE7700897E5F30F9`
+(610 975 B, tras P9; antes `E7D596A8…` tras F2, 601 293 B; `16AB5F53…` tras F3, `434BB294…` tras P17,
+`0BC92A46…` tras F1, `F81F0A3D…` tras C1-A),
+`preparacion-reunion/plantilla_preparacion_reunion.html` =
+`69F66B8C7D0572F8E1B16E1CCDD3EEDA3580363CB4C86A91771A81AE56502BD3` (80 881 B,
+tras F2; antes `F3F9130B…`) y
 `db.js` = `B03C81FF5FC300009DC315E4B20F9BF88DCC6902B18C2EF434B251A022EDD830`
 (81 870 B — sin cambios desde B4, que solo le cambió comentarios; sin ellos el
 código es idéntico byte a byte al de antes). Aparte, en la misma tirada: E1 47,
@@ -171,6 +231,27 @@ P12 73, E2 67, B1 77, B3 85, B4 144, B5 68 y **C1 165**, todas a 0 fallos.
 > arnés revienta a propósito**. Se añadieron las cinco funciones de F3 a esa
 > lista compartida. Aparte, `E1-M4`, `F1-Z1` y `F2/F3-Z2` se actualizaron con su
 > nota.
+>
+> **F2 lo mueve de nuevo** (`16AB5F53…` → `E7D596A8…`): la CSP por cabecera
+> (`CSP_PERFILES`, `perfilCspDeDocumento`, `instalarCspEnSesion` y su registro
+> en `session-created`). Toca además **una** plantilla, la de Preparación
+> (arranque del Worker de pdf.js por `blob:`). Esta vez **no hubo regresión de
+> producto** en ninguna batería Node: ninguna función que extraigan los arneses
+> llama a las nuevas, así que la lista compartida **no** hubo que tocarla.
+> Saltaron solo anclajes de **estado** y de **hash**, que se actualizaron con su
+> nota: `E1-M4` (hash de `main.js`), `F1-Z1` (esperaba F2 «ABIERTO») y, en
+> `f2f3/test-f2f3.js`, `F2-A12` (esperaba **cero** cabeceras), `F2-B13` (el
+> Worker de Preparación se cuenta ahora 2 veces: `workerSrc` y `new Worker`),
+> `F2-B14` (nota) y `F2/F3-Z2..Z4`.
+>
+> **Nota de procedimiento, sin relación con F2:** `c1/comprobar-reversiones-c1.js`
+> **no regenera** sus copias revertidas, y las que había eran del 16 sept 14:01
+> —anteriores a F1, P17, F3 y F2—. Contra el `main.js` actual, cinco de las
+> siete fallaban con `NO SE ENCONTRO: function urlExternaPermitida(url)` (una
+> función de F3 que desde esa ronda está en la lista de extracción). No es una
+> regresión: con `node c1/revertir-c1.js` primero, **las siete vuelven a romper
+> exactamente por lo que deshacen**. Hay que lanzar siempre las dos, en ese
+> orden.
 
 > **C1-A tampoco mueve la cifra del núcleo**, y es lo esperado: sus
 > aserciones se cuentan en `c1/`. Lo que sí hubo que actualizar **a
@@ -274,8 +355,40 @@ no solo lo de B3. Todas las cifras coinciden con las registradas:
 | `f1/electron-f1.ps1` | **47 / 0** *(tras implementar F1; **exige** cero interpretación en 4 arranques reales — importado, reinicio, título horneado y proyecto horneado antes de F1. Antes del arreglo, en diagnóstico: 34 / 0 describiendo el defecto)* |
 | `f1/electron-f1-limpio.ps1` | **52 / 0** *(validación con datos ORDINARIOS: las 5 pantallas, caracteres `& " < >`, proyecto pre-F1 y logos, con capturas)* |
 | `p17/electron-p17.ps1` | **16 / 0** *(assets del horneado en la app real: dashboard **y** Directorio, cero recursos rotos)* |
-| `f2f3/electron-f2f3.ps1` | **35 / 0** *(tras implementar F3; **exige** 0 ventanas nuevas y `shell.openExternal` espiado, sin abrir Internet. Antes del arreglo, en diagnóstico: 23 / 0)* |
+| `f2f3/electron-f2f3.ps1` | **36 / 0** *(35 tras F3 + `F2-CSP0` desde F2. **Exige** 0 ventanas nuevas y `shell.openExternal` espiado, sin abrir Internet. Antes del arreglo, en diagnóstico: 23 / 0)* |
 | `f2f3/electron-f3-revertido.ps1` | **4 / 0** *(sin política, el defecto REAPARECE: `about:blank`, `file://` y `<a target="_blank">`)* |
+| `f2/electron-f2-lab.ps1` | **41 / 0** *(el motor, sin cargar el producto; servidor solo en 127.0.0.1)* |
+| `f2/electron-f2.ps1` | **212 / 0** *(las 10 ventanas: completo 167, proyecto pre-F2 39, diagnóstico `pptx` 3 + 3)* |
+| `f2/electron-f2-revertido.ps1` | **7 / 0** *(sin CSP, con `unsafe-eval` y con `worker-src 'none'`: la batería ve cada defecto)* |
+| `p9/electron-p9.ps1` | **111 / 0** *(EXIGENTE tras implementar P9; 32 casos. En el diagnóstico, 48 / 0 describiendo el defecto. Además de la BD viva y los productivos, comprueba intactos la configuración real, el residuo de P10 y el **valor** de HKCU\…\Run)* |
+| `p9/electron-p9-revertido.ps1` | **14 OK / 0** *(reversiones A–E de P9 en la app real: cada defecto REAPARECE —el BOM cae; el residuo se abre y su hash cambia; se crea una BD nueva; la protección se desactiva; vuelve `datos\relativa`—)* |
+
+> **Tras P9 se reejecutó la tabla ENTERA** (P9 toca el arranque más temprano).
+> Los **19** arneses dieron **exactamente las mismas cifras** que tras F2, sin
+> ningún ajuste; A2 **66 / 0**. Cada uno se lanzó en su **propio proceso**
+> PowerShell, porque algunos cambian `APPDATA` del proceso. BD viva idéntica en
+> todos (`C26323D1…`).
+>
+> **Tras F2 se reejecutó la tabla ENTERA** (F2 cambia el comportamiento de
+> todas las ventanas). Mismas cifras en todos salvo tres arneses, y **ninguno
+> por una regresión de producto**:
+>
+> - `f2f3/electron-f2f3.ps1` dio **30 / 5** en su modo `csp`: su página de
+>   laboratorio es un `file://` ajeno al producto y **recibe la política
+>   cerrada** —el cierre por defecto de F2 funcionando—. Se deja constancia con
+>   `F2-CSP0` y la candidata se sigue midiendo **aislada** (partición propia sin
+>   el oyente de `main.js`), que es lo que ese modo siempre midió → **36 / 0**.
+> - `f1/electron-f1.ps1` (**45 / 2**, `F1-RA10/RA11`) y
+>   `f1/electron-f1-limpio.ps1` (**51 / 1**, `F1-N3`) seguían DESCRIBIENDO la
+>   exposición **anterior a F3** («`window.open` crea una BrowserWindow»). Es
+>   efecto de **F3**, no de F2: `f2f3` exige lo contrario (`F3-1`) y la CSP no
+>   gobierna `window.open`. **La ronda F3 no reejecutó estos dos arneses** y no
+>   se vio entonces. Invertidas con su nota → **47 / 0** y **52 / 0**.
+>
+> **ARNÉS / CAPTURA — OBSERVACIÓN NO RESUELTA** (así registrada al cerrar F2): en `electron-f1-limpio.ps1` la captura
+> `6-directorio-ficha.png` sale de 0 bytes (el arnés no lo comprueba; no se ha
+> averiguado si ya pasaba antes de F2). La batería F2 mide el Directorio
+> directamente —recursos, logo, cero violaciones— y está en verde.
 
 En los once: **BD viva idéntica por SHA-256** antes y después, carpeta de la
 BD sin archivos nuevos, **archivos productivos intactos** y sandbox borrado.
@@ -451,12 +564,36 @@ p12/electron-p12.ps1          dashboard real de un proyecto recien creado (NaN)
 `e1/electron-e1.ps1` usa `real-run/e1.js` —arnés propio, no toca el de A2— y
 admite `E1_MAIN` igual que `A2_MAIN`. Resultado: **21 OK / 0**.
 
+F2 (17 sept 2026):
+
+```
+f2/electron-f2-lab.ps1        el motor: laboratorio de CSP sin cargar el producto
+f2/electron-f2.ps1            las 10 ventanas + proyecto pre-F2 + diagnostico pptx
+f2/electron-f2-revertido.ps1  reversiones A, B y F de revertir-f2.js en la app real
+node f2/comprobar-reversiones-f2.js   (genera f2/revertidos/ y comprueba las 10)
+```
+
+> **Dos trampas que salieron en F2.** (1) Un arnés que abre y **destruye** su
+> única ventana necesita `app.on('window-all-closed', () => {})`: sin él Electron
+> cierra la app y la carga siguiente se aborta con `ERR_FAILED (-2)`, sin
+> `did-fail-load`. (2) Los arneses arrancan Electron **minimizado**, y con la
+> ventana oculta **pptxgen no termina** (ni con ni sin F2; `--modo=pptx` lo
+> reproduce): antes de exportar a PowerPoint hay que mostrar la ventana. Y una
+> tercera, menor: `executeJavaScript` **no resuelve** si la ventana se cierra
+> por su propio botón mientras tanto; `f2-csp.js` le pone tope.
+
 > **Trampa que costó un susto:** PowerShell **no distingue mayúsculas en los
 > nombres de variable**. Un `$p = Start-Process …` en el ámbito raíz **pisa
 > `$P`**, la ruta del proyecto, y el guardián de salida declara «CAMBIO EN
 > PRODUCCION» en los nueve archivos — un falso positivo alarmante. En
 > `a2/electron-real.ps1` no pasa porque allí el `Start-Process` vive dentro de
 > una función y su `$p` es local. Los arneses nuevos usan `$proc`.
+>
+> **Volvió a pasar en P9** con otra pareja: `$r` (el resultado de un caso)
+> **pisó `$R`** (la raíz del sandbox). Todos los casos siguientes arrancaron
+> con un sandbox inválido y, al final, **el sandbox no se borró** (se borró a
+> mano). También `$b`/`$B` y `$s`/`$S`. Regla: **ninguna variable que
+> difiera de otra solo en mayúsculas**.
 
 Son PowerShell y deben mantenerse en **ASCII puro** (PowerShell 5.1 los lee como
 ANSI). Usan `real-run/b5.js` y `real-run/a2.js`, que cargan el `main.js` REAL
@@ -496,6 +633,10 @@ sonda parece haber terminado bien sin haber hecho nada.
 | `PANORAMA_RESTAURACIONES` | Ídem para el helper aislado de restauración |
 | `PANORAMA_BORRADOS` | Ídem para el helper aislado de borrados (ya obsoleto: el helper vive en `main.js`) |
 | `PANORAMA_DASHBOARD` | Ídem para `plantilla_dashboard.html` en la batería de P12 |
+| `PANORAMA_PREPARACION` | Ídem para la plantilla de Preparación en `f2/test-f2.js` |
+| `P9_MAIN_FUENTE` | Arranques Electron de P9 (`real-run/p9-ubicacion.js`), con el mismo mecanismo que `F2_MAIN_FUENTE`; solo admite copias de `p9/revertidos/`. En `electron-p9.ps1` afecta a los **casos**, nunca a la preparación de la base |
+| `P9_SOLO`, `P9_SALIDA_JSON` | `electron-p9.ps1`: arrancar solo algunos casos (`base/id`, separados por comas) **sin aserciones**, y volcar el resultado de cada caso a un JSON. Los usa `electron-p9-revertido.ps1` |
+| `F2_MAIN_FUENTE` | Arranques Electron de F2: `real-run/f2-csp.js` **compila** esa fuente como si fuera `main.js` del proyecto (`Module._compile` con `filename` = el `main.js` real), así que sus `require` relativos resuelven y **no se copia nada a la raíz**. Se usa para el `main.js` pre-F2 (`claude/main.js.ANTES-F2-2026-09-17`) y para las reversiones |
 
 ---
 
@@ -534,15 +675,23 @@ pruebas** (`_a33-…`) y abortan si contiene `bd-panoramaservicio`.
 
 ## 7. INTEGRIDAD DE ESTA COPIA
 
-`SHA256SUMS.txt` (en esta misma carpeta) lista el **SHA-256 de los 234
+`SHA256SUMS.txt` (en esta misma carpeta) lista el **SHA-256 de los 248
 archivos** de la batería, con ruta relativa. Se regenera con
 `comun/regenerar-sumas.js` y se comprueba con `comun/verificar-copia.js`
 (recorrido independiente, exit 0 solo si no falta ni difiere nada y **no hay
 ningún `.sqlite3` dentro del repositorio**).
 
-Última verificación (17 sept 2026, tras implementar F3): **234 listados,
-0 faltan, 0 difieren, 0 `.sqlite3`**, 4 210 383 bytes. Las carpetas
-`*/revertidos/` no se listan: las regeneran los `revertir-*.js`.
+Última verificación (17 sept 2026, tras IMPLEMENTAR P9): **248 listados,
+0 faltan, 0 difieren, 0 `.sqlite3`**, ~4,5 MB (4 496 539 bytes antes de
+anotar esta línea; la cifra exacta la da `regenerar-sumas.js`). P9 añade
+`p9/revertir-p9.js`, `p9/comprobar-reversiones-p9.js` y
+`p9/electron-p9-revertido.ps1`; `p9/revertidos/` no se lista. *(Tras el
+diagnóstico de P9: 245 y 4 447 760. Tras F2: 242 y
+4 378 427; el diagnóstico de P9 añadió `p9/test-p9-location.js`,
+`p9/electron-p9.ps1` y `real-run/p9-ubicacion.js`.)* Las carpetas
+`*/revertidos/` no se listan: las regeneran los `revertir-*.js`. *(Tras F3:
+234 archivos, 4 210 383 bytes; F2 añade 8: `f2/` —6— y `real-run/f2-csp.js`,
+`real-run/f2-laboratorio.js`.)*
 
 > **Ojo:** este `MANIFIESTO.md` **sí** entra en `SHA256SUMS.txt`, aunque el
 > párrafo del verificador lo nombre entre los «no listados». Editarlo obliga a

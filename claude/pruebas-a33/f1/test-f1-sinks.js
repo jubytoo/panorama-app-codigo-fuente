@@ -391,11 +391,11 @@ nota('El único `&lt;` que queda es el del cartel de error fatal, que no puede d
 seccion('F1-Z. ALCANCE');
 // =============================================================================
 const AUD = DOC('auditoria-2026-09-13.md');
-// F3 se cerró en su propia ronda (17 sept 2026) y F2 sigue abierto. Lo que
-// custodia esta aserción no cambia: que ninguno de los dos se tocara DENTRO
-// de F1.
-ok('F1-Z1 F2 sigue ABIERTO y F3 se cerró en su propia ronda, fuera de F1',
-  /\*\*F2\*\* \| \*\*ABIERTO — DIAGNOSTICADO\*\*/.test(AUD) && /\*\*F3\*\* \| \*\*CERRADO\*\*/.test(AUD));
+// F3 y F2 se cerraron cada uno en su propia ronda (17 sept 2026) — ANCLAJE
+// ACTUALIZADO dos veces, con su nota. Lo que custodia esta aserción no
+// cambia: que ninguno de los dos se tocara DENTRO de F1.
+ok('F1-Z1 F2 y F3 se cerraron en sus propias rondas, fuera de F1',
+  /\*\*F2\*\* \| \*\*CERRADO\*\*/.test(AUD) && /\*\*F3\*\* \| \*\*CERRADO\*\*/.test(AUD));
 // F1 NO toca psConfirm/bridge (eso es defensa en profundidad, otro hallazgo):
 // se custodia que sigan EXACTAMENTE como estaban.
 ok('F1-Z2 psConfirm y el puente siguen intactos (F1 no los toca)',

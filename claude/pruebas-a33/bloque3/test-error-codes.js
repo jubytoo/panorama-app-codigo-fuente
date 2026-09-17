@@ -121,9 +121,13 @@ console.log('');
   ok('showErrorCodesDialog() sigue listando TODO ERROR_CODES',
     /Object\.keys\(ERROR_CODES\)\s*\n?\s*\.sort\(\)/.test(SRC));
   const orden = declaradas.slice().sort();
-  ok('los cuatro nuevos saldran entre PS-1015 y PS-2001',
+  // P9 (17 sept 2026) añade PS-1020 justo detrás de PS-1019, así que PS-1019
+  // ya no es el inmediatamente anterior a PS-2001. La intención no cambia: los
+  // cuatro de A3.3 salen SEGUIDOS tras PS-1015 y antes de la serie 2xxx.
+  ok('los cuatro nuevos saldran seguidos entre PS-1015 y PS-2001',
     orden.indexOf('PS-1016') === orden.indexOf('PS-1015') + 1 &&
-    orden.indexOf('PS-1019') + 1 === orden.indexOf('PS-2001'),
+    orden.indexOf('PS-1019') === orden.indexOf('PS-1016') + 3 &&
+    orden.indexOf('PS-1019') < orden.indexOf('PS-2001'),
     orden.join(','));
 }
 

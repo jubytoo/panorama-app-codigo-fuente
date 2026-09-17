@@ -161,8 +161,14 @@ function construirMain(estado) {
     '                         else if(k===\'failure\') customUserDataDirFailure=v;\n' +
     '                         else if(k===\'shared\') customUserDataDirShared=v;\n' +
     '                         else if(k===\'autoriza\') usuarioAutorizaEmpezarDesdeCero=v; } };';
+  // P9 (17 sept 2026): decidirCrearSiAusente() consulta además
+  // `configUbicacionNoResuelta` (location.json presente pero inutilizable →
+  // no se autoriza crear). Aquí vale siempre null: esta batería no trata
+  // location.json (eso es p9/). Sin la declaración, el ámbito revienta con
+  // «configUbicacionNoResuelta is not defined» — defecto de arnés, no de producto.
   const f = new Function('app', 'fs', 'path', 'crypto', 'dbmod', 'appLog',
     'let customUserDataDirTarget = null, customUserDataDirFailure = null, customUserDataDirShared = false;\n' +
+    'let configUbicacionNoResuelta = null;\n' +
     'let usuarioAutorizaEmpezarDesdeCero = false;\n' + cuerpo);
   return f(appDoble, fs, path, crypto, dbmod, (s) => { (estado.log = estado.log || []).push(s); });
 }

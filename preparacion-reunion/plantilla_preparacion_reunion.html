@@ -591,9 +591,46 @@ async function extractDocx(file){
   const result = await window.mammoth.extractRawText({ arrayBuffer: buf });
   return result.value;
 }
+// F2 (17 sept 2026) — el Worker de pdf.js se arranca envuelto en un blob:.
+// Medido en Electron: un Worker creado desde un file: NO recibe la CSP de la
+// ventana (podría salir a la red); uno creado desde un blob: SÍ la hereda. La
+// CSP de esta ventana solo admite `worker-src blob:`, así que sin este
+// arranque pdf.js intentaría el file:, se le denegaría y leería el PDF en el
+// hilo principal (su «fake worker»). Se espera al primer mensaje del Worker
+// («ready») antes de dárselo a pdf.js: si no llega, se descarta y pdf.js
+// sigue por su camino de siempre, de modo que el acta se lee igualmente.
+let _pdfWorkerListo = null;
+function arrancarWorkerPdf(){
+  if(_pdfWorkerListo) return _pdfWorkerListo;
+  _pdfWorkerListo = new Promise((resolve) => {
+    let w;
+    try{
+      const src = new URL('../vendor/pdf.worker.min.js', location.href).href;
+      const envoltorio = new Blob([`importScripts(${JSON.stringify(src)});`], { type:'text/javascript' });
+      w = new Worker(URL.createObjectURL(envoltorio));
+    }catch(e){ resolve(null); return; }
+    const fin = (listo) => {
+      clearTimeout(tope);
+      w.removeEventListener('message', alMensaje);
+      w.removeEventListener('error', alFallar);
+      if(!listo){ try{ w.terminate(); }catch(e){} }
+      resolve(listo ? w : null);
+    };
+    const alMensaje = (ev) => { if(ev.data && ev.data.action === 'ready') fin(true); };
+    const alFallar = () => fin(false);
+    const tope = setTimeout(() => fin(false), 10000);
+    w.addEventListener('message', alMensaje);
+    w.addEventListener('error', alFallar);
+  });
+  return _pdfWorkerListo;
+}
 async function extractPdf(file){
   await loadScript('../vendor/pdf.min.js');
   window.pdfjsLib.GlobalWorkerOptions.workerSrc = '../vendor/pdf.worker.min.js';
+  if(!window.pdfjsLib.GlobalWorkerOptions.workerPort){
+    const w = await arrancarWorkerPdf();
+    if(w) window.pdfjsLib.GlobalWorkerOptions.workerPort = w;
+  }
   const buf = await file.arrayBuffer();
   const pdf = await window.pdfjsLib.getDocument({ data: buf }).promise;
   let text = '';

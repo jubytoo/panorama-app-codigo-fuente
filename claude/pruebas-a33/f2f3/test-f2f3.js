@@ -83,10 +83,14 @@ for (const [nombre, rel] of VENTANAS) {
 ok('F2-A11 son las 10 ventanas, ninguna con CSP (igual que el hallazgo original)',
   conCsp === 0 && VENTANAS.length === 10, `con CSP: ${conCsp} de ${VENTANAS.length}`);
 // La otra vía posible: cabecera desde el proceso principal.
-ok('F2-A12 tampoco se pone CSP por cabecera (sin webRequest/onHeadersReceived)',
-  cuenta(MAIN, /onHeadersReceived/g) === 0 && cuenta(MAIN, /webRequest/g) === 0
-  && cuenta(MAIN, /Content-Security/g) === 0);
-nota('Comprobado por las DOS vías: ni <meta> en las plantillas ni cabecera en main.js.');
+// F2 (17 sept 2026) — ANCLAJE ACTUALIZADO. En el diagnóstico esta aserción
+// comprobaba que NO había cabecera (0 webRequest). F2 se implementó
+// precisamente por esa vía, en un solo punto; la custodia de la política vive
+// ahora en `f2/test-f2.js`. Aquí solo queda que la fuente es UNA.
+ok('F2-A12 [F2 IMPLEMENTADO] la CSP llega por CABECERA desde main.js, en un solo punto (y no por <meta>)',
+  cuenta(MAIN, /\.onHeadersReceived\(/g) === 1 && /function instalarCspEnSesion\(ses\)/.test(MAIN)
+  && /'Content-Security-Policy'/.test(MAIN) && conCsp === 0);
+nota('Antes de F2: ni <meta> ni cabecera. Desde F2: cabecera, y sigue sin <meta>.');
 
 // =============================================================================
 seccion('F2-B. DE QUÉ DEPENDE HOY CADA VENTANA (lo que condicionaría la CSP)');
@@ -114,9 +118,15 @@ ok('F2-B11 7 de las 10 ventanas tienen <script> EN LÍNEA (por eso haría falta 
 const conStyle = VENTANAS.filter(([n]) => dep[n].styleTag > 0 || dep[n].styleAttr > 0).map(([n]) => n);
 ok('F2-B12 9 de las 10 tienen estilos en línea (<style> o style="")',
   conStyle.length === 9, `${conStyle.length}: ${JSON.stringify(conStyle)}`);
+// F2 (17 sept 2026) — ANCLAJE ACTUALIZADO: Preparación arranca ahora el
+// Worker de pdf.js desde un blob: (`new Worker(...)` además del `workerSrc` de
+// siempre), así que la cuenta pasa de 1 a 2. Sigue siendo el ÚNICO Worker del
+// producto y la única ventana que lo tiene.
 ok('F2-B13 el único Worker del producto es el de pdf.js, en Preparación',
-  dep.preparacion.worker === 1 && VENTANAS.filter(([n]) => dep[n].worker > 0).length === 1);
-ok('F2-B14 `blob:` solo se usa para DESCARGAR (createObjectURL + <a download>), en 4 ventanas',
+  dep.preparacion.worker === 2 && VENTANAS.filter(([n]) => dep[n].worker > 0).length === 1, String(dep.preparacion.worker));
+// Desde F2, Preparación usa también createObjectURL para el envoltorio del
+// Worker; las ventanas con blob: siguen siendo las mismas cuatro.
+ok('F2-B14 `blob:` se usa para DESCARGAR (createObjectURL + <a download>) en 4 ventanas (y, desde F2, para el Worker de Preparación)',
   VENTANAS.filter(([n]) => dep[n].blob > 0).length === 4);
 
 // =============================================================================
@@ -228,18 +238,19 @@ for (const u of ['http://ejemplo.test/x', 'https://ejemplo.test/x?q=1#a']) {
 seccion('F2/F3-Z. ALCANCE Y ESTADO');
 // =============================================================================
 ok('F2/F3-Z1 F1 está CERRADO (esta ronda no lo reabre)', /\| \*\*F1\*\* \| \*\*CERRADO\*\*/.test(AUD));
-// Tras esta ronda los dos pasan de «PENDIENTE» a «ABIERTO — DIAGNOSTICADO»:
-// siguen SIN implementar, que es lo que custodia esta aserción.
-ok('F2/F3-Z2 F3 CERRADO y F2 ABIERTO (diagnosticado, es la siguiente ronda)',
-  /\| \*\*F2\*\* \| \*\*ABIERTO — DIAGNOSTICADO\*\*/.test(AUD)
+// F2 (17 sept 2026) — ANCLAJES ACTUALIZADOS. Z2 esperaba F2 «ABIERTO —
+// DIAGNOSTICADO» y Z3 que main.js no declarara CSP: custodiaban que la ronda
+// de F3 no implementara F2 a escondidas. F2 se implementó en su propia ronda.
+ok('F2/F3-Z2 F3 CERRADO y F2 CERRADO (cada uno en su ronda)',
+  /\| \*\*F2\*\* \| \*\*CERRADO\*\*/.test(AUD)
   && /\| \*\*F3\*\* \| \*\*CERRADO\*\*/.test(AUD));
-ok('F2/F3-Z3 F2 NO se ha implementado: main.js sigue sin declarar CSP',
-  cuenta(MAIN, /Content-Security/g) === 0);
-ok('F2/F3-Z4 …y las 10 ventanas siguen sin <meta> CSP (F2 intacto)', conCsp === 0);
+ok('F2/F3-Z3 F2 implementado: main.js declara la CSP (su custodia completa está en f2/test-f2.js)',
+  /const CSP_PERFILES = Object\.freeze\(/.test(MAIN) && /app\.on\('session-created', instalarCspEnSesion\);/.test(MAIN));
+ok('F2/F3-Z4 …y ninguna ventana la declara TAMBIÉN en <meta> (una sola fuente)', conCsp === 0);
 
 console.log('\n======================================================================');
 console.log(`  F2/F3: ${pass} OK / ${fail} FALLOS`);
 console.log('======================================================================');
 if (fail) { console.log('  Fallos:'); fallos.forEach((f) => console.log('   · ' + f)); process.exit(1); }
-console.log('  Batería DESCRIPTIVA: da verde porque describe lo que HAY.');
-console.log('  F2 y F3 están DIAGNOSTICADOS, no implementados.');
+console.log('  F3 y F2 están CERRADOS: la política de navegación se EXIGE aquí;');
+console.log('  la CSP, en f2/test-f2.js.');

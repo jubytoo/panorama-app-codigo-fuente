@@ -27,7 +27,7 @@ verificadas como reales.
 | P6 | **CERRADO** | Bloque 5 / D1: `deleteProjectById` borra las **cuatro** tablas en un único commit. Verificado en Electron real (E1) |
 | P7 | **CERRADO** | Bloque 4: `ejecutarAccionDeArchivo`, journal de acción y marca por escritor |
 | P8 | **CERRADO** | Bloque 5 / D1+D2: cuarentena → un commit → purga, con NO-CLOBBER. Verificado en Electron real (E1, E2, E4, E7) |
-| P9 | **PENDIENTE** | Corregido **solo en los arneses** (`comun/guardia-rutas.js`, fail-closed). `main.js` sigue tragándose el BOM |
+| P9 | **CERRADO** *(17 sept 2026)* · **ALTO / INTEGRIDAD** | Un `location.json` **presente pero ilegible o inválido ya nunca equivale a «no hay configuración»**. Un solo lector con estados explícitos (ausente / válido / ilegible / inválido): acepta UTF-8, UTF-8 con **un** BOM y UTF-16 con BOM; rechaza BOM duplicado o fuera de sitio, JSON roto, contrato incumplido y rutas no absolutas. Lo inutilizable **detiene el arranque** con PS-1020 (solo «Cerrar»): no se abre, crea ni registra ninguna BD, la protección de apagado no se toca y el rescate PS-1007 no restaura desde la carpeta por defecto. Solo `main.js`. `p9/` **282 OK/0** (exigente), Electron real **111 OK/0**, 7 reversiones. Ver §P9 — implementación |
 | P10 | **PENDIENTE** | Ver la nota de corrección de evidencia, más abajo |
 | P11 | **PENDIENTE** | UX, no urgente |
 | E1 | **CERRADO** (15 sept 2026) | Controles de Lista/Resumen **retirados** de la UI (opción A). Ver §«E1 — CERRADO», abajo |
@@ -44,6 +44,8 @@ verificadas como reales.
 | B4 | **CERRADO** (16 sept 2026) | Las **dos mitades del hallazgo original** ya las había absorbido A3.3 (`persist()` → `aplicarYConfirmar()`; `backup:save` → `ejecutarAccionDeArchivo`). El **patrón residual** que quedaba —`projects:reorder` con N commits— **corregido**: una sola mutación anclada. Batería **144 OK/0**, Electron real **17 OK/0**, dos reversiones. Ver §B4 |
 | P15 | **ABIERTO — baja** *(15 sept 2026)* | **Las líneas de `app.log` anteriores a B3 sí llevan la ruta completa** dentro del mensaje del error (`EPERM … 'C:\Users\<usuario>\…'`). B3 sanea las suyas con `motivoSinRutas()`; las ~140 anteriores no. Ver §P15 |
 | F1 | **CERRADO** *(16 sept 2026)* | **Interpretación de datos como HTML — corregida por contexto.** Ningún dato importado/persistido puede ya convertirse en markup, atributo, cierre de `<script>`, handler inline, selector roto ni URL activa. Batería **139 OK/0** (exigente), Electron real **47 OK/0** (4 arranques), **6 reversiones** por familias (**19 OK/0**). Cinco archivos tocados. Ver §F1. *(Diagnóstico previo, conservado abajo.)* |
+| F2 | **CERRADO** *(17 sept 2026)* | **CSP efectiva en las 10 ventanas**, por cabecera desde `main.js`, con cuatro perfiles mínimos; sin `unsafe-eval`; red, frames, objects, formularios y `<base>` cortados; lanzador y splash sin `unsafe-inline` en scripts; Worker de pdf.js arrancado por `blob:`. Dos archivos: `main.js` y la plantilla de Preparación. Ver §F2/F3 |
+| F3 | **CERRADO** *(17 sept 2026)* | Política única de apertura y navegación en las 10 ventanas. Ver §F2/F3 |
 | F1 *(diagnóstico)* | — | Interpretación de datos como HTML. **Diagnóstico cerrado; sin implementar.** Patrón **global en el dashboard** (19 campos se interpretan y ejecutan al abrir, sin interacción); vía persistente más grave: **título importado horneado** en `projects/<id>/dashboard.html`, que ejecuta en el **arranque**. Propagación cruzada a Preparación y Directorio. Evaluación y Directorio casi todo escapado (residuos: peso/fecha/id de Evaluación, `data-dedic` del Directorio). **Barreras reales:** `contextIsolation:true` + `sandbox:true` + sin Node en las 4 ventanas → **no es RCE**; pero `psConfirm` sobrescribible, puente con 25 métodos, **sin CSP** (F2) y `window.open` sin handler (F3). Batería `f1/` (**100** descriptiva + **34** Electron real, 3 arranques, con marcadores inocuos). Ver §F1 |
 
 ## Aplazadas explícitamente por el usuario
@@ -70,7 +72,7 @@ verificadas como reales.
 | P6 | **Filas huérfanas al borrar un proyecto** | `deleteProjectById` borra las filas de `backups` y la de `projects`, pero **no** las de `meeting_preps` ni `candidate_evals` | **CERRADO — Bloque 5 / D1.** Las cuatro tablas van en una sola llamada a `escribirMultiple`, anclada con `exigirCommitBase`. Comprobado en Electron real (E1): una única mutación con los 4 DELETE + la marca |
 | P7 | **Archivos escritos antes que su fila** | `backup:save`, `meeting:savePrep` y `migrateLegacyInlineBackupsToFiles` escriben el archivo antes de insertar la fila; si la fila falla, el archivo queda huérfano. Es el mecanismo que produjo los ~80 MB de backups huérfanos medidos en la auditoría (punto C1) | **CERRADO — Bloque 4**. Los huérfanos **históricos** siguen siendo C1 |
 | P8 | **Borrados no atómicos disco↔BD** | `deleteProjectById` y `meeting:deletePrep` borran archivos antes de borrar la fila | **CERRADO — Bloque 5 / D1 y D2.** Protocolo RETIRAR → CONFIRMAR → PURGAR: nada se destruye antes del commit, y la purga solo ocurre después. Comprobado en Electron real (E1, E2, E4) y en la recuperación al arrancar (E7) |
-| P9 | **`location.json` con BOM se ignora en silencio** | Descubierto probando A3.1: si el archivo se guarda con BOM (p. ej. desde el Bloc de notas), `JSON.parse` falla, se traga la excepción y la app cae a la carpeta de datos local sin avisar | **PENDIENTE en producción.** Corregido solo en los arneses: `comun/guardia-rutas.js` es fail-closed y `GUARD-LOC-2` lo cubre. `main.js` sigue igual |
+| P9 | **`location.json` con BOM se ignora en silencio** | Descubierto probando A3.1: si el archivo se guarda con BOM (p. ej. desde el Bloc de notas), `JSON.parse` falla, se traga la excepción y la app cae a la carpeta de datos local sin avisar | **PENDIENTE en producción.** Corregido solo en los arneses: `comun/guardia-rutas.js` es fail-closed y `GUARD-LOC-2` lo cubre. `main.js` sigue igual. **Diagnosticado el 17 sept 2026: riesgo de integridad, no UX — ver §P9** · **CERRADO el 17 sept 2026 (reclasificado ALTO / INTEGRIDAD) — ver §P9 — implementación** |
 | P10 | **~85 MB de residuos en `%APPDATA%\panorama-app`** | Carpeta de datos local de antes de mover los datos a Drive (agosto): `app.asar`, `app1.asar`, un `app.asar.bak-*` y una `panorama.sqlite3` del 28/08. No la usa nada | **PENDIENTE.** Confirmado el 15 sept: esa `panorama.sqlite3` es `F71F4140…`, 57 344 B — ver abajo |
 
 ## Bloque 5 de A3.3 — CERRADO (15 sept 2026)
@@ -893,6 +895,315 @@ las particiones guardan también los **datos vivos** del proyecto (su
 localStorage), así que no son «caché» en bloque. **No se ha borrado ni movido
 nada.**
 
+## P9 — DIAGNÓSTICO (17 sept 2026): un `location.json` ilegible manda a la carpeta por defecto EN SILENCIO
+
+> **Implementado y CERRADO el mismo día** — ver §P9 — IMPLEMENTACIÓN Y CIERRE,
+> justo después de este diagnóstico, que se conserva tal cual como historia.
+
+**Solo diagnóstico. Producción sin tocar.** Batería `p9/`:
+`test-p9-location.js` **137 OK/0** (descriptiva) + `electron-p9.ps1` **48 OK/0**
+en la app real (26 arranques en sandbox). La BD viva, la configuración real,
+el residuo de P10 y la entrada de la protección de apagado en el registro de
+Windows quedan **idénticos** (comparados antes y después).
+
+### El original, sin reinterpretar
+
+> «`location.json` con BOM se ignora en silencio. Descubierto probando A3.1: si
+> el archivo se guarda con BOM (p. ej. desde el Bloc de notas), `JSON.parse`
+> falla, se traga la excepción y la app cae a la carpeta de datos local sin
+> avisar.» — PENDIENTE en producción; corregido solo en los arneses
+> (`comun/guardia-rutas.js`, fail-closed, GUARD-LOC-2).
+
+- **Evidencia original:** observación durante A3.1; no había prueba propia.
+- **Severidad:** no se escribió (estaba en «Hallazgos incidentales, sin diseño»).
+- **Parte BOM:** el disparador. `readFileSync(…,'utf8')` conserva U+FEFF y
+  `JSON.parse` lanza.
+- **Parte *fallback*:** el `catch` devuelve `null` y el arranque sigue como si
+  no hubiera configuración.
+
+### Dónde vive, quién lo escribe, quién lo lee
+
+| | |
+|---|---|
+| Ruta | `%APPDATA%\panorama-app-config\location.json` (fuera de la carpeta de datos, a propósito) |
+| Formato | `{ "userDataDir": "<ruta>", "shared": true\|false }` |
+| Escribe el **instalador** | NSIS `FileWrite`: CRLF, barras `/`, `"shared": true`. En un instalador Unicode, `FileWrite` escribe **ANSI** (documentación de NSIS; **razonado, no medido**: no se empaqueta) |
+| Escribe la **app** | `changeUserDataLocation`: `JSON.stringify(…, null, 2)`, UTF-8 **sin** BOM |
+| Lo borra | `resetUserDataLocationToDefault` |
+| Lo leen | `readConfiguredUserDataTarget` y `readConfiguredUserDataShared` (arranque); `resolveDataDirForStartupRecovery` (rescate PS-1007); `Restaurar-backup.bat` (con `findstr`, otro algoritmo) |
+| Codificación esperada | UTF-8 sin BOM. **Nadie** quita el BOM ni reconoce UTF-16 |
+| **Esta máquina** (solo lectura) | 78 B, **sin BOM**, CRLF, ASCII, formato del instalador → **hoy se lee bien**. Sin registro de ubicaciones (la versión instalada es anterior a A3.3). La carpeta por defecto guarda el residuo de P10 (`F71F4140…`, del 28/08) y un `app.asar.bak` del **26/08**; G: tiene los del 12/09. La protección de apagado **está activa** (marca, latido reciente, HKCU\…\Run y tarea programada) |
+
+### El algoritmo actual
+
+1. **Al cargar el módulo (antes de `ready`, sin ventana posible).**
+   `readConfiguredUserDataTarget()` devuelve `null` tanto si el archivo **no
+   existe** como si **no se puede interpretar**, y no deja rastro. Con destino,
+   `probeWritableDir` crea la carpeta (`mkdir` recursivo) y prueba a escribir,
+   durante 5 s. Si funciona, `setPath('userData')`; si no, se anota
+   `customUserDataDirFailure`.
+2. **`whenReady`, si hubo fallo:** 20 s más de reintentos y después el diálogo
+   **PS-1005** («Reintentar» / «Abrir con datos locales (temporal)»).
+3. **`checkCustomLocationDatabaseSanity`**, solo con destino accesible: si no
+   hay base de datos, 20 s de espera y después **PS-1009** («Esperar» /
+   «Empezar aquí desde cero» / «Usar la carpeta por defecto»).
+4. **`syncDriveSyncGuardWithLocation`**: con carpeta compartida la protección
+   de apagado se activa; si no, **se desactiva**. `checkMultiPcLock` solo actúa
+   con carpeta compartida.
+5. **`clasificarPoliticaUbicacion`**: sin destino en uso, la política es
+   **`local`**.
+6. **`decidirCrearSiAusente`** sobre la carpeta de la sesión, y después
+   `getDb`.
+
+### Tabla caso → resultado (medido; A3.3 incluido)
+
+| `location.json` | Lo que hace hoy | Clase |
+|---|---|---|
+| válido (formato del instalador, de la app, compacto; espacios alrededor) | abre la **compartida**; política compartida | E |
+| **no existe** | carpeta por defecto (legítimo: no hay nada configurado) | E |
+| **BOM**, BOM + espacios, espacios + BOM, BOM doble, **UTF-16** (LE/BE, con o sin BOM), vacío, `{`, truncado, basura detrás, comentarios, `null`, `{}`, `[]`, cadena, `userDataDir` numérico/array/objeto/vacío/solo espacios, clave equivocada o con otra capitalización, archivo **ilegible** (EACCES/EPERM/EBUSY/EIO) o que es una carpeta | **exactamente lo mismo que «no existe»**, sin diálogo y sin línea de log. Política `local`: sin espera de Drive, sin candado multi-PC y **protección de apagado desactivada**. Después, según la carpeta por defecto: | — |
+| ↳ con BD residual y sin registro (**esta máquina**) | **abre la BD residual** — medido con una **copia** del residuo real: 8 proyectos del 28/08, **la modifica al abrirla**, y lo único que se ve es el **inicio de sesión de Seguridad de siempre** | **B** |
+| ↳ carpeta por defecto vacía y sin registro (PC con la carpeta compartida y sin residuo) | **crea una BD nueva y vacía** («primera ejecución») y la registra como inicializada | **C** |
+| ↳ carpeta por defecto registrada y vacía | **falla cerrado (PS-1016)**, sin crear BD (aunque `db.js` recrea la carpeta vacía) | A |
+| ↳ registro de ubicaciones con BOM | no autoriza crear; abre la existente y se cierra con PS-1018 sin modificarla | A |
+| ruta **relativa** | crea la carpeta relativa en el directorio de trabajo; `app.setPath` lanza «Path must be absolute» **al cargar el módulo** → **no arranca** (PS-1007) | A |
+| ruta absoluta **inexistente** | **crea** la carpeta y pregunta **PS-1009** | D |
+| unidad **no montada** (`Q:`) o ruta inaccesible | **PS-1005** tras ~25 s. Con «datos locales» se abre la de por defecto **y se desactiva la protección de apagado** | D |
+| ruta en **ANSI** (cp1252, p. ej. «Año») | se decodifica con `U+FFFD`, **crea una carpeta con ese nombre** y pregunta PS-1009 | D |
+
+**Detalles medidos que agravan:**
+
+- **La protección de apagado se desactiva sola.** Con BOM (y también tras
+  elegir «datos locales» en PS-1005), la app borra su marca y pide
+  `reg delete HKCU\…\Run` y `schtasks /delete` (en el arnés, bloqueados y
+  anotados). Solo deja una línea en el log.
+- **Los dos lectores divergen.** El arranque recorta espacios y exige una
+  cadena; el rescate PS-1007 no hace ninguna de las dos cosas. Con BOM, el
+  rescate buscaría las copias de `app.asar` en la carpeta **por defecto**; en
+  esta máquina, esa copia es del **26/08** (en G: son del 12/09).
+  **Combinado con un fallo fatal de arranque** —razonado, no provocado— se
+  restauraría una versión de hace semanas.
+- **`Restaurar-backup.bat`** tolera el BOM en el formato de varias líneas, pero
+  con JSON compacto o UTF-16 elige la carpeta por defecto (medido, sin copiar
+  nada).
+- **Observación sin hallazgo:** `claveUbicacion` no normaliza nombres cortos
+  8.3 (`ADMIN~1.JLO` y `admin.jlopezr` dan claves distintas). Lo destapó el
+  arnés; en la app ambos lados usan la misma forma.
+
+### ¿Puede abrir o crear otra BD en silencio? **Sí → RIESGO DE INTEGRIDAD**
+
+No es un problema de UX. En esta máquina se abriría **en silencio** la base de
+datos de agosto: el usuario vería la ventana de contraseña de siempre, después
+proyectos antiguos, y trabajaría sobre ellos, con el candado multi-PC y la
+protección de apagado desactivados. Es el mismo modo de fallo que el incidente
+real de la v0.1.42, que ya costó recuperar datos a mano. En otro PC, la app
+empezaría con una BD vacía y la registraría como inicializada. El disparador es
+**externo a la app**, porque ella nunca escribe BOM: el Bloc de notas con
+«UTF-8 con BOM» o «Unicode», `Set-Content`/`Out-File` de PowerShell 5.1, una
+herramienta de sincronización o una edición a mano. **Probabilidad baja,
+impacto alto y fallo silencioso.**
+
+### Propuesta mínima de reparación (NO implementada)
+
+1. **Un único lector cerrado** en `main.js` —el mismo modelo que
+   `guardia-rutas.js`— usado por las tres lecturas. Devuelve
+   `ausente | ok | ilegible | invalida`:
+   - **tolera** un BOM UTF-8 y el UTF-16 **con** BOM (se decodifican sin
+     ambigüedad y se leen con normalidad);
+   - UTF-8 inválido (el ANSI del instalador), JSON roto, objeto que no es
+     objeto, `userDataDir` que no es una cadena no vacía, o ruta **no
+     absoluta** → `ilegible`/`invalida`;
+   - `shared` solo cuenta si es booleano (como hoy).
+2. **`ilegible`/`invalida` NUNCA degrada en silencio.** En `whenReady`, antes
+   de tocar ninguna base de datos, un diálogo **bloqueante** con código nuevo
+   (motivo **sin rutas** en `app.log`). Opciones: «Cerrar» (por defecto) y
+   «Abrir con datos locales (temporal)», que es la misma salida explícita que
+   ya ofrece PS-1005. **Sin reintentos**: un archivo mal escrito no se arregla
+   esperando.
+3. Mientras la configuración sea ilegible, **ninguna creación autorizada**
+   (`decidirCrearSiAusente` → no) y **no se sincroniza** la protección de
+   apagado (no se cambia el sistema a partir de una configuración que no se
+   entiende).
+4. **Rescate PS-1007:** con la configuración ilegible **no restaura
+   automáticamente** desde la carpeta por defecto; remite a
+   `Restaurar-backup.bat`.
+5. **Fuera del mínimo**, cada uno para su propio bloque:
+   - `installer.nsh`: escribir UTF-8 o UTF-16 con BOM (es **packaging**);
+   - `Restaurar-backup.bat`: su analizador de líneas (va en `extraResources`);
+   - que «datos locales» en PS-1005 **también** desactive la protección de
+     apagado. Es comportamiento previo a P9 y hay que decidirlo aparte.
+
+**Archivos que tocaría:** **solo `main.js`**: el lector, el diálogo en
+`whenReady`, la guarda de creación, la de la protección de apagado, el rescate
+y la entrada nueva en `ERROR_CODES`. Ni `db.js`, ni preloads, ni plantillas.
+
+**Riesgo de regresión: bajo-medio.**
+
+- Los formatos válidos de hoy tienen que seguir entrando igual; están cubiertos
+  (instalador, app, compacto, espacios).
+- Los archivos con BOM, que hoy fallan en silencio, **empezarían a funcionar**
+  (abrirían la compartida).
+- Los ilegibles pasarían a ver un diálogo, que es lo que se busca.
+- Un instalador con ruta no ASCII daría un error visible en vez de una carpeta
+  mal nombrada.
+- Varios arneses extraen `readConfiguredUserDataTarget` y compañía, así que
+  habría que ampliar la lista de extracción compartida.
+- La decisión se toma a nivel de módulo pero el aviso llega en `whenReady`, el
+  mismo patrón que ya usa `customUserDataDirFailure`.
+
+**Pruebas necesarias:** convertir `p9/` en **exigente**: cada variante
+clasificada, BOM y UTF-16 con BOM leídos bien, y ningún caso ilegible que llegue
+a `getDb` sin decisión explícita. En Electron real:
+
+- BOM → abre la compartida;
+- truncado, `null` o tipo erróneo → diálogo, **ninguna BD abierta ni creada** y
+  la protección de apagado **intacta**;
+- relativa → diálogo en vez de PS-1007;
+- la copia del residuo real **sin modificar**.
+
+Reversiones por familia (quitar la tolerancia al BOM, volver al `null`
+silencioso, sincronizar la protección igualmente, rescate a ciegas).
+
+**No se ha tocado:** P10 (el residuo real solo se ha **leído y copiado** al
+sandbox, y su hash sigue igual), P14/P15/P16, C1-B, Drive/multi-PC, bloques 7–9,
+D4 y packaging.
+
+**Nota de evidencia (BD viva):** durante la ronda la huella de la BD viva pasó
+de `D5C3FF53…` a `C26323D1…`. La causa es una **sesión real del usuario**:
+
+- el `app.log` de G: registra actividad entre las 11:02 y las 11:04 UTC de los
+  proyectos 14 y 15, con un «manual-button» y los cierres «closing» y
+  «beforeunload»;
+- el `.sqlite3` se escribió a las 13:04:57 (hora local).
+
+Ese momento cae **entre** dos tiradas del arnés P9: la anterior terminó hacia
+las 12:33 con la BD idéntica y la siguiente empezó a las 14:22. Cada tirada
+compara su propio antes y después, y todas dieron idéntica. La línea base se ha
+actualizado en `comun/baseline-bd-viva.json`, con el motivo y la anterior
+conservada.
+
+## P9 — IMPLEMENTACIÓN Y CIERRE (17 sept 2026)
+
+**CERRADO. Reclasificado ALTO / INTEGRIDAD.** El defecto real no era «`JSON.parse`
+no tolera el BOM», sino esta cadena: `location.json` presente pero ilegible →
+tratado igual que ausente → carpeta por defecto en silencio → abre (y modifica)
+una BD residual antigua, o crea una vacía. **Esa cadena ya no existe:** un
+archivo presente pero inutilizable **nunca** equivale a «no hay configuración».
+
+**Único archivo productivo tocado: `main.js`** (`E7D596A8…` →
+**`2D05E00B53B8C45E6823E8629579D303FB69E2B0A24E53DCBE7700897E5F30F9`**,
+610 975 B; +205 / −26 líneas). Instantánea previa:
+`claude/main.js.ANTES-P9-2026-09-17`. `db.js`, `security.js`, los preloads, el
+instalador y `Restaurar-backup.bat` siguen idénticos.
+
+### Qué cambia
+
+| Pieza | Antes | Ahora |
+|---|---|---|
+| Lectura | Tres lecturas (`readConfiguredUserDataTarget`, `readConfiguredUserDataShared` y la del rescate) que devolvían lo mismo ante cualquier error que sin archivo | **Un solo lector, `leerConfigUbicacion()`**, con cuatro estados: `ausente` (**solo** ENOENT), `valido`, `ilegible` e `invalido`. El motivo nunca lleva rutas |
+| Codificación | `readFileSync(…, 'utf8')`: el BOM se quedaba y rompía `JSON.parse` | Lee **bytes**. Admite UTF-8 sin BOM, UTF-8 con **un** BOM (se quita **solo ese**) y UTF-16 LE/BE **con** BOM. `TextDecoder` con `fatal` e `ignoreBOM`. **No se adivina nada** por el contenido |
+| Contrato | Ruta de tipo cadena, recortada; `shared` booleano o, si no, `true` | Objeto JSON; `userDataDir` **propio**, cadena no vacía, **sin espacios alrededor**, sin caracteres de control, U+FEFF, U+FFFD, `< > " \| ? *` ni `:` fuera de la unidad, y **absoluta** (`X:\`, `X:/` o UNC). `shared`, si está, **booleano**; si falta, `true` (archivos anteriores a la 0.1.57) |
+| Arranque a nivel de módulo | Ilegible = sin configuración | Presente pero inutilizable → `configUbicacionNoResuelta`. **Sin `mkdir`, sin `setPath`, sin esperas** |
+| `whenReady` | Seguía como si nada | **Lo primero**: `detenerArranquePorConfigUbicacion()` → aviso **PS-1020** con **un solo botón, «Cerrar»**, y `app.quit()`. Va antes de la splash, las esperas de Drive, la protección de apagado, el candado multi-PC, la decisión y el registro de A3.3, `getDb` y el lanzador |
+| Segunda capa | — | `decidirCrearSiAusente` nunca autoriza crear sin ubicación resuelta; `syncDriveSyncGuardWithLocation` deja la protección **exactamente como está** |
+| Rescate PS-1007 | Config dañada → buscaba copias de `app.asar` en la carpeta por defecto | Config inutilizable → **no restaura nada** y lo dice |
+| `ERROR_CODES` | — | **PS-1020** «No se puede leer la configuración de ubicación de datos» |
+
+### Decisiones tomadas
+
+- **«Abrir con datos locales (temporal)» queda ELIMINADA.** No se pueden
+  demostrar las diez propiedades exigidas:
+  - la única BD local de esta máquina es justo el **residuo histórico** (P10),
+    el caso en que no debe ofrecerse;
+  - distinguir una BD local «reconocible» de un residuo exigiría una heurística
+    nueva;
+  - abrirla sin registrarla contradice A3.3, que deja constancia
+    (`detectada-existente`) **antes** de abrir.
+
+  Por la regla del propio encargo, **solo «Cerrar»**.
+- **Espacios alrededor de la ruta:** antes se recortaban; ahora el archivo es
+  **inválido**, porque el contrato es exacto y no se eliminan caracteres. El
+  `location.json` real de esta máquina no los tiene: sigue siendo **válido**
+  (comprobado en solo lectura, `P9-Z3`).
+- **`shared` que no es booleano** (p. ej. `"false"` como cadena): antes contaba
+  como compartida; ahora el archivo es inválido.
+- **El mensaje** es exactamente el pedido, con el motivo, la forma
+  `%APPDATA%\panorama-app-config\location.json` (nunca la ruta real) y un «No lo
+  borres»: sin el archivo, la app usaría la carpeta por defecto.
+- **Nada persiste la decisión:** `location.json` no se toca y el siguiente
+  arranque lo vuelve a leer.
+- **Rastro:** el `app.log` de la carpeta por defecto recibe dos líneas
+  `ERROR PS-1020`, sin rutas. Es un registro de texto, no una BD ni el registro
+  de ubicaciones. En una carpeta por defecto que no existía, Chromium crea
+  `panorama-app\` con `Local State` (el cerrojo de instancia única ya vivía ahí
+  antes de P9); ningún `panorama.sqlite3*` ni `.panorama-*`.
+
+### Caso → resultado, medido en la app real
+
+| `location.json` | Ahora | Antes |
+|---|---|---|
+| válido (instalador, app, compacto, UNC…) | abre la compartida | igual |
+| **UTF-8 + BOM** | abre **la misma** compartida, sin avisos | abría el residuo o creaba una BD, en silencio |
+| **UTF-16 LE / BE + BOM** | abre **la misma** compartida | igual que con BOM |
+| BOM doble o fuera de sitio, `{`, truncado, `null`, `{}`, `[]`, tipo erróneo, ruta vacía o de espacios, **relativa**, **ANSI**, UTF-16 sin BOM, carpeta en lugar de archivo (EISDIR), archivo **bloqueado** por otro proceso (EBUSY) | **PS-1020 y cierre**, con **cero ventanas**. No se abre ni se crea ninguna BD. Quedan intactos el residuo, la compartida, `location.json` y el registro de ubicaciones. La protección de apagado no se toca. No se pide nada al sistema | vuelta silenciosa a la carpeta por defecto; la relativa, `mkdir` en el directorio de trabajo + PS-1007; la ANSI, carpeta mal nombrada + PS-1009 |
+| **no existe** | carpeta por defecto (primera ejecución legítima) | igual |
+| válido + ruta **inexistente** | la crea y pregunta PS-1009 | igual (no es P9) |
+| válido + unidad **no montada**, ruta **inaccesible** o acceso **denegado** | PS-1005 | igual (no es P9) |
+
+Permisos denegados sobre el propio `location.json` (EACCES/EPERM/EIO) se
+prueban con dobles de `fs` en la batería Node; en la app real, con el archivo
+**bloqueado de verdad** por otro proceso (EBUSY) y con una carpeta en su lugar
+(EISDIR). **No se ha cambiado ninguna ACL.**
+
+### Evidencia
+
+- `p9/test-p9-location.js` — **282 OK / 0**, EXIGENTE (nació descriptiva con
+  137).
+- `p9/electron-p9.ps1` — **111 OK / 0**: 32 arranques y 2 de preparación. BD
+  viva, configuración real, residuo de P10, archivos productivos y valor de
+  HKCU\…\Run **idénticos**.
+- `p9/comprobar-reversiones-p9.js` — **29 OK / 0**: siete familias, las
+  cinco pedidas (A–E) más F (rescate) y G (guarda de la protección). Cada una
+  tumba **solo** lo que anuncia.
+- `p9/electron-p9-revertido.ps1` — **14 OK / 0**: A–E en la app real.
+  - A: el BOM vuelve a caer.
+  - B: el residuo se abre y **cambia su hash**; se crea una BD nueva y la
+    protección se desactiva.
+  - C: vuelve `datos\relativa`.
+  - D: aparece una BD nueva.
+  - E: el hash del residuo cambia.
+- Regresión completa — **3475 OK / 0 (3518 con `comun/`), con A2, los bloques 1–5 de A3.3, C1, F1, F2, F3, P17 y el núcleo en verde**.
+  Cuadre y peculiaridades de la cifra (`nucleo-a33` da 394 o 395 según la
+  tirada) en `pruebas-a33/MANIFIESTO.md` §4.
+- Las demás reversiones siguen rompiendo lo suyo: F1 **19/0**, F2 **31/0**, F3
+  **5/0**, P17 **6/0**, C1 **7 de 7** (con sus copias regeneradas), B3 **7**,
+  B4 **2** y B5 **1**.
+- Regresión Electron: los **19** arneses de la tabla, en verde y con las mismas cifras que antes de P9 (A2 **66**, bloque 5 de A3.3 **71** + CV **12**, F1 **47** + **52**, F2 **212** + laboratorio **41** + reversiones **7**, F3 **36** + **4**, P17 **16**, C1 **31**, E1 **21**, P12 **32**, E2 **42**, B1 **24**, B3 **36**, B4 **17**, B5 **24**), con la BD viva idéntica en cada uno.
+
+### Arneses ajustados (defecto de arnés, no de producto)
+
+- `bloque2/test-wiring.js`: declara `configUbicacionNoResuelta`. La versión
+  anterior **revienta** contra el `main.js` nuevo con `ReferenceError`
+  (medido).
+- `bloque3/test-error-codes.js`: el anclaje de orden. PS-1020 va detrás de
+  PS-1019; la intención sigue siendo que los cuatro de A3.3 salgan seguidos.
+- `e1/test-inventario-e1.js` (`E1-M4`): el hash de `main.js`.
+- `real-run/p9-ubicacion.js`: admite `P9_MAIN_FUENTE` y anota las ventanas
+  creadas y el texto y los botones de cada diálogo.
+- `electron-p9.ps1`: restaura `APPDATA` y `LOCALAPPDATA` al terminar.
+
+### Pendientes SEPARADOS (no se tocan en P9)
+
+- **Instalador** (`installer.nsh`): `FileWrite` escribe ANSI (razonado, no
+  medido). Una ruta con tildes **ya no abre otra BD**: se detiene con PS-1020.
+  Arreglarlo es packaging.
+- **`Restaurar-backup.bat`**: con JSON compacto o UTF-16 elige la carpeta por
+  defecto. Solo afecta al rescate **manual**.
+- **PS-1005 «datos locales»** sigue desactivando la protección de apagado. Es
+  comportamiento anterior a P9, medido en `guard/no-montada`.
+- **Preparación: cierre/reapertura tras F2 + lectura posterior de un acta.** Va
+  en una pasada E2E/Preparación. **F2 no se reabre.**
+
 ## B1 — CERRADO (15 sept 2026): el listado deja de repetirse, de escribir y de callarse
 
 **Cuatro objetivos, medidos antes y después.**
@@ -1367,6 +1678,11 @@ cosas, comprobadas—. Convierte una hipotética reaparición de un sink en
 bajo pero real — cualquier recurso que hoy no esté en el inventario dejaría de
 cargar en silencio; por eso la batería mide antes de proponer.
 
+> **Corregido al implementar (17 sept 2026), sin borrar lo de arriba:** `file:`
+> era redundante con `'self'`; `worker-src 'self' file:` habría dejado Workers
+> **sin CSP**; y «arrancó su Worker» se había medido solo con `paginas === 1`
+> (era cierto, pero no estaba demostrado). Ver «F2 — IMPLEMENTADO Y CERRADO».
+
 ### F3 — sin `setWindowOpenHandler`
 
 **Original (auditoría, [LEÍDO]):** «Ninguna ventana intercepta `window.open` ni
@@ -1453,7 +1769,171 @@ en su navegador) y toca **uno**.
 **Decisión del usuario (17 sept 2026): F3 primero — implementado y cerrado.
 F2 queda ABIERTO / DIAGNOSTICADO / SIGUIENTE**, con su CSP candidata ya probada
 contra mammoth y pdf.js reales, para su propia ronda de implementación y
-regresión.
+regresión. *(Superado el mismo día: F2 se implementó en su ronda — abajo.)*
+
+### F2 — IMPLEMENTADO Y CERRADO (17 sept 2026)
+
+Condición del usuario: **la CSP mínima compatible con cada ventana**, sin copiar
+la candidata a ciegas. Antes de fijarla se midió el motor —el Chromium de
+Electron 30.5.1— con un laboratorio que **no carga el producto**
+(`real-run/f2-laboratorio.js`, **41 OK / 0**) y solo después se tocó código.
+
+#### Lo que el laboratorio corrigió del diagnóstico
+
+- **`'self'` en un documento `file://` es EXACTAMENTE `file:`** — cualquier
+  archivo local, en cualquier carpeta, sin poder acotar por ruta— en `script`,
+  `style`, `img`, `font` y `worker` (L2). La candidata repetía `file:` junto a
+  `'self'`: **redundante**, se quita. No hay ninguna directiva que «exija
+  `file:`» además de `'self'`; la tabla real es qué ventanas necesitan archivos
+  locales en cada directiva:
+
+  | Directiva | `'self'` lo necesitan | Por qué |
+  |---|---|---|
+  | `script-src` | las 9 con scripts (todas menos `restore-helper`) | `theme.js`, `modal.js`, `renderer.js`, xlsx, pptx, `service-status.js`, pdf.js/mammoth |
+  | `style-src` | las 8 con interfaz (la splash no enlaza hojas; se le concede igual, sin efecto) | `motion.css`, `window-chrome.css`, `fonts.css` |
+  | `img-src` | las que pintan el icono | `assets/icon-*.png` |
+  | `font-src` | dashboard, Directorio, Evaluación y Preparación | las `woff2` de `vendor/fonts/` |
+  | `worker-src` | **ninguna** | ver el punto de los Workers |
+
+- **El Worker de pdf.js SÍ arranca de verdad** — el diagnóstico lo afirmó
+  mirando solo `paginas === 1`, que también se cumple con el *fake worker* en el
+  hilo principal. Medido ahora: pdf.js 3.11.174 crea el Worker **directamente
+  desde `file:`** (Chromium da a los `file://` el origen `"file://"`, no
+  `"null"`), en modo **REAL** hoy y bajo la candidata (L3). Mi hipótesis previa
+  —que lo envolvía en un `blob:`— quedó **refutada** y se deja constancia en la
+  batería.
+- **Un Worker creado desde `file:` NO recibe la CSP de la ventana, ni por
+  `<meta>` ni por cabecera** (L9c, L9d): hace `new Function` y sale a la red. Un
+  Worker creado desde `blob:` **sí la hereda**, también cuando solo hace
+  `importScripts` de un `file:` (L9f). Con la candidata (`worker-src 'self'`),
+  cualquier JS local se podía ejecutar como Worker **sin `connect-src`**: un
+  hueco estructural justo en la propiedad que F2 tenía que garantizar.
+- Sin `worker-src` explícito, los Workers caen en la cadena de reserva
+  (`script-src`) y **se permiten** (L3e): hay que denegarlos donde no se usan.
+- **`blob:` no hace falta para exportar**: un `<a download>` sobre `blob:`
+  descarga completo y sin violación con una CSP que no lo nombra (L4). Leer un
+  `blob:` con `fetch` sí cae en `connect-src` (el producto no lo hace).
+- `executeJavaScript` —con el que `main.js` habla con las ventanas ocultas y con
+  `psAlert`/`psConfirm`— **funciona con `default-src 'none'`**; lo que ese código
+  intentara evaluar sigue bloqueado (L7).
+- **La cabecera SÍ llega a los `file://`** (L1) —mi hipótesis previa era la
+  contraria—, también **dentro de un asar** (L10, la app empaquetada), y
+  `session-created` se emite para la sesión por defecto y para cada partición.
+
+#### Arquitectura: cabecera desde `main.js`, no `<meta>`
+
+Decidida por comportamiento medido, no por estética: llega a `file://` y a asar;
+**un solo enganche** cubre las 10 ventanas y todas las particiones; un proyecto
+horneado antes de F2 recibe la misma política **aunque su copia no se pueda
+regenerar** (medido con el archivo en solo lectura); y un documento `file://`
+que no esté en la tabla recibe la política **cerrada**. El `<meta>` no habría
+cubierto los Workers mejor (tampoco llega a los `file:`) y habría dependido del
+rehorneado.
+
+#### La política (cuatro perfiles)
+
+| Perfil | Ventanas | Qué concede |
+|---|---|---|
+| `cerrado` | volcado-localstorage y particion-auxiliar (`restore-helper.html`) **y cualquier documento no previsto** | nada: `default-src 'none'; form-action 'none'; base-uri 'none'` |
+| `sinScriptEnLinea` | lanzador, splash | `script-src 'self'` **sin** `unsafe-inline` (no tienen ni un script ni un manejador en línea); estilos propios y en línea; `img-src 'self' data:` (fantasma de arrastre) |
+| `interfaz` | proyecto (dashboard y Directorio horneados), Evaluación, selector de backups, Seguridad, contraseña | `script-src` y `style-src` `'self' 'unsafe-inline'`; `img-src 'self' data:` (logos); `font-src 'self'` |
+| `lectorDeActas` | Preparación | lo de `interfaz` y `worker-src blob:` |
+
+Comunes a los tres con interfaz: `default-src 'none'`, `connect-src 'none'`,
+`frame-src 'none'`, `object-src 'none'`, `worker-src` explícito,
+`form-action 'none'`, `base-uri 'none'`. **`unsafe-eval` en ninguno.**
+
+Sobreconcesiones aceptadas, por no ser relevantes: `data:` y `font-src 'self'`
+en Evaluación, selector, Seguridad y contraseña (no las usan; una imagen `data:`
+no ejecuta ni saca nada, y las fuentes son locales), y `script-src 'self'` en la
+splash, que no tiene scripts ni datos. Un quinto perfil por cada una añadiría
+mantenimiento sin reducir ninguna capacidad que importe.
+
+**Lo que esta CSP NO hace:** donde queda `'unsafe-inline'` en `script-src`
+(8 de las 10), **un `<script>` en línea inyectado sigue ejecutándose** —la
+batería lo comprueba a propósito en el dashboard (`F2-3d`)—. Quitarlo exige
+rehacer las plantillas; no es F2. Su valor real: **corta la salida** (fetch,
+XHR, WebSocket, imágenes/hojas/scripts/fuentes remotos), **impide frames,
+objects y envíos de formulario**, **fija la base de las URL**, **deja sin
+`eval`** y **limita los Workers**. En el lanzador y la splash sí corta además
+la inyección en línea (`F2-3c`). **Límites conocidos que la CSP no gobierna:**
+la navegación (la resuelve F3, que manda los `http(s)` al navegador del sistema
+—un canal visible para el usuario—) y la precarga DNS.
+
+> **F2 NO sustituye a F1** (criterio del usuario al cerrar, 17 sept 2026). F1
+> —el escape por contexto de cada sink demostrado— **sigue siendo la defensa
+> primaria**. F2 es defensa en profundidad: corta la red, elimina `eval`,
+> bloquea frames/objects/forms, restringe recursos y restringe Workers.
+
+#### Cambios de producto: dos archivos
+
+- **`main.js`** (`16AB5F53…` → `E7D596A8…`, 601 293 B; +139/−1):
+  `CSP_PERFILES`, `perfilCspDeDocumento(url)`, `instalarCspEnSesion(ses)` y
+  `app.on('session-created', instalarCspEnSesion)`; import de `fileURLToPath`.
+- **`preparacion-reunion/plantilla_preparacion_reunion.html`**
+  (`F3F9130B…` → `69F66B8C…`, 80 881 B; +37): `arrancarWorkerPdf()` crea el Worker desde un
+  `blob:` que solo hace `importScripts` del vendor, **espera su `ready`** y se lo
+  da a pdf.js por `workerPort`; si el Worker no llega (error o 10 s) se descarta
+  y pdf.js sigue por su camino de siempre, así que **el acta se lee igualmente**
+  (demostrado con `worker-src 'none'`). **Justificación del archivo adicional:**
+  sin este arranque, `worker-src blob:` deja a pdf.js en el hilo principal, y
+  `worker-src 'self'` deja un Worker sin CSP. Es el mismo mecanismo que pdf.js
+  usa por sí mismo en orígenes cruzados (`createCDNWrapper`).
+
+No se han tocado `db.js`, `security.js`, los preloads ni el resto de plantillas.
+**Ninguna plantilla lleva `<meta>` CSP** (una sola fuente, custodiado).
+
+#### Resultados
+
+| | |
+|---|---|
+| `f2/test-f2.js` | **EXIGENTE**: los cuatro perfiles con su texto exacto; `unsafe-eval` ausente (política y código); sin `file:`, sin comodines ni hosts; `data:` solo en `img-src`; `blob:` solo en el Worker de Preparación; el reparto documento→perfil **ejecutado** (10 ventanas, mayúsculas, `%20`, asar, Drive, `..`, UNC, URL rota → cerrado); el enganche ejecutado con dobles (mapa que lanza → cerrado); y el inventario que sostiene cada perfil |
+| `f2/electron-f2-lab.ps1` | **41 / 0** — el motor |
+| `f2/electron-f2.ps1` | **212 / 0** — la app real |
+| `f2/comprobar-reversiones-f2.js` | **10 familias**, cada una tumba exactamente lo que anuncia |
+| `f2/electron-f2-revertido.ps1` | **7 / 0** — sin CSP vuelven a salir fetch e imagen remotos; con `unsafe-eval`, `new Function` vuelve a ejecutarse; con `worker-src 'none'` el acta se lee pero sin Worker real (control de compatibilidad) |
+
+**En la app real, ventana por ventana (F2-1…F2-15):** las 10 con su política
+**efectiva** leída del evento de violación de Chromium (`disposition:
+enforce`), y la cabecera en **todos** los documentos servidos; `new Function`
+bloqueado en las 10 y Electron sin su aviso de CSP insegura; scripts, hojas,
+imágenes (icono y logos `data:`) y fuentes Inter/JetBrains cargando; **cero
+violaciones fuera del sondeo**; mammoth y pdf.js leyendo un `.docx` y un `.pdf`
+reales **por `handleActaFile`**, con el Worker **real** arrancado desde `blob:`,
+reutilizado en la segunda acta y sin *fake worker*; exportaciones reales
+—CSV, Excel y **PowerPoint con logo** del dashboard, Excel y JSON del
+Directorio, JSON de Evaluación y guion de Preparación— escritas en disco;
+`location.reload()` y un documento `blob:` (que **hereda** la CSP); fetch
+http/https, XHR, WebSocket, imagen/hoja/script/fuente remotos, iframe, object y
+formulario **bloqueados con cero visitas** al servidor local en 8 ventanas;
+restauración real (sus dos ventanas ocultas con CSP); **proyecto creado con el
+`main.js` anterior a F2** —sin CSP en su fase A— abierto con F2, también con su
+copia **en solo lectura** (no se rehornea, el fallo queda en `app.log`, y aun
+así tiene CSP); proyecto nuevo con y sin importación. F3 intacto.
+
+**Diagnóstico aparte, sin relación con F2:** con la ventana **oculta** (los
+arneses arrancan Electron minimizado) pptxgen no termina ni una presentación
+mínima; con la ventana visible, sí. **Igual con el `main.js` anterior a F2**, y
+el `.pptx` generado mide lo mismo con y sin F2 (191 781 bytes). Es un artefacto
+del arnés (`--modo=pptx`); en uso normal la ventana está a la vista. No se ha
+comprobado qué ocurre si el usuario minimiza **durante** la generación.
+
+**Regresión de arneses previa, y su tratamiento:** ver MANIFIESTO (§4).
+
+**Cierre (17 sept 2026): F2 → CERRADO**, con los cuatro perfiles aceptados
+(la desviación sobre «2–3» se acepta por `sinScriptEnLinea`) y el cambio de
+Preparación aceptado como parte de F2. **No ampliar más esa zona.** Pruebas a
+mantener allí: Worker real, PDF real y *fallback* sin Worker —cubiertas—, y
+**cierre/reapertura de la ventana**, que **no** está cubierta de forma
+explícita (la restauración cierra Preparación, pero ningún arnés la reabre y
+vuelve a leer un acta): pendiente de añadir cuando se autorice.
+
+**ARNÉS / CAPTURA — OBSERVACIÓN NO RESUELTA:** en
+`f1/electron-f1-limpio.ps1`, `6-directorio-ficha.png` sale de **0 bytes**. No
+reabre F2: el Directorio se probó directamente en Electron bajo la CSP, carga y
+funciona, y no hay evidencia de fallo productivo. Si reaparece fuera de ese
+arnés, o se demuestra que una ventana productiva no pinta, se diagnostica
+aparte. No se toca producto por esto.
 
 ---
 

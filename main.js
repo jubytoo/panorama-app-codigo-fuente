@@ -1,7 +1,7 @@
 const { app, BrowserWindow, ipcMain, shell, Menu, dialog, nativeTheme, session, safeStorage, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { pathToFileURL } = require('url');
+const { pathToFileURL, fileURLToPath } = require('url');
 const crypto = require('crypto');
 const { spawn, execFile } = require('child_process');
 const os = require('os');
@@ -123,17 +123,25 @@ function findLatestAsarBackupForRecovery(dir) {
   }
 }
 
+// P9 (17 sept 2026): lee location.json con el MISMO lector que el arranque
+// (leerConfigUbicacion, más abajo; es una declaración de función, así que ya
+// existe aunque este manejador salte antes de que se evalúe el resto del
+// archivo). Si el archivo existe pero no se puede usar, devuelve null: no hay
+// carpeta de datos resuelta, y por tanto tampoco de dónde restaurar. Antes se
+// buscaba en la carpeta por defecto, donde puede haber copias de app.asar mucho
+// más antiguas que las de la carpeta de datos de verdad.
+// Con JSON válido, lo de siempre: la configurada si existe, y si no, la de por
+// defecto.
 function resolveDataDirForStartupRecovery() {
   try {
-    const configFile = path.join(app.getPath('appData'), 'panorama-app-config', 'location.json');
-    if (fs.existsSync(configFile)) {
-      const raw = JSON.parse(fs.readFileSync(configFile, 'utf8'));
-      if (raw && raw.userDataDir && fs.existsSync(raw.userDataDir)) return raw.userDataDir;
-    }
+    const cfg = leerConfigUbicacion();
+    if (cfg.estado === 'ausente') return app.getPath('userData');
+    if (cfg.estado !== 'valido') return null;
+    if (fs.existsSync(cfg.userDataDir)) return cfg.userDataDir;
+    return app.getPath('userData');
   } catch (e) {
-    /* config dañada o inaccesible: se usa la carpeta de datos por defecto */
+    return null;
   }
-  return app.getPath('userData');
 }
 
 let startupRecoveryArmed = true;
@@ -152,6 +160,20 @@ function handleFatalStartupError(err) {
   }
   try {
     const dataDir = resolveDataDirForStartupRecovery();
+    if (!dataDir) {
+      // P9: location.json existe pero no se puede usar. No se restaura nada:
+      // no se sabe cuál es la carpeta de datos buena, y elegir la de por
+      // defecto podría instalar una copia de app.asar de otra época.
+      dialog.showErrorBox(
+        'Panorama del Servicio no pudo iniciar',
+        'Ha ocurrido un error al arrancar.\n\nDetalle técnico:\n' +
+          detail +
+          '\n\nAdemás, la configuración de ubicación de datos no puede leerse, así que NO se ha restaurado ' +
+          'automáticamente ninguna copia de seguridad de app.asar.\n\nPide un parche o instalador nuevo.\n\n(código PS-1007)'
+      );
+      app.exit(1);
+      return;
+    }
     const backupName = findLatestAsarBackupForRecovery(dataDir);
     const realAsar = path.join(process.resourcesPath, 'app.asar');
     if (!backupName) {
@@ -510,6 +532,16 @@ const ERROR_CODES = {
       'de red caída, sincronización a medias), la app podría interpretar esa carpeta como "nunca usada" ' +
       'y crear una vacía. Revisa los permisos de la carpeta de configuración y vuelve a abrir.',
   },
+  'PS-1020': {
+    titulo: 'No se puede leer la configuración de ubicación de datos',
+    explicacion:
+      'El archivo location.json (en %APPDATA%\\panorama-app-config) existe, pero no se puede usar: no se ' +
+      'puede leer, no está en UTF-8 (ni en UTF-16 con BOM), no es JSON válido, o no indica una ruta absoluta. ' +
+      'Antes la app lo trataba igual que si no existiera y abría sin avisar la carpeta de datos por defecto, ' +
+      'con otra base de datos o creando una vacía. Ahora se cierra sin abrir, crear ni modificar ninguna base ' +
+      'de datos y sin tocar la protección de apagado. Hay que corregir ese archivo. No lo borres: sin él, la ' +
+      'app usaría la carpeta de datos por defecto.',
+  },
   'PS-2001': {
     titulo: 'Datos del proyecto no encontrados al abrirlo',
     explicacion:
@@ -745,29 +777,105 @@ let customUserDataDirTarget = null; // ruta configurada (si hay alguna), para el
 // para no desactivar en silencio, para quien ya lo tenía configurado, las
 // protecciones que estaban usando de verdad.
 let customUserDataDirShared = true;
+// P9: { estado, motivo } cuando location.json EXISTE pero no se puede usar.
+// Mientras tenga valor, esta sesión no tiene ubicación de datos resuelta: el
+// arranque se detiene en app.whenReady (detenerArranquePorConfigUbicacion).
+let configUbicacionNoResuelta = null;
 
-function readConfiguredUserDataTarget() {
-  const configFile = userDataConfigPath();
+// ------------------------------------------------------------------
+// P9 (17 sept 2026) — UN SOLO LECTOR DE location.json, CON ESTADOS EXPLÍCITOS.
+//
+// Antes había tres lecturas (la ruta, "shared" y la del rescate PS-1007), y
+// las tres devolvían lo mismo para "no hay archivo" que para "hay un archivo
+// que no se entiende". Medido en la app real: con un location.json guardado
+// con BOM (Bloc de notas, PowerShell 5.1...), la app abría SIN AVISAR la base
+// de datos de la carpeta por defecto —en el PC del usuario, un residuo antiguo
+// que además se modificaba al abrirlo—, o creaba una vacía, y de paso
+// desactivaba la protección de apagado.
+//
+//   'ausente'   el archivo no existe (ENOENT). Es el ÚNICO estado que
+//               significa "no hay configuración de ubicación".
+//   'valido'    se entiende y cumple el contrato.
+//   'ilegible'  existe, pero no se puede leer o no está en una codificación
+//               admitida.
+//   'invalido'  se lee, pero no es JSON o no cumple el contrato.
+//
+// Codificaciones admitidas, y solo estas (nada se adivina por el contenido):
+// UTF-8 sin BOM, UTF-8 con UN BOM, y UTF-16 LE/BE con su BOM. Se quita
+// ÚNICAMENTE ese BOM inicial; cualquier otro U+FEFF (BOM duplicado o fuera de
+// sitio) deja el archivo 'invalido'. Un archivo ANSI con letras acentuadas no
+// es UTF-8 válido: 'ilegible'.
+//
+// Contrato: un objeto JSON con `userDataDir` de tipo cadena, sin espacios
+// alrededor, sin caracteres de control, U+FEFF ni U+FFFD, sin < > " | ? * ni
+// ":" fuera de la letra de unidad, y ABSOLUTA: con letra de unidad (X:\ o X:/)
+// o UNC (\\servidor\recurso, o con "/"). `shared`, si está, tiene que ser
+// booleano; si falta, vale true (location.json anterior a la 0.1.57).
+//
+// Autocontenida A PROPÓSITO (sin constantes de módulo): el rescate PS-1007 la
+// llama desde un manejador que puede dispararse antes de que se evalúe el
+// resto de este archivo. `motivo` nunca lleva la ruta: se puede registrar.
+// ------------------------------------------------------------------
+function leerConfigUbicacion() {
+  let bytes;
   try {
-    if (!fs.existsSync(configFile)) return null;
-    const cfg = JSON.parse(fs.readFileSync(configFile, 'utf8'));
-    const target = cfg && typeof cfg.userDataDir === 'string' ? cfg.userDataDir.trim() : '';
-    return target || null;
+    bytes = fs.readFileSync(userDataConfigPath());
   } catch (e) {
-    return null; // config ilegible/corrupta: se ignora, se sigue con la ubicación por defecto
+    if (e && e.code === 'ENOENT') return { estado: 'ausente' };
+    return { estado: 'ilegible', motivo: `el archivo no se puede leer (${(e && e.code) || 'error desconocido'})` };
   }
-}
-
-function readConfiguredUserDataShared() {
-  const configFile = userDataConfigPath();
+  let texto;
   try {
-    if (!fs.existsSync(configFile)) return true; // no debería llegar a llamarse sin config, pero por si acaso
-    const cfg = JSON.parse(fs.readFileSync(configFile, 'utf8'));
-    if (cfg && typeof cfg.shared === 'boolean') return cfg.shared;
-    return true; // sin este campo (location.json de antes de la 0.1.57): comportamiento de siempre, tratar como compartida
+    let codificacion = 'utf-8';
+    let desde = 0;
+    if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
+      desde = 3;
+    } else if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) {
+      codificacion = 'utf-16le';
+      desde = 2;
+    } else if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+      codificacion = 'utf-16be';
+      desde = 2;
+    }
+    // ignoreBOM: el decodificador no quita nada por su cuenta. El único BOM
+    // retirado es el que se acaba de reconocer por sus bytes.
+    texto = new TextDecoder(codificacion, { fatal: true, ignoreBOM: true }).decode(bytes.subarray(desde));
   } catch (e) {
-    return true;
+    return { estado: 'ilegible', motivo: 'el archivo no está en una codificación admitida (UTF-8, o UTF-16 con BOM)' };
   }
+  if (texto.includes('\uFEFF')) {
+    return { estado: 'invalido', motivo: 'el archivo tiene una marca BOM duplicada o fuera de sitio' };
+  }
+  let cfg;
+  try {
+    cfg = JSON.parse(texto);
+  } catch (e) {
+    return { estado: 'invalido', motivo: 'el archivo no es JSON válido' };
+  }
+  if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) {
+    return { estado: 'invalido', motivo: 'el contenido no es un objeto JSON' };
+  }
+  if (!Object.prototype.hasOwnProperty.call(cfg, 'userDataDir')) {
+    return { estado: 'invalido', motivo: 'falta el campo "userDataDir"' };
+  }
+  const ruta = cfg.userDataDir;
+  if (typeof ruta !== 'string') return { estado: 'invalido', motivo: '"userDataDir" no es una cadena' };
+  if (ruta.trim() === '') return { estado: 'invalido', motivo: '"userDataDir" está vacío' };
+  if (ruta !== ruta.trim()) {
+    return { estado: 'invalido', motivo: '"userDataDir" tiene espacios al principio o al final' };
+  }
+  const conUnidad = /^[A-Za-z]:[\\/]/.test(ruta);
+  const unc = /^[\\/]{2}(?![.?][\\/])[^\\/]+[\\/]+[^\\/]/.test(ruta);
+  if (!conUnidad && !unc) {
+    return { estado: 'invalido', motivo: '"userDataDir" no es una ruta absoluta con letra de unidad o de red' };
+  }
+  if (/[\u0000-\u001f\u007f\uFEFF\uFFFD<>"|?*]/.test(ruta) || /:/.test(conUnidad ? ruta.slice(2) : ruta)) {
+    return { estado: 'invalido', motivo: '"userDataDir" contiene caracteres que no son válidos en una ruta' };
+  }
+  if (Object.prototype.hasOwnProperty.call(cfg, 'shared') && typeof cfg.shared !== 'boolean') {
+    return { estado: 'invalido', motivo: '"shared" no es true ni false' };
+  }
+  return { estado: 'valido', userDataDir: ruta, shared: typeof cfg.shared === 'boolean' ? cfg.shared : true };
 }
 
 // Prueba de escritura real, no solo de existencia: mkdirSync con
@@ -821,10 +929,18 @@ function sleepSyncMs(ms) {
 }
 
 function applyCustomUserDataDirIfConfigured() {
-  const target = readConfiguredUserDataTarget();
-  if (!target) return;
+  const cfg = leerConfigUbicacion();
+  if (cfg.estado === 'ausente') return;
+  if (cfg.estado !== 'valido') {
+    // P9: presente pero inutilizable NO es "sin configuración". No se prueba
+    // ni se crea ninguna carpeta, no se llama a setPath y no se sigue con la
+    // de por defecto como si nada: el arranque se detiene en whenReady.
+    configUbicacionNoResuelta = { estado: cfg.estado, motivo: cfg.motivo };
+    return;
+  }
+  const target = cfg.userDataDir;
   customUserDataDirTarget = target;
-  customUserDataDirShared = readConfiguredUserDataShared();
+  customUserDataDirShared = cfg.shared;
 
   const deadline = Date.now() + USERDATA_PRE_READY_RETRY_MS;
   let lastError = null;
@@ -1156,6 +1272,17 @@ function restosEnCarpetaDeDatos(dir) {
 }
 
 function decidirCrearSiAusente() {
+  // P9: location.json existe pero no se puede usar, así que esta sesión no
+  // tiene ubicación de datos resuelta. La parada de app.whenReady ya impide
+  // llegar aquí; esta es la segunda capa, para que ningún camino futuro
+  // convierta un archivo ilegible en permiso para crear.
+  if (configUbicacionNoResuelta) {
+    return {
+      crear: false,
+      configNoResuelta: true,
+      motivo: 'location.json existe pero no se puede usar: sin ubicación resuelta no se autoriza crear nada',
+    };
+  }
   const dir = app.getPath('userData');
   const est = estadoUbicacion(dir);
 
@@ -1904,6 +2031,143 @@ function aplicarPoliticaDeNavegacion(wc, etiqueta) {
       `Se ha bloqueado una navegación no prevista en ${etiqueta}.`);
   });
 }
+
+// ------------------------------------------------------------------
+// F2 (17 sept 2026) — CONTENT-SECURITY-POLICY DE TODAS LAS VENTANAS.
+//
+// Hasta aquí ninguna ventana tenía CSP. Se entrega por CABECERA desde este
+// único punto, no con un <meta> en cada plantilla. Medido en el Chromium de
+// Electron 30.5.1 (batería claude/pruebas-a33/f2/) antes de decidir:
+//   - `webRequest.onHeadersReceived` SÍ ve los documentos file://, también
+//     dentro de un asar, y la cabecera SE APLICA;
+//   - `session-created` se emite para la sesión por defecto y para cada
+//     partición, así que un solo enganche cubre las 10 ventanas;
+//   - no depende de que la copia horneada de cada proyecto se haya
+//     regenerado: un proyecto viejo recibe la misma política;
+//   - un documento que no esté en la tabla recibe la política CERRADA.
+//
+// Lo que esta CSP NO hace, dicho claro: las ventanas con `'unsafe-inline'`
+// en script-src (todas menos lanzador y splash) siguen ejecutando un
+// <script> en línea inyectado. Su valor es otro: corta la salida a la red
+// (connect/img/font/media/estilos/scripts remotos), impide frames, objects y
+// envíos de formulario, fija la base de las URL, deja sin `eval` y limita los
+// Workers. Quitar `'unsafe-inline'` exigiría rehacer las plantillas.
+//
+// Sobre las fuentes (medido): en un documento file://, `'self'` equivale
+// EXACTAMENTE a `file:` —cualquier archivo local, sin poder acotar por
+// ruta—, así que no se repite `file:`. `data:` solo en img-src (logos y el
+// fantasma de arrastre del lanzador). `blob:` no hace falta para exportar:
+// una descarga no es una carga gobernada por la CSP. `'unsafe-eval'` NO:
+// mammoth y pdf.js funcionan sin él.
+//
+// Workers (medido): uno creado desde un file: NO recibe CSP ni por <meta> ni
+// por cabecera, y podría salir a la red; uno creado desde un blob: SÍ hereda
+// la de la ventana. Por eso `worker-src 'none'` en todas las ventanas y
+// `worker-src blob:` solo en Preparación, que arranca el Worker de pdf.js
+// envuelto en un blob: (ver extractPdf en su plantilla). Sin `worker-src`
+// explícito, los Workers caerían en script-src y se permitirían.
+// ------------------------------------------------------------------
+const CSP_SIN_RED_NI_INCRUSTADOS = [
+  "connect-src 'none'",
+  "frame-src 'none'",
+  "object-src 'none'",
+  "form-action 'none'",
+  "base-uri 'none'",
+];
+const CSP_PERFILES = Object.freeze({
+  // restore-helper.html (ventanas ocultas de volcado/lectura de particiones) y
+  // cualquier documento file:// que no esté en la tabla. main.js les habla
+  // con executeJavaScript, que la CSP no bloquea (medido).
+  cerrado: ["default-src 'none'", "form-action 'none'", "base-uri 'none'"].join('; '),
+  // Lanzador y splash: no tienen NINGÚN <script> en línea ni manejadores en
+  // línea, así que tampoco reciben `'unsafe-inline'` para scripts.
+  sinScriptEnLinea: [
+    "default-src 'none'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "worker-src 'none'",
+    ...CSP_SIN_RED_NI_INCRUSTADOS,
+  ].join('; '),
+  // Dashboard y Directorio (copias horneadas), Evaluación de Candidatos,
+  // selector de backups, Seguridad y la ventanita de contraseña.
+  interfaz: [
+    "default-src 'none'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "font-src 'self'",
+    "worker-src 'none'",
+    ...CSP_SIN_RED_NI_INCRUSTADOS,
+  ].join('; '),
+  // Preparación de Reunión: lo mismo, más el Worker de pdf.js (por blob:).
+  lectorDeActas: [
+    "default-src 'none'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "font-src 'self'",
+    'worker-src blob:',
+    ...CSP_SIN_RED_NI_INCRUSTADOS,
+  ].join('; '),
+});
+
+function perfilCspDeDocumento(url) {
+  let ruta;
+  try {
+    ruta = path.resolve(fileURLToPath(url)).toLowerCase();
+  } catch (e) {
+    return 'cerrado';
+  }
+  const deLaApp = (...partes) => path.resolve(__dirname, ...partes).toLowerCase();
+  switch (ruta) {
+    case deLaApp('launcher', 'index.html'):
+    case deLaApp('launcher', 'splash.html'):
+      return 'sinScriptEnLinea';
+    case deLaApp('preparacion-reunion', 'plantilla_preparacion_reunion.html'):
+      return 'lectorDeActas';
+    case deLaApp('dashboard', 'plantilla_dashboard.html'):
+    case deLaApp('evaluacion-candidatos', 'plantilla_evaluacion_candidatos.html'):
+    case deLaApp('backup-picker', 'index.html'):
+    case deLaApp('security-window', 'index.html'):
+    case deLaApp('launcher', 'password-prompt.html'):
+      return 'interfaz';
+    case deLaApp('dashboard', 'restore-helper.html'):
+      return 'cerrado';
+    default:
+      break;
+  }
+  // Copia horneada de un proyecto o del Directorio (projectDashboardFile).
+  const proyectos = path.resolve(app.getPath('userData'), 'projects').toLowerCase();
+  if (/^\d+[\\/]dashboard\.html$/.test(path.relative(proyectos, ruta))) return 'interfaz';
+  return 'cerrado';
+}
+
+function instalarCspEnSesion(ses) {
+  if (!ses || !ses.webRequest || typeof ses.webRequest.onHeadersReceived !== 'function') return;
+  ses.webRequest.onHeadersReceived((detalles, responder) => {
+    const url = String((detalles && detalles.url) || '');
+    // Solo archivos locales: el producto no carga nada más en sus ventanas, y
+    // una respuesta de red no se toca.
+    if (!/^file:/i.test(url)) {
+      responder({});
+      return;
+    }
+    let politica = CSP_PERFILES.cerrado;
+    try {
+      politica = CSP_PERFILES[perfilCspDeDocumento(url)] || CSP_PERFILES.cerrado;
+    } catch (e) {
+      /* ante la duda, cerrada */
+    }
+    // A un subrecurso (script, hoja, imagen, fuente) la cabecera no le hace
+    // nada; se pone en todas las respuestas file: para no depender de cómo
+    // clasifique Electron cada carga.
+    const cabeceras = Object.assign({}, detalles.responseHeaders);
+    cabeceras['Content-Security-Policy'] = [politica];
+    responder({ responseHeaders: cabeceras });
+  });
+}
+app.on('session-created', instalarCspEnSesion);
 
 function createLauncherWindow() {
   if (launcherWin && !launcherWin.isDestroyed()) {
@@ -8521,6 +8785,9 @@ function disableDriveSyncGuardSilently(reason) {
 // que esté marcada como compartida.
 function syncDriveSyncGuardWithLocation() {
   if (process.platform !== 'win32') return;
+  // P9: con location.json inutilizable no está demostrado que la ubicación
+  // "no sea compartida", así que la protección se deja exactamente como está.
+  if (configUbicacionNoResuelta) return;
   const shouldBeOn = isUsingSharedDataLocationNow();
   const isOn = isDriveSyncGuardEnabled();
   if (shouldBeOn && !isOn) {
@@ -9809,6 +10076,50 @@ function startUserDataWatchdog() {
   }, USERDATA_WATCHDOG_INTERVAL_MS);
 }
 
+// ------------------------------------------------------------------
+// P9 — location.json EXISTE pero no se puede usar (ver leerConfigUbicacion).
+//
+// Se para aquí, lo primero de app.whenReady: antes de la splash, de cualquier
+// espera de Drive, de la protección de apagado, del bloqueo multi-PC y de
+// abrir, crear o registrar ninguna base de datos. Al siguiente arranque se
+// vuelve a leer el archivo, y en cuanto esté bien la app arranca como siempre.
+//
+// Solo hay "Cerrar". NO se ofrece "abrir con datos locales": la carpeta local
+// suele ser un residuo de antes de configurar la compartida (así en el PC del
+// usuario), y abrirla —o crear una base de datos en ella— es justo el defecto
+// que se corrige aquí. Sin la ubicación configurada no hay forma de demostrar
+// que la base de datos local sea la buena.
+//
+// El mensaje no muestra la ruta real: solo la forma %APPDATA%\... del archivo.
+// ------------------------------------------------------------------
+function detenerArranquePorConfigUbicacion() {
+  const { estado, motivo } = configUbicacionNoResuelta;
+  appLog(`ERROR PS-1020 — location.json ${estado}: ${motivo}. No se abre, crea ni modifica ninguna base de datos.`);
+  try {
+    dialog.showMessageBoxSync(undefined, {
+      type: 'error',
+      title: 'No se puede leer la configuración de ubicación de datos',
+      message:
+        'La configuración de ubicación de datos no puede leerse. Panorama no cambiará automáticamente a otra base de datos.',
+      detail:
+        `Motivo: ${motivo}.\n\n` +
+        'Archivo: %APPDATA%\\panorama-app-config\\location.json\n\n' +
+        'No se ha abierto, creado ni modificado ninguna base de datos, y la protección de apagado sigue como ' +
+        'estaba. Panorama del Servicio se va a cerrar.\n\n' +
+        'Para volver a usarla hay que corregir ese archivo (guardado en UTF-8) o volver a elegir la carpeta de ' +
+        'datos con el instalador. No lo borres: sin él, la app usaría la carpeta de datos por defecto.' +
+        errorCodeSuffix('PS-1020'),
+      buttons: ['Cerrar'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+  } catch (e) {
+    appLog(`No se pudo mostrar el aviso PS-1020: ${String((e && e.message) || e)}`);
+  }
+  app.quit();
+}
+
 app.whenReady().then(async () => {
   // El módulo entero (incluidos los requires frágiles de './db' y
   // './security') ya cargó sin lanzar nada — pasado este punto, un error no
@@ -9818,6 +10129,11 @@ app.whenReady().then(async () => {
   // app.asar por debajo no soluciona nada a esas alturas.
   startupRecoveryArmed = false;
   appLog(`Arranque — v${app.getVersion()} (${process.platform} ${process.arch})`);
+  // P9: sin ubicación de datos resuelta no se da ni un paso más.
+  if (configUbicacionNoResuelta) {
+    detenerArranquePorConfigUbicacion();
+    return;
+  }
   showSplashWindow();
   if (customUserDataDirFailure) {
     await resolveUserDataDirFailureInteractively();

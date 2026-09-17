@@ -441,15 +441,20 @@ app.whenReady().then(async () => {
       await v.webContents.executeJavaScript("window.open('about:blank','_blank')").catch(() => {});
       await esperar(1500);
       const hija = BrowserWindow.getAllWindows().find((x) => !antes.has(x.id) && !x.isDestroyed());
+      // ANCLAJE ACTUALIZADO (ronda F2, 17 sept 2026). En la validación de F1,
+      // F1-N3 IDENTIFICABA la ventana negra: la hija de este window.open, con
+      // título «Electron». F3 (cerrado el 17 sept) la deniega siempre, así que
+      // ya no aparece; la ronda F3 no reejecutó este arnés y no se vio. Se
+      // conserva la reproducción y se exige lo que F3 garantiza.
       if (hija) {
         const ficha = { titulo: hija.getTitle(), url: hija.webContents.getURL(),
           fondo: (() => { try { return hija.getBackgroundColor(); } catch (e) { return null; } })() };
-        info('VENTANA NEGRA = ' + JSON.stringify(ficha));
-        ok('F1-N3 la "ventana negra" es la hija de window.open(about:blank) del arnés, titulada "Electron"',
-          /^electron$/i.test(ficha.titulo) && /about:blank/.test(ficha.url), JSON.stringify(ficha));
+        info('VENTANA NEGRA (no deberia existir desde F3) = ' + JSON.stringify(ficha));
         await captura(hija, '10-ventana-negra');
         hija.destroy();
-      } else ok('F1-N3 la "ventana negra" es la hija de window.open(about:blank) del arnés, titulada "Electron"', false, 'no apareció');
+      }
+      ok('F1-N3 [F3 CERRADO] el window.open(about:blank) que producia la «ventana negra» ya NO abre ninguna ventana',
+        !hija, hija ? 'aparecio una ventana' : '');
       tlog('__MODO_TERMINADO__ n');
       await esperar(1000);
       app.exit(0);

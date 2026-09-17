@@ -92,7 +92,10 @@ adelanta fases.
 | **E3–E5, E7** | **PENDIENTE** | Barra de título, tema fijo, colores, `THEME_KEYS` |
 | **E6** — fallo al exportar invisible | **CERRADO su mitad de guardado; PENDIENTE la de exportar** | |
 | **F1** — 76 `innerHTML` sin escapar | **CERRADO** (16 sept 2026) | **Interpretación de datos como HTML, corregida por contexto** (texto / atributo / `<textarea>` / selector / handler / `<script>` / URL). Los 76 `innerHTML` siguen ahí: se escapó el **dato**, no se reescribió la vista. 5 archivos: dashboard (helpers propios, era la única plantilla sin escape), `main.js` (seed `<`→`<` + replacement **function** contra `$&`/`$'`), Preparación (`onclick`→listener), Evaluación (`CSS.escape` en 9 selectores, peso/fecha), Directorio (`data-dedic`). Batería **139 OK/0** (exigente), Electron real **47 OK/0** (4 arranques), **6 reversiones 19 OK/0**. No se tocó `psConfirm`/puente ni F2/F3. Ver `pendientes-abiertos.md` §F1 |
-| **F2–F4** | **PENDIENTE** | Sin CSP, sin `setWindowOpenHandler`, CV nunca cifrados |
+| **P17** — assets sin resolver al hornear | **CERRADO** (17 sept 2026) | `fixVendorScriptPaths` con regex global + función de reemplazo. Ver `pendientes-abiertos.md` §P17 |
+| **F3** — sin `setWindowOpenHandler` | **CERRADO** (17 sept 2026) | Política única de apertura y navegación en las 10 ventanas (hija denegada siempre, `http(s)` validado con `new URL` → `shell.openExternal`, `will-navigate` con recarga y `blob:` preservados). Ver `pendientes-abiertos.md` §F2/F3 |
+| **F2** — sin CSP | **CERRADO** (17 sept 2026) | CSP **por cabecera** desde `main.js` (`session-created` → `onHeadersReceived`) con cuatro perfiles mínimos; efectiva en las 10 ventanas; sin `unsafe-eval`; red/frames/objects/formularios/`<base>` cortados; lanzador y splash sin `unsafe-inline` en scripts; Worker de pdf.js arrancado por `blob:` (Preparación). `main.js` → `E7D596A8…`. Batería `f2/` **97 OK/0**, Electron real **212 OK/0**, laboratorio **41 OK/0**, 10 reversiones. Ver `pendientes-abiertos.md` §F2/F3 |
+| **F4** | **PENDIENTE** | CV nunca cifrados |
 | **P1** | **PENDIENTE — aceptado** | Backup duplicado de `startup` tras restaurar |
 | **P2** | **CERRADO** (15 sept 2026) | Identidad en los `'closed'` de meeting y candidatos, **provocada en Electron real**: `RA-8`, `map.get(X) === B` sobre los Map reales, con control negativo y con la reversión `I-p2-delete-ciego` dejando el mapa vacío |
 | **P3** | **CERRADO** | = B2 |
@@ -101,7 +104,7 @@ adelanta fases.
 | **P6** — filas huérfanas al borrar | **CERRADO** | Bloque 5 / D1: cuatro tablas en un commit |
 | **P7** — archivo antes que su fila | **CERRADO** | Bloque 4 |
 | **P8** — borrados no atómicos | **CERRADO** | Bloque 5 / D1 y D2 |
-| **P9** — `location.json` con BOM | **PENDIENTE en producción** | Corregido solo en los arneses (fail-closed) |
+| **P9** — `location.json` ilegible (BOM y otros) | **CERRADO** (17 sept 2026) · **ALTO / INTEGRIDAD** | Presente pero inutilizable **nunca** equivale a «sin configuración». Un solo lector (`leerConfigUbicacion`: ausente / válido / ilegible / inválido) que acepta UTF-8, UTF-8 con un BOM y UTF-16 con BOM. Lo inutilizable detiene el arranque con **PS-1020** (solo «Cerrar», cero ventanas): ninguna BD abierta, creada ni registrada, la protección de apagado intacta y sin rescate de `app.asar` desde la carpeta por defecto. Solo `main.js` → `2D05E00B…`. `p9/` **282/0**, Electron real **111/0**, 7 reversiones (5 también en Electron). Pendientes separados: instalador ANSI, `.bat`, «datos locales» en PS-1005. Ver `pendientes-abiertos.md` §P9 — implementación |
 | **P10** — ~85 MB de residuos locales | **PENDIENTE** | Ahí está la `panorama.sqlite3` residual (ver §9) |
 | **P11** — UX «consola F12» | **PENDIENTE** | |
 
@@ -1080,11 +1083,12 @@ matriz de impacto, autorización explícita, implementación, plan de pruebas,
 
 | | valor |
 |---|---|
-| **Hash actual (baseline vigente)** | `D5C3FF53D09925B6C8258F5EFFF84DA44F949EBCE609A1276887BD30D21F46C8` |
+| **Hash actual (baseline vigente)** | `C26323D15535949653AC035E13EBBBD084997CCC2AE54AE2119685B8A885AAB0` |
 | bytes | 77 824 |
-| `LastWriteTime` | 2026-09-15 11:26:45 |
-| baseline capturada | 2026-09-15 13:24 |
-| **Hash anterior** | `52394C7A0CB83D8B170F514C10522BF74FCA01D6D3F54160544B7D1375A01F16` (capturado 2026-09-15 00:00) |
+| `LastWriteTime` | 2026-09-17 13:04:57 |
+| baseline capturada | 2026-09-17 14:32 |
+| **Hash anterior** | `D5C3FF53D09925B6C8258F5EFFF84DA44F949EBCE609A1276887BD30D21F46C8` (capturado 2026-09-15 13:24; cambió por una **sesión real** el 17 sept, 13:02–13:04, entre dos tiradas del arnés P9 — ver `comun/baseline-bd-viva.json`) |
+| **Hash anterior aún** | `52394C7A0CB83D8B170F514C10522BF74FCA01D6D3F54160544B7D1375A01F16` (capturado 2026-09-15 00:00) |
 
 **Por qué el cambio se atribuye a una sesión real del usuario, no a las
 pruebas:** el `.sqlite3` y `app.log` llevan la **misma marca de tiempo**
@@ -1116,7 +1120,14 @@ Documento: `claude/checkpoint-bloque5-2026-09-15.md`.
 
 ### Cadena de los archivos tocados
 
-> **Ronda C1-A (16 sept 2026, la última): DOS archivos productivos
+> **Rondas del 16–17 sept 2026 posteriores a C1-A, en orden** (detalle en
+> `pruebas-a33/MANIFIESTO.md` §4): `main.js` `F81F0A3D…` → F1 `0BC92A46…` →
+> P17 `434BB294…` → F3 `16AB5F53…` → F2 `E7D596A8…` → **P9
+> `2D05E00B53B8C45E6823E8629579D303FB69E2B0A24E53DCBE7700897E5F30F9`** (610 975
+> B). **P9 solo toca `main.js`**; instantánea previa en
+> `claude/main.js.ANTES-P9-2026-09-17`.
+>
+> **Ronda C1-A (16 sept 2026): DOS archivos productivos
 > modificados** — `main.js` (`DB7FF295…` → **`F81F0A3D3DF0AA1F…`**, 587 045 B,
 > 11 637 líneas) y `evaluacion-candidatos/plantilla_evaluacion_candidatos.html`
 > (`F9DF00AE…` → **`FFCEAD9810070A0B…`**, 117 361 B). Snapshots previos en

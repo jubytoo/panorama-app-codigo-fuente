@@ -335,9 +335,16 @@ app.whenReady().then(async () => {
       let bHija = null;
       if (hija) { bHija = await barreras(hija, 'window.open(about:blank)'); try { hija.destroy(); } catch (e) {} }
       info('window.open: ' + ro);
-      ok('F1-RA10 [F3] window.open desde la página crea una BrowserWindow nueva (no hay setWindowOpenHandler)', !!hija);
-      ok('F1-RA11 [F3] la ventana hija NO recibe panoramaBridge y hereda contextIsolation+sandbox',
-        !!bHija && bHija.contextIsolation === true && bHija.sandbox === true && bHija.mundo && !(bHija.mundo.globales || {}).panoramaBridge, JSON.stringify(bHija));
+      // ANCLAJES ACTUALIZADOS (ronda F2, 17 sept 2026). En el diagnóstico de F1
+      // estas dos aserciones DESCRIBÍAN la exposición de F3: que window.open
+      // creaba una BrowserWindow y qué heredaba. F3 se cerró el 17 sept y desde
+      // entonces la ventana hija se DENIEGA siempre — `f2f3/electron-f2f3.ps1`
+      // (F3-1) exige justo eso—, así que ya no hay hija que medir. La ronda F3
+      // no reejecutó este arnés y no se vio; se detectó al reejecutarlo en F2.
+      // Lo que se mantiene es la custodia: que no aparezca ninguna ventana.
+      ok('F1-RA10 [F3 CERRADO] window.open desde la página ya NO crea ninguna BrowserWindow (se deniega)', !hija && ro === 'bloqueada', ro);
+      ok('F1-RA11 [F3 CERRADO] …así que no hay ventana hija que pueda recibir nada (sus barreras se midieron en el diagnóstico)',
+        !hija && bHija === null, JSON.stringify(bHija));
 
       // --- persistencia: guardado normal ---------------------------------
       const g = await volcadoYBackup(v);

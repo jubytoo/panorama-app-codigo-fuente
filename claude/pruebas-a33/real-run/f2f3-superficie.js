@@ -177,7 +177,26 @@ app.whenReady().then(async () => {
         + "frame-src 'none'; object-src 'none'; worker-src 'self' file:; base-uri 'none'";
       info('CSP candidata: ' + CSP);
       const pagina = paginaLab(CSP, 'lab-csp.html');
-      const w = new BrowserWindow({ show: false, webPreferences: { contextIsolation: true, nodeIntegration: false } });
+      // F2 (17 sept 2026) — desde que main.js entrega la CSP por cabecera, esta
+      // página de laboratorio es un documento file:// AJENO al producto y recibe
+      // el perfil CERRADO: se deja constancia (es la propiedad que F2 exige)…
+      {
+        const wc = new BrowserWindow({ show: false, webPreferences: { contextIsolation: true, nodeIntegration: false } });
+        await wc.loadURL(urlDe(pagina));
+        await esperar(800);
+        const cerrada = await wc.webContents.executeJavaScript(
+          "JSON.stringify({inline: !!(window.__lab && window.__lab.inlineScript), theme: (function(){try{return typeof THEMES}catch(e){return 'undefined'}})()})")
+          .then(JSON.parse).catch((e) => ({ error: e.message }));
+        info('pagina de laboratorio SIN aislar: ' + JSON.stringify(cerrada));
+        ok('F2-CSP0 [DESDE F2] un documento file:// ajeno al producto recibe la politica CERRADA (ni su script en linea ni el vendor)',
+          cerrada.inline === false && cerrada.theme === 'undefined', JSON.stringify(cerrada));
+        wc.destroy();
+      }
+      // …y la candidata se sigue midiendo AISLADA, como en el diagnóstico: una
+      // partición propia a la que se le quita el oyente de main.js (solo aquí).
+      const { session } = electron;
+      session.fromPartition('f2f3-lab-aislado').webRequest.onHeadersReceived(null);
+      const w = new BrowserWindow({ show: false, webPreferences: { contextIsolation: true, nodeIntegration: false, partition: 'f2f3-lab-aislado' } });
       await w.loadURL(urlDe(pagina));
       await esperar(1200);
 

@@ -1,0 +1,1542 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Preparación de Reunión — Panorama del Servicio</title>
+<!-- v2.0.26: esta plantilla YA declaraba --sans:'Inter' (más abajo) pero
+     nunca tuvo el <link> que la cargara -- Inter nunca llegó a pintarse
+     aquí, caía siempre a system-ui sin que se notara. Se añade ahora ya
+     auto-hospedada localmente (ver vendor/fonts/fonts.css), igual que en
+     dashboard/ y directorio/ -- nunca se llegó a usar el CDN de Google
+     Fonts en este archivo en concreto. -->
+<link rel="stylesheet" href="../vendor/fonts/fonts.css">
+<!-- v2.0.27: tema visual GLOBAL de toda la app -- ver vendor/theme.js. -->
+<script src="../vendor/theme.js"></script>
+<!-- v2.0.29: transiciones y movimiento (Fase 3), ver vendor/motion.css. -->
+<link rel="stylesheet" href="../vendor/motion.css">
+<!-- v2.0.31: modal de confirmación/aviso propio (Fase 5a/5b), ver vendor/modal.js. -->
+<script src="../vendor/modal.js"></script>
+<!-- v2.0.40: scrollbar personalizado y barra de título/controles propios,
+     unificados en vendor/window-chrome.css -- antes duplicados carácter
+     por carácter en esta plantilla, dashboard y directorio
+     (auditoría 2026-09-12, secciones 1.6 y 3). -->
+<link rel="stylesheet" href="../vendor/window-chrome.css">
+<style>
+:root{
+  --bg:#0a0e13; --surface:#121821; --surface-2:#171f2a;
+  --border:#232e3a; --border-soft:#1a2330;
+  --ink:#eef2f6; --ink-soft:#93a3b5; --ink-faint:#546578;
+  --amber:#f0a83c; --amber-bg:#2b2211;
+  --cyan:#4fc3d9; --cyan-bg:#0f242b; --cyan-dim:#1e3540;
+  --green:#4caf82; --green-bg:#102a20;
+  --red:#e2596b; --red-bg:#2b1418;
+  --mono:'JetBrains Mono', ui-monospace, Consolas, monospace;
+  --sans:'Inter', system-ui, sans-serif;
+  --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.28);
+}
+*{box-sizing:border-box;}
+/* v2.0.26: scrollbar propia -- v2.0.40: movida a vendor/window-chrome.css. */
+body{
+  margin:0; min-height:100vh;
+  background:
+    radial-gradient(1100px 420px at 15% -10%, var(--bg-glow-1) 0%, transparent 60%),
+    radial-gradient(900px 380px at 100% 0%, var(--bg-glow-2) 0%, transparent 55%),
+    var(--bg);
+  color:var(--ink); font-family:var(--sans); -webkit-font-smoothing:antialiased;
+}
+/* v2.0.16 — el padding que antes llevaba <body> pasa aquí: si se deja en
+   <body>, empuja hacia abajo también a .titlebar (primer hijo de body),
+   dejando ver el fondo oscuro por encima de la barra de título propia. */
+.wrap{max-width:760px; margin:0 auto; padding:28px 18px 60px;}
+.eyebrow{font-family:var(--mono); font-size:11px; font-weight:600; letter-spacing:.18em; text-transform:uppercase; color:var(--cyan); margin-bottom:8px;}
+h1{font-family:var(--mono); font-size:23px; font-weight:700; margin:0 0 6px; letter-spacing:-.01em;}
+.subtitle{font-size:12.5px; color:var(--ink-soft); line-height:1.5; margin-bottom:22px;}
+.progress{display:flex; gap:6px; margin-bottom:24px;}
+.progress .dot{flex:1; height:4px; border-radius:2px; background:var(--border);}
+.progress .dot.done{background:var(--cyan);}
+.progress .dot.current{background:var(--cyan-dim); box-shadow:0 0 0 1px var(--cyan) inset;}
+.panel{
+  background:linear-gradient(160deg, color-mix(in srgb, var(--surface) 100%, white 8%) 0%, var(--surface) 60%);
+  border:1px solid var(--border); border-radius:12px; padding:22px 22px 20px; box-shadow:var(--shadow); margin-bottom:16px;
+}
+.panel h2{font-family:var(--mono); font-size:13px; text-transform:uppercase; letter-spacing:.06em; margin:0 0 4px; display:flex; align-items:center; gap:8px;}
+.panel h2::before{content:""; width:6px; height:6px; border-radius:50%; background:var(--cyan);}
+.panel .lead{font-size:14px; color:var(--ink); margin:2px 0 16px; line-height:1.5;}
+.subhead{
+  font-family:var(--mono); font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--cyan);
+  margin:20px 0 8px; padding-bottom:5px; border-bottom:1px solid var(--border-soft);
+}
+.subhead:first-of-type{margin-top:0;}
+label{display:block; font-family:var(--mono); font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-faint); margin:14px 0 6px;}
+label:first-of-type{margin-top:0;}
+input[type=date], input[type=text]{
+  background:var(--surface-2); border:1px solid var(--border); color:var(--ink); border-radius:6px;
+  padding:9px 10px; font-family:var(--mono); font-size:13px; width:100%;
+}
+input:focus{outline:none; border-color:var(--cyan);}
+textarea{
+  width:100%; background:var(--surface-2); border:1px solid var(--border); color:var(--ink);
+  border-radius:6px; padding:10px 11px; font-family:var(--sans); font-size:13px; line-height:1.5;
+  resize:vertical; min-height:60px;
+}
+textarea:focus{outline:none; border-color:var(--cyan);}
+.hint{font-size:11px; color:var(--ink-faint); margin-top:5px; line-height:1.4;}
+.dropzone{
+  border:1.5px dashed var(--border); border-radius:10px; padding:18px; text-align:center;
+  color:var(--ink-soft); font-size:12.5px; cursor:pointer; transition:border-color .15s, background .15s;
+}
+.dropzone:hover, .dropzone.drag{border-color:var(--cyan); background:var(--cyan-bg);}
+.dropzone .fname{font-family:var(--mono); color:var(--cyan); margin-top:6px; font-size:12px;}
+.dz-status{font-size:11.5px; margin-top:8px; font-family:var(--mono);}
+.dz-status.ok{color:var(--green);} .dz-status.warn{color:var(--amber);} .dz-status.err{color:var(--red);}
+.skip-note{font-size:11.5px; color:var(--ink-faint); margin-top:10px; font-style:italic;}
+.item{
+  border:1px solid var(--border-soft); border-radius:8px; padding:11px 13px; margin-bottom:9px;
+  background:var(--surface-2);
+}
+.item .txt{font-size:13px; line-height:1.4; margin-bottom:9px;}
+.item .txt .flag{color:var(--amber); font-weight:600;}
+.item .meta{font-family:var(--mono); font-size:10.5px; color:var(--ink-faint); margin-top:2px;}
+.seg{display:flex; gap:6px;}
+.seg button{
+  flex:1; font-family:var(--mono); font-size:10px; font-weight:600; letter-spacing:.03em;
+  border-radius:5px; padding:7px 6px; cursor:pointer; border:1px solid var(--border);
+  background:var(--surface); color:var(--ink-faint); text-transform:uppercase;
+}
+.seg button.active[data-v="mencionar"]{background:var(--cyan-bg); border-color:var(--cyan-dim); color:var(--cyan);}
+.seg button.active[data-v="sabian"]{background:var(--surface-2); border-color:var(--border); color:var(--ink-soft);}
+.seg button.active[data-v="omitir"]{background:var(--red-bg); border-color:var(--red-border); color:var(--red);}
+.empty-note{font-size:12.5px; color:var(--ink-faint); padding:8px 2px;}
+.nav{display:flex; justify-content:space-between; gap:10px; margin-top:6px;}
+.btn{
+  font-family:var(--mono); font-size:11.5px; font-weight:600; border-radius:7px; padding:10px 18px;
+  cursor:pointer; border:1px solid var(--border); background:var(--surface-2); color:var(--ink-soft);
+}
+.btn:hover{border-color:var(--ink-faint);}
+.btn.primary{background:var(--cyan-bg); border-color:var(--cyan-dim); color:var(--cyan);}
+.btn.primary:hover{border-color:var(--cyan);}
+.btn:disabled{opacity:.4; cursor:not-allowed;}
+.qgroup{margin-bottom:16px;}
+.qgroup:last-child{margin-bottom:0;}
+.qgroup .q{font-size:13px; color:var(--ink); margin-bottom:7px; font-weight:500;}
+/* --- resumen ejecutivo --- */
+.exec-kpis{display:grid; grid-template-columns:repeat(auto-fit, minmax(130px,1fr)); gap:8px; margin:14px 0 4px;}
+.exec-kpi{background:var(--surface-2); border:1px solid var(--border); border-left:3px solid var(--border); border-radius:8px; padding:9px 11px;}
+.exec-kpi.rojo{border-left-color:var(--red); background:var(--red-bg);}
+.exec-kpi.ambar{border-left-color:var(--amber); background:var(--amber-bg);}
+.exec-kpi.verde{border-left-color:var(--green); background:var(--green-bg);}
+.exec-kpi .k-label{font-family:var(--mono); font-size:9px; text-transform:uppercase; letter-spacing:.04em; color:var(--ink-faint);}
+.exec-kpi .k-value{font-family:var(--mono); font-size:17px; font-weight:700; color:var(--ink); margin-top:3px;}
+.exec-kpi.rojo .k-value{color:var(--red);} .exec-kpi.ambar .k-value{color:var(--amber);} .exec-kpi.verde .k-value{color:var(--green);}
+.exec-badge{display:inline-flex; align-items:center; gap:7px; font-family:var(--mono); font-size:11.5px; font-weight:700; padding:5px 12px; border-radius:20px;}
+.exec-badge.rojo{background:var(--red-bg); color:var(--red);}
+.exec-badge.ambar{background:var(--amber-bg); color:var(--amber);}
+.exec-badge.verde{background:var(--green-bg); color:var(--green);}
+/* --- guion final --- */
+.guion h3{
+  font-family:var(--mono); font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--cyan);
+  margin:20px 0 8px; padding-bottom:6px; border-bottom:1px solid var(--border-soft);
+}
+.guion h3:first-child{margin-top:0;}
+.guion ul{margin:0 0 4px; padding-left:18px;}
+.guion li{font-size:13.5px; line-height:1.6; margin-bottom:3px;}
+.guion .empty{color:var(--ink-faint); font-size:12.5px; font-style:italic;}
+.actions{display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:18px;}
+.save-status{
+  display:inline-flex; align-items:center; gap:8px; font-family:var(--mono); font-size:11.5px;
+  padding:6px 11px; border-radius:6px; line-height:1.3;
+}
+.save-status.saving{ color:var(--cyan); background:var(--cyan-bg); }
+.save-status.ok{ color:var(--green); background:var(--green-bg); }
+.save-status.error{ color:var(--red); background:var(--red-bg); }
+.save-status .btn{ margin-left:2px; }
+.acta-block{margin-top:22px; padding-top:18px; border-top:1px solid var(--border-soft);}
+.cand-list{margin-top:12px; display:flex; flex-direction:column; gap:6px;}
+.cand-item{
+  display:flex; align-items:flex-start; gap:8px; background:var(--amber-bg); border:1px solid #4a3c1a;
+  border-radius:7px; padding:8px 10px; font-size:12.5px; line-height:1.4; color:var(--ink);
+}
+.cand-item .add-btn{
+  flex:0 0 auto; font-family:var(--mono); font-size:10px; font-weight:700; border-radius:5px; padding:4px 8px;
+  cursor:pointer; border:1px solid var(--cyan-dim); background:var(--cyan-bg); color:var(--cyan);
+}
+details.raw-text{margin-top:10px;}
+details.raw-text summary{cursor:pointer; font-size:11.5px; color:var(--ink-faint); font-family:var(--mono);}
+details.raw-text pre{
+  white-space:pre-wrap; font-family:var(--sans); font-size:12px; color:var(--ink-soft); line-height:1.5;
+  max-height:260px; overflow-y:auto; background:var(--surface); border:1px solid var(--border-soft);
+  border-radius:7px; padding:10px 12px; margin-top:8px;
+}
+/* --- cabecera con acceso al historial --- */
+.top-row{display:flex; align-items:flex-start; justify-content:space-between; gap:12px;}
+.autoload-note{
+  font-size:11.5px; color:var(--cyan); background:var(--cyan-bg); border:1px solid var(--cyan-dim);
+  border-radius:7px; padding:8px 10px; margin-bottom:14px; line-height:1.4;
+}
+/* --- historial: modal simple --- */
+.modal-overlay{
+  position:fixed; inset:0; background:rgba(6,9,13,.72); display:flex; align-items:flex-start;
+  justify-content:center; padding:40px 16px; overflow-y:auto; z-index:50;
+}
+.modal-box{
+  width:100%; max-width:620px; background:var(--surface); border:1px solid var(--border);
+  border-radius:12px; box-shadow:var(--shadow); padding:20px 22px 18px;
+}
+.modal-box .m-head{display:flex; align-items:center; justify-content:space-between; margin-bottom:4px;}
+.modal-box h2{font-family:var(--mono); font-size:13px; text-transform:uppercase; letter-spacing:.06em; margin:0;}
+.modal-box .hint{margin-bottom:14px;}
+.hist-list{display:flex; flex-direction:column; gap:8px; max-height:50vh; overflow-y:auto;}
+.hist-item{
+  border:1px solid var(--border-soft); border-radius:8px; padding:10px 12px; background:var(--surface-2);
+  display:flex; align-items:center; justify-content:space-between; gap:10px; cursor:pointer;
+}
+.hist-item:hover{border-color:var(--cyan-dim);}
+.hist-item .h-info .h-date{font-family:var(--mono); font-size:12px; color:var(--ink); font-weight:600;}
+.hist-item .h-info .h-fin{font-size:11.5px; color:var(--ink-soft); margin-top:2px;}
+.hist-item .h-actions{display:flex; align-items:center; gap:10px; flex:0 0 auto;}
+.hist-del{
+  font-family:var(--mono); font-size:13px; color:var(--ink-faint); cursor:pointer; background:none; border:none;
+  padding:3px 5px; border-radius:4px; line-height:1;
+}
+.hist-del:hover{color:var(--red); background:var(--red-bg);}
+.hist-empty{font-size:12.5px; color:var(--ink-faint); padding:10px 2px;}
+.hist-view pre{
+  white-space:pre-wrap; font-family:var(--sans); font-size:12.5px; color:var(--ink-soft); line-height:1.55;
+  max-height:56vh; overflow-y:auto; background:var(--surface-2); border:1px solid var(--border-soft);
+  border-radius:7px; padding:12px 13px; margin-top:4px;
+}
+.hist-back{font-family:var(--mono); font-size:11px; color:var(--cyan); cursor:pointer; margin-bottom:10px; display:inline-block;}
+.hist-view-actions{margin-top:10px;}
+@media print{
+  body{background:#fff; color:#111; padding:0;}
+  .no-print{display:none !important;}
+  .panel{box-shadow:none; border:none; background:none; padding:0;}
+  .guion h3{color:#111; border-color:#ccc;}
+  .wrap{max-width:100%;}
+}
+
+/* v2.0.16 — barra de título propia, sin fila de menú (esta ventana nunca
+   tuvo menú). Ver la nota junto a .titlebar en dashboard/plantilla_dashboard.html
+   para el detalle completo del porqué.
+   v2.0.40: las reglas .titlebar/.win-controls en sí se movieron a
+   vendor/window-chrome.css (estaban duplicadas carácter por carácter en
+   esta plantilla, dashboard y directorio). */
+</style>
+</head>
+<body>
+<div class="titlebar no-print" id="titlebar">
+  <img src="../assets/icon-256.png" alt="" />
+  <span class="tb-title">Preparación de Reunión</span>
+  <span class="tb-spacer"></span>
+  <div class="win-controls">
+    <button id="tb-minimize" title="Minimizar">─</button>
+    <button id="tb-maximize" title="Maximizar">▢</button>
+    <button id="tb-close" class="close" title="Cerrar">✕</button>
+  </div>
+</div>
+<div class="wrap">
+
+  <div class="no-print">
+    <div class="top-row">
+      <div>
+        <div class="eyebrow">Panorama del Servicio · Herramienta complementaria</div>
+        <h1>Preparación de Reunión</h1>
+      </div>
+      <button class="btn" id="btn-open-historial" title="Ver preparaciones guardadas de este proyecto">📜 Historial</button>
+    </div>
+    <div class="subtitle" id="proj-subtitle">Guion rápido antes de cada reunión de seguimiento con el cliente: qué ha cambiado desde la última vez y qué falta por cerrar. No sustituye al Panorama del Servicio, es un checklist de apoyo puntual.</div>
+    <div id="editing-banner-slot"></div>
+    <div class="progress" id="progress"></div>
+  </div>
+
+  <div id="steps"></div>
+
+</div>
+
+<div id="historial-modal-slot"></div>
+
+<script>
+/* ===================== ESTADO ===================== */
+const state = {
+  step: 0,
+  meetingDate: '',
+  todayDate: new Date().toISOString().slice(0,10),
+  finalidad: '',
+  jsonRaw: null,       // { state, exportedAt } — cargado solo desde el backup del proyecto, sin subir nada a mano
+  jsonStatus: null,    // 'loading' | 'ok' | 'error' | null
+  jsonError: '',
+  // decisiones por item auto-detectado: id -> 'mencionar'|'sabian'|'omitir'
+  decisions: {},
+  // texto libre — ver TEXT_FIELDS más abajo para la lista completa
+  accesos: '', avances: '', aplicaciones: '', mejoras: '', propuestas: '',
+  queHaIdoBien: '', leccionAprendida: '', cambioProceso: '',
+  slaCumplido: '', incidenciasGraves: '', indicadorTendencia: '', cifrasCliente: '',
+  consumoHoras: '', riesgoConsumo: '', ampliacion: '', facturaCoste: '',
+  seguridadAuditoria: '', normativaCambio: '', accesosRevisar: '', certificacionCaducar: '',
+  quejaCliente: '', interlocutorNuevo: '', riesgoRelacion: '', pedidoSinRespuesta: '', tonoAnterior: '',
+  renovacionContrato: '', cambioAlcance: '', renegociarSla: '', scopeCreep: '',
+  esperandoCliente: '', bloqueoCliente: '', decisionHoy: '',
+  cadenciaReuniones: '', informeRetrasado: '', escaladoActivado: '',
+  accesoAltaBaja: '', cambioHerramienta: '', actasPendientesFirma: '', documentacionAccesible: '',
+  oportunidadUpsell: '', otroProveedor: '', continuidadVigente: '', puntoUnicoFallo: '',
+  formacionEquipo: '', cargaTrabajo: '',
+  pendientesNuestros: '', pendientesCliente: '',
+  // acta de la reunión anterior
+  actaFileName: '',
+  actaStatus: null,   // 'loading' | 'ok' | 'error'
+  actaError: '',
+  actaText: '',
+  actaCandidatos: [],
+  // Historial de preparaciones guardadas (ver meeting:savePrep/listPreps/getPrep
+  // en main.js) — no confundir con jsonRaw (el backup del dashboard).
+  historialOpen: false,
+  historialLoading: false,
+  historialError: '',
+  historialList: [],       // [{id, created_at, meeting_date, finalidad}]
+  historialViewing: null,  // id de la preparación abierta dentro del modal, o null = lista
+  historialViewData: null, // payload completo de la preparación abierta
+  historialViewError: '',
+  saveHistoryStatus: null, // null | 'saving' | 'ok' | 'error'
+  // true si pendientesNuestros/pendientesCliente se rellenaron solos desde la
+  // última preparación guardada (para avisar en el paso Pendientes)
+  pendientesAutocargados: false,
+  pendientesAutocargadosDe: null,
+  // Id de la preparación guardada a la que corresponde el guion actual —
+  // se guarda sola (ver autoSaveHistory()) en cuanto se llega al paso final,
+  // y con esto puesto cualquier guardado posterior ACTUALIZA esa misma
+  // fila en vez de crear una nueva. Viene de "✏️ Editar" dentro del
+  // historial (ver editHistorialItem()), o se rellena solo tras el primer
+  // guardado automático de una preparación nueva. null = todavía no se ha
+  // guardado nada de esta preparación.
+  loadedPrepId: null,
+  // true SOLO cuando se llegó aquí con "✏️ Editar" desde el historial (ver
+  // editHistorialItem()) — a diferencia de `loadedPrepId`, que se rellena
+  // solo tras CUALQUIER primer guardado automático (incluida una
+  // preparación nueva de cero). Sirve para el aviso de
+  // `renderEditingBanner()`: solo debe decir "completando una preparación
+  // YA guardada" cuando de verdad se reabrió una existente, no cada vez
+  // que el guardado automático hace su trabajo por primera vez.
+  editingFromHistorial: false
+};
+
+// Todos los campos de texto libre "una pregunta → un textarea", para no
+// repetir el cableado a mano de cada uno (ver collectStepInputs y
+// renderQgroups).
+const TEXT_FIELDS = [
+  'accesos','avances','aplicaciones','mejoras','propuestas',
+  'queHaIdoBien','leccionAprendida','cambioProceso',
+  'slaCumplido','incidenciasGraves','indicadorTendencia','cifrasCliente',
+  'consumoHoras','riesgoConsumo','ampliacion','facturaCoste',
+  'seguridadAuditoria','normativaCambio','accesosRevisar','certificacionCaducar',
+  'quejaCliente','interlocutorNuevo','riesgoRelacion','pedidoSinRespuesta','tonoAnterior',
+  'renovacionContrato','cambioAlcance','renegociarSla','scopeCreep',
+  'esperandoCliente','bloqueoCliente','decisionHoy',
+  'cadenciaReuniones','informeRetrasado','escaladoActivado',
+  'accesoAltaBaja','cambioHerramienta','actasPendientesFirma','documentacionAccesible',
+  'oportunidadUpsell','otroProveedor','continuidadVigente','puntoUnicoFallo',
+  'formacionEquipo','cargaTrabajo',
+  'pendientesNuestros','pendientesCliente'
+];
+
+// Campos que son solo estado de interfaz (modal abierto, "guardando…", etc.)
+// y no tiene sentido guardar en el historial — todo lo demás de `state` sí
+// (incluye jsonRaw, el volcado del dashboard en el momento de guardar: así
+// cada preparación guardada es también una foto completa del proyecto en esa
+// fecha, no solo de las respuestas manuales).
+const HISTORIAL_SKIP_KEYS = [
+  'historialOpen','historialLoading','historialError','historialList',
+  'historialViewing','historialViewData','historialViewError','saveHistoryStatus',
+  'pendientesAutocargados','pendientesAutocargadosDe','loadedPrepId','editingFromHistorial'
+];
+function buildMeetingPrepPayload(){
+  const clean = {};
+  Object.keys(state).forEach(k => { if(!HISTORIAL_SKIP_KEYS.includes(k)) clean[k] = state[k]; });
+  clean.guionText = guionAsText();
+  clean.savedAt = new Date().toISOString();
+  return JSON.stringify(clean);
+}
+
+const _scriptCache = {};
+function loadScript(src){
+  if(_scriptCache[src]) return _scriptCache[src];
+  _scriptCache[src] = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src; s.onload = () => resolve(); s.onerror = () => reject(new Error('No se pudo cargar '+src));
+    document.head.appendChild(s);
+  });
+  return _scriptCache[src];
+}
+
+const STEP_KEYS = ['carga','resumen','equipo','hitos','riesgos','servicio','cliente','avances','gobierno','pendientes','guion'];
+
+/* ===================== UTILIDADES ===================== */
+function fmtDate(iso){
+  if(!iso) return '';
+  const [y,m,d] = iso.split('-');
+  const meses = ['ENE','FEB','MAR','ABR','MAY','JUN','JUL','AGO','SEP','OCT','NOV','DIC'];
+  return `${d} ${meses[parseInt(m,10)-1]} ${y}`;
+}
+function inRange(iso, from, to){
+  if(!iso) return false;
+  if(from && iso < from) return false;
+  if(to && iso > to) return false;
+  return true;
+}
+function esc(s){
+  return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+// Inversa exacta de esc(), para volver a texto plano (ver guionAsText). Se
+// decodifica `&amp;` al final a propósito: así `&amp;lt;` vuelve a ser
+// `&lt;` y no se convierte por error en `<`.
+function desescapar(s){
+  return String(s == null ? '' : s)
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+/* ===================== CARGA DE DATOS DEL PROYECTO (vía IPC) =====================
+   Antes había que exportar el backup a mano, subirlo aquí y meter la
+   contraseña si estaba cifrado. Ahora esta ventana se abre YA para un
+   proyecto concreto (window.panoramaBridge.projectId) y pide su backup más
+   reciente directamente al proceso principal, que lo descifra con la misma
+   seguridad de la app si hace falta — nada que subir ni ninguna contraseña
+   que teclear aquí. */
+async function loadProjectData(){
+  state.jsonStatus = 'loading';
+  render();
+  if(!window.panoramaBridge || typeof window.panoramaBridge.getMeetingPrepData !== 'function'){
+    state.jsonStatus = 'error';
+    state.jsonError = 'Esta herramienta solo funciona abierta desde un proyecto de Panorama del Servicio.';
+    render();
+    return;
+  }
+  try{
+    const result = await window.panoramaBridge.getMeetingPrepData();
+    if(result && result.ok){
+      state.jsonRaw = { state: result.state, exportedAt: result.exportedAt };
+      state.jsonStatus = 'ok';
+    } else {
+      state.jsonRaw = null;
+      state.jsonStatus = 'error';
+      state.jsonError = (result && result.error) || 'No se pudo leer el backup del proyecto.';
+    }
+  }catch(e){
+    state.jsonRaw = null;
+    state.jsonStatus = 'error';
+    state.jsonError = (e && e.message) || String(e);
+  }
+  render();
+}
+
+/* ===================== CANDIDATOS AUTOMÁTICOS ===================== */
+function getData(){ return state.jsonRaw ? (state.jsonRaw.state || {}) : null; }
+
+function equipoCandidatos(){
+  const d = getData(); if(!d) return [];
+  const from = state.meetingDate, to = state.todayDate;
+  const out = [];
+  (d.team||[]).forEach(t=>{
+    if(t.pendingCandidate) return; // plaza sin cubrir todavía, no es una persona real (ver directorio de talento)
+    if(inRange(t.date, from, to) && t.status !== 'rotado'){
+      out.push({ id:'eq-alta-'+t.id, txt:`Alta: ${esc(t.role)} incorporado el ${fmtDate(t.date)}${t.status==='pendiente'?' (pendiente)':''}` });
+    }
+    if(t.rotationDate && inRange(t.rotationDate, from, to)){
+      out.push({ id:'eq-baja-'+t.id, txt:`Baja/rotación: ${esc(t.role)} — salida efectiva el ${fmtDate(t.rotationDate)}` });
+    }
+    if(t.scheduledExit && inRange(t.scheduledExit, from, to)){
+      out.push({ id:'eq-prevista-'+t.id, txt:`Salida prevista comunicada: ${esc(t.role)} el ${fmtDate(t.scheduledExit)}` });
+    }
+  });
+  return out;
+}
+
+function hitosCandidatos(){
+  const d = getData(); if(!d) return [];
+  const from = state.meetingDate, to = state.todayDate;
+  const out = [];
+  (d.milestones||[]).forEach(m=>{
+    if(m.recurrente) return;
+    if(inRange(m.actualDate, from, to)){
+      out.push({ id:'hito-ok-'+m.id, txt:`Completado: "${esc(m.label)}" el ${fmtDate(m.actualDate)}` });
+    } else if(!m.actualDate && m.date && m.date < state.todayDate && m.date >= from){
+      out.push({ id:'hito-venc-'+m.id, txt:`<span class="flag">⚠ Sin fecha real registrada:</span> "${esc(m.label)}" estaba previsto para el ${fmtDate(m.date)}` });
+    }
+    (m.entregables||[]).forEach(e=>{
+      const fechaEnt = m.recurrente ? e.fecha : (e.entregado ? m.actualDate : null);
+      if(e.entregado && inRange(fechaEnt, from, to)){
+        out.push({ id:'ent-'+e.id, txt:`Entregable entregado: "${esc(e.nombre)}" (${esc(e.tipo)}) — hito "${esc(m.label)}"` });
+      }
+    });
+  });
+  return out;
+}
+
+// Mirando hacia DELANTE en vez de hacia atrás: hitos aún no cumplidos con
+// fecha prevista a partir de hoy, para el bloque "qué viene" del guion.
+function hitosProximos(){
+  const d = getData(); if(!d) return [];
+  const out = (d.milestones||[])
+    .filter(m => !m.recurrente && !m.actualDate && m.date && m.date >= state.todayDate)
+    .sort((a,b)=> a.date.localeCompare(b.date))
+    .slice(0, 6)
+    .map(m => ({ id:'hito-prox-'+m.id, txt:`"${esc(m.label)}" previsto para el ${fmtDate(m.date)}` }));
+  return out;
+}
+
+function riesgosCandidatos(){
+  const d = getData(); if(!d) return [];
+  const from = state.meetingDate, to = state.todayDate;
+  const out = [];
+  (d.risks||[]).forEach(r=>{
+    if(inRange(r.fechaMaterializacion, from, to)){
+      out.push({ id:'rk-mat-'+r.id, txt:`<span class="flag">Materializado:</span> [${esc(r.id)}] ${esc(r.title)} el ${fmtDate(r.fechaMaterializacion)}` });
+    }
+    if(inRange(r.fechaCierre, from, to)){
+      out.push({ id:'rk-cie-'+r.id, txt:`Cerrado: [${esc(r.id)}] ${esc(r.title)} el ${fmtDate(r.fechaCierre)}` });
+    }
+    if(inRange(r.fechaDeteccion, from, to) && r.fechaDeteccion !== d.serviceStart){
+      out.push({ id:'rk-det-'+r.id, txt:`Nuevo riesgo detectado: [${esc(r.id)}] ${esc(r.title)} el ${fmtDate(r.fechaDeteccion)}` });
+    }
+  });
+  return out;
+}
+
+/* ===================== RESUMEN EJECUTIVO (auto) =====================
+   Reutiliza el mismo cálculo que el propio dashboard usa en su panel de
+   KPIs (executiveStatus() en dashboard/plantilla_dashboard.html) — mismos
+   criterios de semáforo, portados aquí porque cada plantilla es un HTML
+   independiente sin módulos compartidos entre sí. */
+function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
+function pctOf(dateObj, start, end){ if(!start||!end||isNaN(start)||isNaN(end)||start>=end) return null; return clamp((dateObj-start)/(end-start),0,1)*100; }
+function milestoneStatus(m, today){
+  if(m.recurrente) return { done:false, semaforo:'recurrente' };
+  today = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  if(m.actualDate){
+    const diffDays = Math.round((new Date(m.actualDate+'T00:00:00') - new Date(m.date+'T00:00:00'))/86400000);
+    return { done:true, semaforo: diffDays<=0 ? 'verde' : 'ambar' };
+  }
+  const diffDays = Math.round((today - new Date(m.date+'T00:00:00'))/86400000);
+  if(diffDays > 0) return { done:false, semaforo:'rojo' };
+  if(diffDays === 0) return { done:false, semaforo:'ambar' };
+  return { done:false, semaforo:'gris' };
+}
+function riskLevel(r){ const c=(r.p||0)*(r.i||0); return c>6?'rojo':(c>=3?'amarillo':'verde'); }
+
+function executiveSummary(){
+  const d = getData();
+  if(!d) return null;
+  const today = new Date(state.todayDate+'T00:00:00');
+  const risksOpen = (d.risks||[]).filter(r=>r.status!=='cerrado');
+  const risksMaterialized = (d.risks||[]).filter(r=>r.status==='materializado');
+  const risksAltaOpen = risksOpen.filter(r=>riskLevel(r)==='rojo');
+  const msWithStatus = (d.milestones||[]).map(m=>milestoneStatus(m, today));
+  const msRojo = msWithStatus.filter(x=>x.semaforo==='rojo');
+  // Misma fórmula que el panel KPI del dashboard (dashboard/plantilla_dashboard.html,
+  // función executiveStatus): NO se excluyen las plazas "pendingCandidate" del total,
+  // para que este resumen y el KPI del dashboard muestren siempre el mismo número.
+  const techRoles = (d.team||[]).filter(t=>t.status!=='rotado');
+  const techActive = techRoles.filter(t=>t.status==='activo').length;
+  const entregablesTotal = (d.milestones||[]).reduce((acc,m)=> acc + (m.entregables ? m.entregables.length : 0), 0);
+  const entregablesEntregados = (d.milestones||[]).reduce((acc,m)=> acc + (m.entregables ? m.entregables.filter(e=>e.entregado).length : 0), 0);
+  const start = d.serviceStart ? new Date(d.serviceStart+'T00:00:00') : null;
+  const end = d.serviceEnd ? new Date(d.serviceEnd+'T00:00:00') : null;
+  const progressPct = (start && end) ? Math.round(pctOf(today, start, end)) : null;
+
+  let level = 'verde';
+  if(risksMaterialized.length>0 || msRojo.length>0) level = 'rojo';
+  else if(risksAltaOpen.length>0 || techActive<techRoles.length) level = 'ambar';
+  const label = level==='rojo' ? 'Riesgo crítico — requiere acción' : level==='ambar' ? 'Requiere atención' : 'Servicio estable';
+
+  return {
+    level, label, progressPct,
+    risksAltaOpen: risksAltaOpen.length, risksMaterialized: risksMaterialized.length,
+    msRojo: msRojo.length, techActive, techTotal: techRoles.length,
+    entregablesTotal, entregablesEntregados
+  };
+}
+
+/* ===================== ACTA DE LA REUNIÓN ANTERIOR ===================== */
+const ACTA_KEYWORDS = [
+  'pendiente','acción','accion','por confirmar','próxima reunión','proxima reunion',
+  'queda abierto','quedó abierto','sigue abierto','falta','a la espera','en curso',
+  'seguimiento','riesgo','incorporación','incorporacion','confirmar','revisar',
+  'acordado','se acuerda','se compromete','plazo','fecha límite','fecha limite','bloqueado'
+];
+
+function detectCandidatos(text){
+  const sentences = text
+    .split(/\r?\n+/)
+    .flatMap(line => line.split(/(?<=[.;:])\s+(?=[A-ZÁÉÍÓÚÑ0-9])/))
+    .map(s => s.trim())
+    .filter(s => s.length > 8 && s.length < 400);
+  const seen = new Set(); const out = [];
+  sentences.forEach(s=>{
+    const low = s.toLowerCase();
+    if(ACTA_KEYWORDS.some(k => low.includes(k)) && !seen.has(low)){
+      seen.add(low); out.push(s);
+    }
+  });
+  return out.slice(0, 40);
+}
+
+// mammoth.js y pdf.js vendorizados localmente (../vendor/) en vez de cdnjs —
+// esta ventana se carga siempre desde la propia carpeta de la app (no se
+// hornea copia por proyecto como el dashboard), así que la ruta relativa
+// funciona sola sin necesitar reescritura desde main.js.
+async function extractDocx(file){
+  await fetch('../vendor/mammoth.browser.min.js'); // REVERSIÓN F2-J
+  await loadScript('../vendor/mammoth.browser.min.js');
+  const buf = await file.arrayBuffer();
+  const result = await window.mammoth.extractRawText({ arrayBuffer: buf });
+  return result.value;
+}
+// F2 (17 sept 2026) — el Worker de pdf.js se arranca envuelto en un blob:.
+// Medido en Electron: un Worker creado desde un file: NO recibe la CSP de la
+// ventana (podría salir a la red); uno creado desde un blob: SÍ la hereda. La
+// CSP de esta ventana solo admite `worker-src blob:`, así que sin este
+// arranque pdf.js intentaría el file:, se le denegaría y leería el PDF en el
+// hilo principal (su «fake worker»). Se espera al primer mensaje del Worker
+// («ready») antes de dárselo a pdf.js: si no llega, se descarta y pdf.js
+// sigue por su camino de siempre, de modo que el acta se lee igualmente.
+let _pdfWorkerListo = null;
+function arrancarWorkerPdf(){
+  if(_pdfWorkerListo) return _pdfWorkerListo;
+  _pdfWorkerListo = new Promise((resolve) => {
+    let w;
+    try{
+      const src = new URL('../vendor/pdf.worker.min.js', location.href).href;
+      const envoltorio = new Blob([`importScripts(${JSON.stringify(src)});`], { type:'text/javascript' });
+      w = new Worker(URL.createObjectURL(envoltorio));
+    }catch(e){ resolve(null); return; }
+    const fin = (listo) => {
+      clearTimeout(tope);
+      w.removeEventListener('message', alMensaje);
+      w.removeEventListener('error', alFallar);
+      if(!listo){ try{ w.terminate(); }catch(e){} }
+      resolve(listo ? w : null);
+    };
+    const alMensaje = (ev) => { if(ev.data && ev.data.action === 'ready') fin(true); };
+    const alFallar = () => fin(false);
+    const tope = setTimeout(() => fin(false), 10000);
+    w.addEventListener('message', alMensaje);
+    w.addEventListener('error', alFallar);
+  });
+  return _pdfWorkerListo;
+}
+async function extractPdf(file){
+  await loadScript('../vendor/pdf.min.js');
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = '../vendor/pdf.worker.min.js';
+  if(!window.pdfjsLib.GlobalWorkerOptions.workerPort){
+    const w = await arrancarWorkerPdf();
+    if(w) window.pdfjsLib.GlobalWorkerOptions.workerPort = w;
+  }
+  const buf = await file.arrayBuffer();
+  const pdf = await window.pdfjsLib.getDocument({ data: buf }).promise;
+  let text = '';
+  for(let i=1;i<=pdf.numPages;i++){
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    text += content.items.map(it=>it.str).join(' ') + '\n';
+  }
+  return text;
+}
+
+async function handleActaFile(file){
+  state.actaFileName = file.name;
+  state.actaStatus = 'loading'; state.actaError = ''; state.actaCandidatos = []; state.actaText = '';
+  render();
+  const ext = file.name.split('.').pop().toLowerCase();
+  try{
+    let text;
+    if(ext === 'docx') text = await extractDocx(file);
+    else if(ext === 'pdf') text = await extractPdf(file);
+    else if(ext === 'txt' || ext === 'md') text = await file.text();
+    else throw new Error('Formato no soportado (usa .docx, .pdf o .txt)');
+    state.actaText = text;
+    state.actaCandidatos = detectCandidatos(text);
+    state.actaStatus = 'ok';
+  }catch(err){
+    state.actaStatus = 'error'; state.actaError = err.message || 'No se pudo leer el archivo';
+  }
+  render();
+}
+
+function addCandidatoA(text, targetKey){
+  const ta = document.getElementById('inp-'+targetKey);
+  if(ta) state[targetKey] = ta.value;
+  state[targetKey] = (state[targetKey] ? state[targetKey] + '\n' : '') + text;
+  render();
+}
+
+/* ===================== DECISIONES (mencionar/sabían/omitir) ===================== */
+function setDecision(id, v){ state.decisions[id] = v; render(); }
+function decisionOf(id){ return state.decisions[id] || 'mencionar'; }
+
+// F1 — el id del candidato lleva dentro el id del hito/riesgo, que viene del
+// backup del proyecto (dato importable). Interpolado dentro de `onclick="…"`,
+// una comilla lo sacaba del atributo y el resto se convertía en markup. Ya no
+// se construye handler: el id viaja en `data-seg-id` (atributo, escapado) y lo
+// recoge un listener delegado, que lo lee por `dataset` — sin volver a pasar
+// por el parser de HTML.
+function renderSeg(id){
+  const cur = decisionOf(id);
+  const opts = [['mencionar','Mencionar'],['sabian','Ya lo saben'],['omitir','Omitir']];
+  return `<div class="seg">` + opts.map(([v,l])=>
+    `<button type="button" class="${cur===v?'active':''}" data-seg-id="${esc(id)}" data-v="${v}">${l}</button>`
+  ).join('') + `</div>`;
+}
+// Delegado y registrado una sola vez: sobrevive a todos los render().
+document.addEventListener('click', (e)=>{
+  const b = e.target.closest ? e.target.closest('button[data-seg-id]') : null;
+  if(!b) return;
+  setDecision(b.dataset.segId, b.dataset.v);
+});
+
+/* ===================== HELPER: bloque de preguntas de texto libre ===================== */
+function renderQgroups(fields){
+  return fields.map(f=>`
+    <div class="qgroup">
+      <div class="q">${esc(f.q)}</div>
+      <textarea id="inp-${f.key}" placeholder="${esc(f.ph||'')}">${esc(state[f.key])}</textarea>
+    </div>`).join('');
+}
+
+/* ===================== RENDER DE PASOS ===================== */
+function renderProgress(){
+  const el = document.getElementById('progress');
+  el.innerHTML = STEP_KEYS.map((k,i)=>{
+    const cls = i < state.step ? 'done' : (i === state.step ? 'current' : '');
+    return `<div class="dot ${cls}"></div>`;
+  }).join('');
+}
+
+function stepCarga(){
+  const st = state.jsonStatus;
+  let statusMsg = '';
+  if(st === 'loading'){
+    statusMsg = `<div class="dz-status warn">Leyendo el backup más reciente del proyecto…</div>`;
+  } else if(st === 'ok' && state.jsonRaw){
+    const exp = state.jsonRaw.exportedAt ? ' — guardado el '+fmtDate(String(state.jsonRaw.exportedAt).slice(0,10)) : '';
+    statusMsg = `<div class="dz-status ok">✓ Datos del proyecto cargados${exp}. Equipo, Hitos y Riesgos se detectan solos más adelante.</div>`;
+  } else if(st === 'error'){
+    statusMsg = `<div class="dz-status err">⚠ ${esc(state.jsonError)} Puedes continuar igualmente — esas secciones se quedarán en blanco para rellenar a mano.</div>`;
+  }
+  return `
+  <div class="panel">
+    <h2>Carga inicial</h2>
+    <div class="lead">Indica desde cuándo quieres revisar cambios. Los datos del proyecto (Equipo, Hitos, Riesgos) se leen solos del último backup guardado — no hace falta exportar ni subir nada.</div>
+
+    <label>Finalidad de esta reunión</label>
+    <input type="text" id="inp-finalidad" value="${esc(state.finalidad)}" placeholder="Ej.: revisar avance de Fase 1 y acordar fecha de acceso al stack tecnológico">
+    <div class="hint" style="margin-top:5px;">Una línea que te recuerde el objetivo antes de entrar — aparece arriba del guion final.</div>
+
+    <label>Fecha de la última reunión con el cliente</label>
+    <input type="date" id="inp-meeting" value="${state.meetingDate}" max="${state.todayDate}">
+
+    <label>Fecha de esta reunión</label>
+    <input type="date" id="inp-today" value="${state.todayDate}">
+
+    ${statusMsg}
+  </div>
+  <div class="nav">
+    <span></span>
+    <button class="btn primary" id="btn-next" ${state.meetingDate ? '' : 'disabled'}>Continuar →</button>
+  </div>`;
+}
+
+function stepResumen(){
+  const ex = executiveSummary();
+  let body;
+  if(!ex){
+    body = `<div class="empty-note">${state.jsonStatus==='error' ? 'No hay datos del proyecto cargados, así que no se puede calcular un resumen automático — sigue con el resto del guion normalmente.' : 'Cargando…'}</div>`;
+  } else {
+    const kpis = [
+      { label:'Progreso del servicio', value: ex.progressPct!==null ? `${ex.progressPct}%` : '—', level:'' },
+      { label:'Riesgos alta abiertos', value:ex.risksAltaOpen, level: ex.risksAltaOpen>0?'ambar':'verde' },
+      { label:'Riesgos materializados', value:ex.risksMaterialized, level: ex.risksMaterialized>0?'rojo':'verde' },
+      { label:'Hitos retrasados', value:ex.msRojo, level: ex.msRojo>0?'rojo':'verde' },
+      { label:'Equipo activo', value:`${ex.techActive}/${ex.techTotal}`, level: ex.techActive<ex.techTotal?'ambar':'verde' },
+      { label:'Entregables', value:`${ex.entregablesEntregados}/${ex.entregablesTotal}`, level: ex.entregablesTotal===0?'verde':(ex.entregablesEntregados===ex.entregablesTotal?'verde':'ambar') },
+    ];
+    body = `
+      <span class="exec-badge ${ex.level}">${ex.level==='rojo'?'⚠':(ex.level==='ambar'?'●':'✓')} ${esc(ex.label)}</span>
+      <div class="exec-kpis">${kpis.map(k=>`<div class="exec-kpi ${k.level}"><div class="k-label">${esc(k.label)}</div><div class="k-value">${k.value}</div></div>`).join('')}</div>
+    `;
+  }
+  return `
+  <div class="panel">
+    <h2>Resumen ejecutivo</h2>
+    <div class="lead">Mismo cálculo que usa el propio dashboard del proyecto — para abrir la reunión con los titulares antes de entrar en el detalle de cada sección.</div>
+    ${body}
+  </div>
+  <div class="nav">
+    <button class="btn" id="btn-back">← Atrás</button>
+    <button class="btn primary" id="btn-next">Continuar →</button>
+  </div>`;
+}
+
+function stepAutoSection(title, lead, candidatos, extraFreeText, extraCandidatos){
+  const renderCands = (list)=> list.map(c => `
+      <div class="item">
+        <div class="txt">${c.txt}</div>
+        ${renderSeg(c.id)}
+      </div>`).join('');
+  const body = candidatos.length
+    ? renderCands(candidatos)
+    : `<div class="empty-note">${state.jsonRaw ? 'No se detectan cambios en este rango de fechas.' : 'Sin datos del proyecto cargados — nada que detectar automáticamente.'}</div>`;
+  const extraBlock = extraCandidatos && extraCandidatos.list.length ? `
+    <div class="subhead">${esc(extraCandidatos.title)}</div>
+    ${renderCands(extraCandidatos.list)}
+  ` : '';
+  return `
+  <div class="panel">
+    <h2>${title}</h2>
+    <div class="lead">${lead}</div>
+    ${body}
+    ${extraBlock}
+    ${extraFreeText || ''}
+  </div>
+  <div class="nav">
+    <button class="btn" id="btn-back">← Atrás</button>
+    <button class="btn primary" id="btn-next">Continuar →</button>
+  </div>`;
+}
+
+function stepEquipo(){
+  return stepAutoSection(
+    'Equipo',
+    '¿Ha cambiado algo en el equipo desde la última reunión? (las bajas/salidas previstas ya avisadas también salen aquí)',
+    equipoCandidatos(),
+    `<div class="qgroup"><div class="q">Accesos, credenciales u otros temas de equipo no reflejados arriba</div>
+     <textarea id="inp-accesos" placeholder="Ej.: pendiente de dar de alta el acceso a ServiceNow del nuevo técnico...">${esc(state.accesos)}</textarea></div>`
+  );
+}
+function stepHitos(){
+  return stepAutoSection(
+    'Hitos',
+    '¿Qué hitos se han completado o vencido desde la última reunión?',
+    hitosCandidatos(),
+    null,
+    { title: 'Próximos hitos (lo que viene)', list: hitosProximos() }
+  );
+}
+function stepRiesgos(){
+  return stepAutoSection(
+    'Riesgos',
+    '¿Ha cambiado el estado de algún riesgo desde la última reunión?',
+    riesgosCandidatos()
+  );
+}
+
+const SERVICIO_FIELDS = [
+  { key:'slaCumplido', q:'¿Se han cumplido los SLA acordados este periodo? Si alguno está en rojo, ¿por qué y qué se está haciendo?', ph:'Ej.: SLA de tiempo de respuesta incumplido 2 veces en marzo por baja de un técnico, ya cubierto.' },
+  { key:'incidenciasGraves', q:'¿Ha habido alguna incidencia grave (P1/P2) desde la última reunión? ¿Cómo se resolvió y en cuánto tiempo?', ph:'' },
+  { key:'indicadorTendencia', q:'¿Hay algún indicador que hoy esté en verde pero con tendencia preocupante?', ph:'Para anticiparlo antes de que el cliente lo note.' },
+  { key:'cifrasCliente', q:'¿Hay cifras que el cliente mide por su cuenta y que convenga alinear antes de que las saque él primero?', ph:'' },
+  { key:'consumoHoras', q:'¿Cuántas horas o presupuesto se han consumido este periodo frente a lo previsto?', ph:'¿Vamos alineados con la fase del servicio en la que estamos?' },
+  { key:'riesgoConsumo', q:'¿Hay riesgo de sobreconsumo o infraconsumo antes del cierre de fase o de contrato?', ph:'' },
+  { key:'ampliacion', q:'¿Hace falta plantear hoy una ampliación de alcance, horas o presupuesto?', ph:'' },
+  { key:'facturaCoste', q:'¿Alguna factura, revisión de precios o coste extra pendiente de comunicar o justificar?', ph:'' },
+  { key:'seguridadAuditoria', q:'¿Alguna incidencia de seguridad, auditoría o revisión de cumplimiento pendiente de comunicar?', ph:'Solo si aplica al tipo de servicio.' },
+  { key:'normativaCambio', q:'¿Algún cambio normativo reciente que afecte a cómo se presta el servicio?', ph:'' },
+  { key:'accesosRevisar', q:'¿Hay accesos, permisos o credenciales que deberían revocarse o revisarse (bajas, cambios de rol)?', ph:'' },
+  { key:'certificacionCaducar', q:'¿Alguna certificación o acreditación del servicio próxima a caducar?', ph:'' },
+];
+function stepServicio(){
+  return `
+  <div class="panel">
+    <h2>Servicio, SLA y horas</h2>
+    <div class="lead">Indicadores de servicio, consumo de horas/presupuesto y, si aplica, seguridad y cumplimiento.</div>
+    ${renderQgroups(SERVICIO_FIELDS)}
+  </div>
+  <div class="nav">
+    <button class="btn" id="btn-back">← Atrás</button>
+    <button class="btn primary" id="btn-next">Continuar →</button>
+  </div>`;
+}
+
+const CLIENTE_FIELDS = [
+  { key:'quejaCliente', q:'¿Ha habido alguna queja o comentario negativo desde la última reunión? ¿Se ha resuelto o sigue abierto?', ph:'' },
+  { key:'interlocutorNuevo', q:'¿Hay algún interlocutor nuevo por parte del cliente que convenga presentar? ¿Y alguno que se haya ido?', ph:'' },
+  { key:'riesgoRelacion', q:'¿Percibimos algún riesgo en la relación (frialdad, comparación con otro proveedor, dudas de renovación)?', ph:'Que no esté ya en el apartado de Riesgos del proyecto.' },
+  { key:'pedidoSinRespuesta', q:'¿Hay algo que el cliente lleve tiempo pidiendo y que aún no le hayamos dado respuesta clara?', ph:'Aunque sea un "no" razonado.' },
+  { key:'tonoAnterior', q:'¿Cómo fue el tono de la última reunión — quedó algo sin resolver que pueda volver a salir hoy?', ph:'' },
+  { key:'renovacionContrato', q:'¿Hay alguna fecha de renovación o revisión de contrato próxima? ¿Cuánto queda y qué hay que preparar antes?', ph:'' },
+  { key:'cambioAlcance', q:'¿Alguna petición de cambio de alcance (más o menos servicio) pendiente de formalizar por escrito?', ph:'' },
+  { key:'renegociarSla', q:'¿Algo del contrato o del SLA que convendría revisar o renegociar en esta reunión o en la siguiente?', ph:'' },
+  { key:'scopeCreep', q:'¿Hay algún trabajo que se esté haciendo fuera de alcance sin que quede registrado en ningún sitio?', ph:'Riesgo de "scope creep".' },
+  { key:'esperandoCliente', q:'¿Qué llevamos tiempo esperando del cliente (accesos, decisiones, información) y conviene escalar hoy mismo?', ph:'' },
+  { key:'bloqueoCliente', q:'¿Hay algo bloqueado por su lado que esté frenando algún hito o entregable del proyecto?', ph:'' },
+  { key:'decisionHoy', q:'¿Hay alguna decisión que necesitemos que tome HOY en la reunión, no "cuando pueda"?', ph:'' },
+];
+function stepCliente(){
+  return `
+  <div class="panel">
+    <h2>Cliente, contrato y preguntas para ellos</h2>
+    <div class="lead">Relación con el cliente, contrato/alcance, y qué necesitamos de su lado.</div>
+    ${renderQgroups(CLIENTE_FIELDS)}
+  </div>
+  <div class="nav">
+    <button class="btn" id="btn-back">← Atrás</button>
+    <button class="btn primary" id="btn-next">Continuar →</button>
+  </div>`;
+}
+
+const AVANCES_FIELDS = [
+  { key:'avances', q:'¿Qué hemos avanzado desde la última reunión?', ph:'Progreso general, tareas cerradas, hitos internos no formales...' },
+  { key:'aplicaciones', q:'¿Algo en aplicaciones o accesos que el cliente deba saber?', ph:'Cambios de stack, nuevos accesos solicitados, incidencias puntuales...' },
+  { key:'mejoras', q:'¿Qué planes de mejora hemos aplicado desde la última reunión?', ph:'Ej.: optimización del procedimiento de escalado, ajuste del proceso de onboarding...' },
+  { key:'propuestas', q:'¿Qué propuestas quieres llevar para que el cliente decida hoy?', ph:'Ej.: proponer ampliar la cobertura del horario de guardia...' },
+  { key:'queHaIdoBien', q:'¿Qué ha funcionado especialmente bien este periodo y merece mencionarse, no solo lo que ha ido mal?', ph:'' },
+  { key:'leccionAprendida', q:'¿Alguna lección aprendida de un problema reciente que convenga compartir (transparencia proactiva)?', ph:'' },
+  { key:'cambioProceso', q:'¿Hay algún proceso interno que se haya cambiado y que afecte a cómo el cliente interactúa con el servicio?', ph:'Nuevo canal de tickets, nuevo horario de guardia...' },
+];
+function stepAvances(){
+  return `
+  <div class="panel">
+    <h2>Avances y mejoras</h2>
+    ${renderQgroups(AVANCES_FIELDS)}
+  </div>
+  <div class="nav">
+    <button class="btn" id="btn-back">← Atrás</button>
+    <button class="btn primary" id="btn-next">Continuar →</button>
+  </div>`;
+}
+
+const GOBIERNO_FIELDS_A = [
+  { key:'cadenciaReuniones', q:'¿La cadencia de reuniones y canales de comunicación siguen siendo los adecuados?', ph:'O el cliente ha pedido (o convendría proponer) un cambio.' },
+  { key:'informeRetrasado', q:'¿Hay algún informe, cuadro de mando o entrega periódica que el cliente espera y esté retrasada?', ph:'' },
+  { key:'escaladoActivado', q:'¿Algún escalado activado desde la última reunión (interno o hacia el cliente) que convenga repasar?', ph:'' },
+];
+const GOBIERNO_FIELDS_B = [
+  { key:'accesoAltaBaja', q:'¿Algún acceso, credencial o entorno que siga pendiente de dar de alta o de baja?', ph:'' },
+  { key:'cambioHerramienta', q:'¿Ha cambiado alguna herramienta o proceso interno de forma que el cliente debería saberlo?', ph:'' },
+  { key:'actasPendientesFirma', q:'¿Hay actas, informes o entregables ya enviados que sigan pendientes de aprobación o firma?', ph:'' },
+  { key:'documentacionAccesible', q:'¿Toda la documentación técnica generada este periodo está donde el cliente puede encontrarla?', ph:'O hay que compartir algo hoy.' },
+];
+const GOBIERNO_FIELDS_C = [
+  { key:'oportunidadUpsell', q:'¿Hay alguna necesidad del cliente detectada este periodo que podría ser una ampliación de servicio a proponer?', ph:'' },
+  { key:'otroProveedor', q:'¿Algo que otro proveedor o equipo interno del cliente esté haciendo que podríamos ofrecer nosotros también?', ph:'' },
+  { key:'continuidadVigente', q:'¿Sigue vigente y probado el plan de continuidad/contingencia del servicio?', ph:'O ha cambiado algo (personas clave, sistemas) que lo deje desactualizado. Solo si aplica.' },
+  { key:'puntoUnicoFallo', q:'¿Hay algún punto único de fallo (una sola persona con conocimiento crítico) que el cliente debería conocer?', ph:'' },
+];
+const GOBIERNO_FIELDS_D = [
+  { key:'formacionEquipo', q:'¿Necesita el equipo alguna formación o certificación que el cliente debería conocer o incluso financiar?', ph:'' },
+  { key:'cargaTrabajo', q:'¿Hay carga de trabajo desequilibrada o riesgo de burnout en el equipo que convenga gestionar?', ph:'Antes de que afecte al servicio.' },
+];
+function stepGobierno(){
+  return `
+  <div class="panel">
+    <h2>Gobierno, herramientas y oportunidades</h2>
+    <div class="lead">Cadencia y comunicación del servicio, herramientas/documentación, oportunidades comerciales, continuidad y equipo.</div>
+    <div class="subhead">Comunicación y gobierno</div>
+    ${renderQgroups(GOBIERNO_FIELDS_A)}
+    <div class="subhead">Herramientas y documentación</div>
+    ${renderQgroups(GOBIERNO_FIELDS_B)}
+    <div class="subhead">Oportunidades y continuidad</div>
+    ${renderQgroups(GOBIERNO_FIELDS_C)}
+    <div class="subhead">Equipo</div>
+    ${renderQgroups(GOBIERNO_FIELDS_D)}
+  </div>
+  <div class="nav">
+    <button class="btn" id="btn-back">← Atrás</button>
+    <button class="btn primary" id="btn-next">Continuar →</button>
+  </div>`;
+}
+
+function actaStatusMsg(){
+  if(state.actaStatus === 'loading') return `<div class="dz-status warn">Leyendo ${esc(state.actaFileName)}…</div>`;
+  if(state.actaStatus === 'error') return `<div class="dz-status err">⚠ ${esc(state.actaError)}</div>`;
+  if(state.actaStatus === 'ok'){
+    return `<div class="dz-status ok">✓ ${esc(state.actaFileName)} leído${state.actaCandidatos.length ? ' — '+state.actaCandidatos.length+' punto(s) candidato(s) detectado(s)' : ' — sin puntos candidatos detectados por palabra clave'}.</div>`;
+  }
+  return '';
+}
+
+function stepPendientes(){
+  const candBlock = state.actaStatus === 'ok' && state.actaCandidatos.length
+    ? `<div class="cand-list">${state.actaCandidatos.map((c,i)=>`
+        <div class="cand-item">
+          <span style="flex:1;">${esc(c)}</span>
+          <button type="button" class="add-btn" data-idx="${i}" data-target="pendientesNuestros">+ nuestro</button>
+          <button type="button" class="add-btn" data-idx="${i}" data-target="pendientesCliente">+ cliente</button>
+        </div>`).join('')}</div>
+       <details class="raw-text"><summary>Ver texto completo extraído</summary><pre>${esc(state.actaText)}</pre></details>`
+    : (state.actaStatus === 'ok' ? `<details class="raw-text"><summary>Ver texto completo extraído</summary><pre>${esc(state.actaText)}</pre></details>` : '');
+
+  return `
+  <div class="panel">
+    <h2>Pendientes de la reunión anterior</h2>
+    <div class="lead">Qué quedó abierto la última vez y sigue sin cerrar — separado por de quién es cada compromiso, para saber a quién empujar hoy.</div>
+    ${state.pendientesAutocargados ? `<div class="autoload-note">↺ Precargado desde la última preparación guardada${state.pendientesAutocargadosDe ? ' ('+esc(fmtDate(state.pendientesAutocargadosDe))+')' : ''} — edítalo o bórralo si ya no aplica.</div>` : ''}
+
+    <div class="qgroup"><div class="q">Compromisos nuestros</div>
+      <textarea id="inp-pendientesNuestros" placeholder="Ej.: enviar la propuesta de ampliación de horario de guardia...">${esc(state.pendientesNuestros)}</textarea></div>
+    <div class="qgroup"><div class="q">Compromisos del cliente</div>
+      <textarea id="inp-pendientesCliente" placeholder="Ej.: confirmar la fecha de acceso al stack tecnológico de Iberia (RSK_07)...">${esc(state.pendientesCliente)}</textarea></div>
+
+    <div class="acta-block">
+      <label style="margin-top:0;">Acta de la última reunión (opcional)</label>
+      <div class="hint" style="margin-top:-2px; margin-bottom:8px;">Extrae el texto y resalta líneas candidatas por palabra clave (pendiente, acción, por confirmar...) — no es análisis semántico, es un filtro para que revises tú.</div>
+      <div class="dropzone" id="dz-acta">
+        📄 Arrastra el acta (.docx / .pdf / .txt), o haz clic para seleccionarla
+        ${state.actaFileName ? `<div class="fname">${esc(state.actaFileName)}</div>` : ''}
+      </div>
+      <input type="file" id="file-input-acta" accept=".docx,.pdf,.txt,.md" style="display:none">
+      ${actaStatusMsg()}
+      ${candBlock}
+    </div>
+  </div>
+  <div class="nav">
+    <button class="btn" id="btn-back">← Atrás</button>
+    <button class="btn primary" id="btn-next">Generar guion →</button>
+  </div>`;
+}
+
+function buildGuionSections(){
+  const mencionados = arr => arr.filter(c => decisionOf(c.id) === 'mencionar');
+  const ex = executiveSummary();
+  const sections = [];
+  if(ex){
+    sections.push({ title:'Resumen ejecutivo', items:[
+      `Estado: ${ex.label}${ex.progressPct!==null ? ' — '+ex.progressPct+'% del servicio transcurrido' : ''}`,
+      `Riesgos: ${ex.risksAltaOpen} de criticidad alta abiertos, ${ex.risksMaterialized} materializados`,
+      `Hitos retrasados sin fecha real: ${ex.msRojo}`,
+      `Equipo activo: ${ex.techActive}/${ex.techTotal}`,
+      `Entregables: ${ex.entregablesEntregados}/${ex.entregablesTotal}`,
+    ]});
+  }
+  sections.push({ title:'Equipo', items: mencionados(equipoCandidatos()).map(c=>c.txt), free: state.accesos });
+  sections.push({ title:'Hitos', items: mencionados(hitosCandidatos()).map(c=>c.txt) });
+  const proximos = hitosProximos();
+  if(proximos.length) sections.push({ title:'Próximos hitos', items: proximos.map(c=>c.txt) });
+  sections.push({ title:'Riesgos', items: mencionados(riesgosCandidatos()).map(c=>c.txt) });
+  sections.push({ title:'Servicio, SLA y horas', free: SERVICIO_FIELDS.map(f=>state[f.key]).filter(Boolean).join('\n') });
+  sections.push({ title:'Cliente, contrato y preguntas para ellos', free: CLIENTE_FIELDS.map(f=>state[f.key]).filter(Boolean).join('\n') });
+  sections.push({ title:'Avances', free: state.avances });
+  sections.push({ title:'Aplicaciones y accesos', free: state.aplicaciones });
+  sections.push({ title:'Planes de mejora aplicados', free: state.mejoras });
+  sections.push({ title:'Propuestas a definir', free: state.propuestas });
+  sections.push({ title:'Calidad y mejora continua', free: [state.queHaIdoBien, state.leccionAprendida, state.cambioProceso].filter(Boolean).join('\n') });
+  sections.push({ title:'Gobierno, herramientas y oportunidades', free: [...GOBIERNO_FIELDS_A, ...GOBIERNO_FIELDS_B, ...GOBIERNO_FIELDS_C, ...GOBIERNO_FIELDS_D].map(f=>state[f.key]).filter(Boolean).join('\n') });
+  sections.push({ title:'Pendientes nuestros (reunión anterior)', free: state.pendientesNuestros });
+  sections.push({ title:'Pendientes del cliente (reunión anterior)', free: state.pendientesCliente });
+  return sections;
+}
+
+function stepGuion(){
+  const sections = buildGuionSections();
+  const html = sections.map(s=>{
+    const parts = [];
+    if(s.items && s.items.length){
+      parts.push(`<ul>${s.items.map(t=>`<li>${t}</li>`).join('')}</ul>`);
+    }
+    if(s.free && s.free.trim()){
+      parts.push(`<ul>${s.free.trim().split('\n').filter(l=>l.trim()).map(l=>`<li>${esc(l)}</li>`).join('')}</ul>`);
+    }
+    if(!parts.length){
+      return `<h3>${esc(s.title)}</h3><div class="empty">Nada que destacar.</div>`;
+    }
+    return `<h3>${esc(s.title)}</h3>${parts.join('')}`;
+  }).join('');
+
+  return `
+  <div class="panel guion">
+    <h2 class="no-print">Guion de reunión</h2>
+    <div class="lead no-print">Reunión del ${fmtDate(state.todayDate)} · desde la anterior (${fmtDate(state.meetingDate)})</div>
+    <div class="eyebrow" style="display:block; margin-bottom:2px;">Reunión de seguimiento — ${fmtDate(state.todayDate)}</div>
+    ${state.finalidad.trim() ? `<div class="lead" style="margin:2px 0 14px; font-weight:600;">🎯 ${esc(state.finalidad)}</div>` : ''}
+    <div class="hint" style="margin-bottom:16px;">Puntos desde la reunión del ${fmtDate(state.meetingDate)}</div>
+    ${html}
+  </div>
+  <div class="actions no-print">
+    <button class="btn" id="btn-back">← Atrás</button>
+    <button class="btn primary" id="btn-print">🖨 Imprimir / PDF</button>
+    <button class="btn primary" id="btn-download">⬇ Descargar guion (.txt)</button>
+    <button class="btn" id="btn-restart">↺ Nueva preparación</button>
+    ${saveStatusHtml()}
+  </div>`;
+}
+
+// El guardado en el historial ya no depende de un click: se dispara solo
+// (ver autoSaveHistory()) en cuanto se llega a este paso. Aquí solo se
+// pinta el resultado — nada que el usuario tenga que accionar, salvo si
+// falla, que entonces sí aparece un botón para reintentar a mano.
+function saveStatusHtml(){
+  const editing = !!state.loadedPrepId;
+  if(state.saveHistoryStatus === 'saving'){
+    return `<span class="save-status saving">⏳ ${editing ? 'Actualizando el historial…' : 'Guardando en el historial…'}</span>`;
+  }
+  if(state.saveHistoryStatus === 'ok'){
+    return `<span class="save-status ok">✓ Guardado en el historial</span>`;
+  }
+  // A3.3/Bloque 4 — CUARTO estado. Tras la forma 3 del contrato de acción
+  // (aplicado:true, verificado:false) el cambio SÍ se guardó, así que decir
+  // "no se pudo guardar" es falso, y ofrecer "Reintentar" es justo lo que el
+  // contrato prohíbe: nunca se repite una acción ya aplicada. No lleva botón.
+  if(state.saveHistoryStatus === 'requiere-reinicio'){
+    return `<span class="save-status error">⚠ El cambio SÍ se guardó, pero esta sesión no puede continuar de forma segura. Cierra Panorama del Servicio y vuelve a abrirlo.</span>`;
+  }
+  if(state.saveHistoryStatus === 'error'){
+    return `<span class="save-status error">⚠ No se pudo guardar automáticamente <button type="button" class="btn" id="btn-retry-save">Reintentar</button></span>`;
+  }
+  return '';
+}
+
+// Guarda (o actualiza) esta preparación en el historial SOLA, sin que el
+// usuario tenga que pulsar nada — se llama al llegar al guion final (ver
+// wireEvents' btn-next) y al reabrir una preparación desde "✏️ Editar" en
+// el historial (ver editHistorialItem()). Mismo criterio de siempre: si
+// `loadedPrepId` ya está puesto (viene de "Editar", o esta preparación ya
+// se guardó una vez en esta misma sesión) ACTUALIZA esa fila; si no, crea
+// una nueva y guarda el `id` devuelto para que la próxima vez actualice en
+// vez de duplicar. El resultado se pinta con `saveStatusHtml()` en el
+// propio paso de guion — "✓ Guardado en el historial" en verde, o un
+// aviso de error con botón de reintentar si algo falla.
+// A3.3/Bloque 4 — CONTRATO DE ACCIÓN. `saveMeetingPrep`/`updateMeetingPrep`
+// devuelven ahora `{ok, aplicado, verificado, reintentable, …}` (ver
+// preload.js). Lo que decide si el contenido está guardado es `aplicado`, NO
+// `ok`: la forma "aplicado pero sin verificar" también trae `ok:true`, y
+// tratarla como un guardado normal dejaría al usuario editando sobre una
+// sesión cuya base de datos ya no admite escrituras.
+let guardadosDetenidos = false;
+let avisoReinicioMostrado = false;
+async function autoSaveHistory(){
+  if(!window.panoramaBridge || typeof window.panoramaBridge.saveMeetingPrep !== 'function') return;
+  if(guardadosDetenidos){ state.saveHistoryStatus = 'requiere-reinicio'; render(); return; }
+  state.saveHistoryStatus = 'saving';
+  render();
+  try{
+    const payload = buildMeetingPrepPayload();
+    let result;
+    if(state.loadedPrepId && typeof window.panoramaBridge.updateMeetingPrep === 'function'){
+      result = await window.panoramaBridge.updateMeetingPrep(state.loadedPrepId, state.todayDate, state.finalidad, payload);
+    } else {
+      result = await window.panoramaBridge.saveMeetingPrep(state.todayDate, state.finalidad, payload);
+      if(result && result.aplicado === true && result.id) state.loadedPrepId = result.id;
+    }
+    const aplicado = !!(result && result.aplicado === true);
+    state.saveHistoryStatus = aplicado ? 'ok' : 'error';
+    if(!aplicado) console.warn('No se pudo guardar en el historial:', result && result.error);
+    if(aplicado && result.verificado === false){
+      // Se aplicó, pero la sesión ya no es de fiar: no se repite NUNCA y se
+      // deja de guardar en esta ventana.
+      guardadosDetenidos = true;
+      state.saveHistoryStatus = 'requiere-reinicio';
+      if(!avisoReinicioMostrado){
+        avisoReinicioMostrado = true;
+        try{ await psAlert(result.aviso || 'Se guardó, pero no se pudo verificar. Cierra la aplicación y vuelve a abrirla.',
+          { title:'Hay que reiniciar la aplicación', danger:true }); }catch(e){}
+      }
+    }
+  }catch(e){
+    state.saveHistoryStatus = 'error';
+    console.warn('No se pudo guardar en el historial:', e);
+  }
+  render();
+}
+
+function guionAsText(){
+  const sections = buildGuionSections();
+  let out = `GUION DE REUNIÓN — ${fmtDate(state.todayDate)}\n`;
+  if(state.finalidad.trim()) out += `Finalidad: ${state.finalidad.trim()}\n`;
+  out += `Puntos desde la reunión del ${fmtDate(state.meetingDate)}\n`;
+  out += '='.repeat(50) + '\n\n';
+  sections.forEach(s=>{
+    out += s.title.toUpperCase() + '\n';
+    const items = [];
+    // F1 — los textos de candidato llevan markup PROPIO del guion
+    // (`<span class="flag">`) y, desde F1, el dato dinámico va escapado dentro.
+    // Para el .txt hay que quitar ese markup y DESHACER el escapado, o el
+    // archivo saldría con `&lt;` en vez del texto que escribió el usuario.
+    if(s.items) items.push(...s.items.map(t=>desescapar(t.replace(/<[^>]+>/g,''))));
+    if(s.free && s.free.trim()) items.push(...s.free.trim().split('\n').filter(l=>l.trim()));
+    if(!items.length) out += '  (nada que destacar)\n';
+    else items.forEach(t => out += `  - ${t}\n`);
+    out += '\n';
+  });
+  return out;
+}
+
+/* ===================== RENDER PRINCIPAL ===================== */
+const RENDERERS = [stepCarga, stepResumen, stepEquipo, stepHitos, stepRiesgos, stepServicio, stepCliente, stepAvances, stepGobierno, stepPendientes, stepGuion];
+
+function render(){
+  renderProgress();
+  document.getElementById('steps').innerHTML = RENDERERS[state.step]();
+  wireEvents();
+  renderHistorialModal();
+  renderEditingBanner();
+  window.scrollTo({top:0, behavior:'instant'});
+}
+
+// Aviso visible cuando se está completando/editando una preparación ya
+// guardada (llegado aquí desde "✏️ Editar" en el historial) — para que no
+// se sorprenda si "Guardar en el historial" dice "Actualizar" en vez de
+// "Guardar".
+function renderEditingBanner(){
+  const slot = document.getElementById('editing-banner-slot');
+  if(!slot) return;
+  slot.innerHTML = state.editingFromHistorial
+    ? `<div class="autoload-note">✏️ Completando una preparación ya guardada — cualquier cambio se guarda solo sobre esa misma entrada del historial, no se crea una nueva.</div>`
+    : '';
+}
+
+/* ===================== HISTORIAL DE PREPARACIONES GUARDADAS =====================
+   No confundir con jsonRaw (el backup del dashboard, siempre el más reciente):
+   esto es el historial de preparaciones de reunión YA GUARDADAS por el
+   usuario con "💾 Guardar en el historial" (ver stepGuion), cada una una foto
+   completa de esa fecha. Vive en la tabla meeting_preps (ver main.js). */
+async function openHistorial(){
+  state.historialOpen = true;
+  state.historialViewing = null;
+  state.historialViewData = null;
+  state.historialViewError = '';
+  state.historialLoading = true;
+  state.historialError = '';
+  renderHistorialModal();
+  if(!window.panoramaBridge || typeof window.panoramaBridge.listMeetingPreps !== 'function'){
+    state.historialLoading = false;
+    state.historialError = 'Esta herramienta solo funciona abierta desde un proyecto de Panorama del Servicio.';
+    renderHistorialModal();
+    return;
+  }
+  try{
+    const result = await window.panoramaBridge.listMeetingPreps();
+    if(result && result.ok){
+      state.historialList = result.preps || [];
+    } else {
+      state.historialError = (result && result.error) || 'No se pudo leer el historial.';
+    }
+  }catch(e){
+    state.historialError = (e && e.message) || String(e);
+  }
+  state.historialLoading = false;
+  renderHistorialModal();
+}
+function closeHistorial(){
+  state.historialOpen = false;
+  renderHistorialModal();
+}
+async function viewHistorialItem(id){
+  state.historialViewing = id;
+  state.historialViewData = null;
+  state.historialViewError = '';
+  renderHistorialModal();
+  try{
+    const result = await window.panoramaBridge.getMeetingPrep(id);
+    if(result && result.ok) state.historialViewData = result;
+    else state.historialViewError = (result && result.error) || 'No se pudo abrir esta preparación.';
+  }catch(e){
+    state.historialViewError = (e && e.message) || String(e);
+  }
+  renderHistorialModal();
+}
+function backToHistorialList(){
+  state.historialViewing = null;
+  state.historialViewData = null;
+  state.historialViewError = '';
+  renderHistorialModal();
+}
+
+function renderHistorialModal(){
+  const slot = document.getElementById('historial-modal-slot');
+  if(!slot) return;
+  if(!state.historialOpen){ slot.innerHTML=''; return; }
+
+  let body;
+  if(state.historialViewing){
+    if(state.historialViewError){
+      body = `<div class="hist-empty">⚠ ${esc(state.historialViewError)}</div>`;
+    } else if(!state.historialViewData){
+      body = `<div class="hist-empty">Cargando…</div>`;
+    } else {
+      const d = state.historialViewData;
+      const guionTxt = (d.payload && d.payload.guionText) || '(esta preparación no guardó un guion en texto)';
+      body = `
+        <div class="hist-view">
+          <span class="hist-back" id="hist-back">← Volver al listado</span>
+          <div class="hint" style="margin-bottom:8px;">
+            ${d.meetingDate ? 'Reunión del '+esc(fmtDate(d.meetingDate))+' — ' : ''}guardada el ${esc(fmtDate(String(d.createdAt||'').slice(0,10)))}
+            ${d.finalidad ? '<br>'+esc(d.finalidad) : ''}
+          </div>
+          <pre>${esc(guionTxt)}</pre>
+          <div class="hist-view-actions">
+            <button class="btn primary" id="hist-edit-view">✏️ Editar / completar cierre</button>
+            <button class="btn" id="hist-delete-view">🗑 Eliminar esta preparación</button>
+          </div>
+        </div>`;
+    }
+  } else if(state.historialLoading){
+    body = `<div class="hist-empty">Cargando historial…</div>`;
+  } else if(state.historialError){
+    body = `<div class="hist-empty">⚠ ${esc(state.historialError)}</div>`;
+  } else if(!state.historialList.length){
+    body = `<div class="hist-empty">Todavía no hay ninguna preparación guardada de este proyecto. Se guardan desde el último paso ("Guion final") con el botón "💾 Guardar en el historial".</div>`;
+  } else {
+    body = `<div class="hist-list">${state.historialList.map(p=>`
+      <div class="hist-item" data-id="${p.id}">
+        <div class="h-info">
+          <div class="h-date">${esc(fmtDate(p.meeting_date || String(p.created_at||'').slice(0,10)))}</div>
+          <div class="h-fin">${esc(p.finalidad || '(sin finalidad indicada)')}</div>
+        </div>
+        <div class="h-actions">
+          <button type="button" class="hist-del" data-del-id="${p.id}" title="Eliminar">🗑</button>
+          <span class="hint">Ver →</span>
+        </div>
+      </div>`).join('')}</div>`;
+  }
+
+  slot.innerHTML = `
+    <div class="modal-overlay" id="hist-overlay">
+      <div class="modal-box">
+        <div class="m-head">
+          <h2>Historial de preparaciones</h2>
+          <button class="btn" id="hist-close">✕ Cerrar</button>
+        </div>
+        <div class="hint">Preparaciones ya guardadas de este proyecto, más recientes primero.</div>
+        ${body}
+      </div>
+    </div>`;
+
+  const overlay = document.getElementById('hist-overlay');
+  if(overlay) overlay.onclick = e => { if(e.target === overlay) closeHistorial(); };
+  const closeBtn = document.getElementById('hist-close');
+  if(closeBtn) closeBtn.onclick = closeHistorial;
+  const backLink = document.getElementById('hist-back');
+  if(backLink) backLink.onclick = backToHistorialList;
+  slot.querySelectorAll('.hist-item[data-id]').forEach(el=>{
+    el.onclick = () => viewHistorialItem(parseInt(el.dataset.id, 10));
+  });
+  slot.querySelectorAll('.hist-del[data-del-id]').forEach(el=>{
+    el.onclick = e => {
+      e.stopPropagation(); // que no dispare también el "Ver →" de la fila
+      deleteHistorialItem(parseInt(el.dataset.delId, 10), false);
+    };
+  });
+  const delViewBtn = document.getElementById('hist-delete-view');
+  if(delViewBtn) delViewBtn.onclick = () => deleteHistorialItem(state.historialViewing, true);
+  const editViewBtn = document.getElementById('hist-edit-view');
+  if(editViewBtn) editViewBtn.onclick = editHistorialItem;
+}
+
+// Reabre una preparación ya guardada para editarla sin duplicarla: carga
+// sus datos en el estado en vivo, marca `loadedPrepId` para que el
+// guardado automático (ver autoSaveHistory()) ACTUALICE esta misma fila en
+// vez de crear una nueva, y salta directamente al guion final — desde ahí
+// se puede volver "← Atrás" a cualquier paso anterior para tocar algo y
+// el guion se regenera solo.
+function editHistorialItem(){
+  const d = state.historialViewData;
+  if(!d || !d.payload) return;
+  const { guionText, savedAt, ...rest } = d.payload;
+  Object.assign(state, rest);
+  state.loadedPrepId = d.id;
+  state.editingFromHistorial = true;
+  state.historialOpen = false;
+  state.historialViewing = null;
+  state.historialViewData = null;
+  state.historialViewError = '';
+  state.step = STEP_KEYS.indexOf('guion');
+  render();
+  autoSaveHistory();
+}
+
+// Borra una preparación guardada — pide confirmación siempre (acción
+// irreversible: borra tanto el archivo en disco como su fila en la base de
+// datos, ver meeting:deletePrep en main.js). `fromView` indica si se borró
+// desde dentro del detalle (para volver al listado) o desde la fila de la
+// lista (para simplemente quitarla de ahí).
+async function deleteHistorialItem(id, fromView){
+  const ok = await psConfirm('No se puede deshacer.', { title:'¿Eliminar esta preparación guardada?', confirmLabel:'Eliminar', danger:true });
+  if(!ok) return;
+  if(!window.panoramaBridge || typeof window.panoramaBridge.deleteMeetingPrep !== 'function') return;
+  // A3.3/BLOQUE 5 (D2) — se decide por `aplicado`, NUNCA por `ok` ni por la
+  // truthiness del objeto. Un objeto de error también es truthy, y la forma 3
+  // trae `ok:true` con el borrado SÍ aplicado pero sin verificar.
+  try{
+    const result = await window.panoramaBridge.deleteMeetingPrep(id);
+    if(!result || result.aplicado !== true){
+      await psAlert('No se ha eliminado: ' + ((result && result.error) || 'error desconocido'),
+        { title:'No se ha eliminado', danger:true });
+      return;   // la fila sigue en la lista: no se ha borrado nada
+    }
+    if(result.verificado === false){
+      // SÍ se aplicó. No se ofrece reintentar, y la sesión no puede seguir.
+      await psAlert(result.aviso || 'La preparación SÍ se ha eliminado, pero no se ha podido verificar. Cierra Panorama del Servicio y vuelve a abrirlo. NO repitas la operación.',
+        { title:'Hay que reiniciar la aplicación', danger:true });
+      // Se quita de la lista igualmente: en la base de datos ya no está.
+    }
+  }catch(e){
+    await psAlert('No se ha eliminado: ' + ((e && e.message) || String(e)), { title:'No se ha eliminado', danger:true });
+    return;
+  }
+  state.historialList = state.historialList.filter(p => p.id !== id);
+  if(fromView){
+    state.historialViewing = null;
+    state.historialViewData = null;
+    state.historialViewError = '';
+  }
+  renderHistorialModal();
+}
+
+// Tier 2: al abrir la ventana, si ya existe alguna preparación guardada de
+// este proyecto, se precargan solos los "Compromisos nuestros/cliente" que
+// quedaron en la ÚLTIMA — así no hay que volver a escribirlos ni depender
+// de subir el acta otra vez. Es solo un punto de partida: el usuario puede
+// editarlo o borrarlo si ya no aplica (se avisa en el paso Pendientes).
+async function loadLastPrepPendientes(){
+  if(!window.panoramaBridge || typeof window.panoramaBridge.listMeetingPreps !== 'function') return;
+  try{
+    const listResult = await window.panoramaBridge.listMeetingPreps();
+    if(!listResult || !listResult.ok || !listResult.preps || !listResult.preps.length) return;
+    const last = listResult.preps[0];
+    const prepResult = await window.panoramaBridge.getMeetingPrep(last.id);
+    if(!prepResult || !prepResult.ok || !prepResult.payload) return;
+    const prev = prepResult.payload;
+    if(prev.pendientesNuestros) state.pendientesNuestros = prev.pendientesNuestros;
+    if(prev.pendientesCliente) state.pendientesCliente = prev.pendientesCliente;
+    if(prev.pendientesNuestros || prev.pendientesCliente){
+      state.pendientesAutocargados = true;
+      state.pendientesAutocargadosDe = last.meeting_date || String(last.created_at||'').slice(0,10);
+      render();
+    }
+  }catch(e){
+    console.warn('No se pudo precargar pendientes de la última preparación guardada:', e);
+  }
+}
+
+function wireEvents(){
+  const next = document.getElementById('btn-next');
+  const back = document.getElementById('btn-back');
+  if(next) next.onclick = () => {
+    collectStepInputs();
+    if(state.step < RENDERERS.length-1) state.step++;
+    render();
+    // Al llegar al guion final (último paso) se guarda solo — ver
+    // autoSaveHistory(). No hace falta que el usuario pulse nada.
+    if(state.step === RENDERERS.length-1) autoSaveHistory();
+  };
+  if(back) back.onclick = () => { collectStepInputs(); if(state.step > 0) state.step--; render(); };
+
+  const restart = document.getElementById('btn-restart');
+  if(restart) restart.onclick = async () => {
+    // A3.3/Bloque 4: tras la forma 3 esta ventana ya no puede guardar. Abrir
+    // una preparación nueva sería invitar al usuario a rellenarla creyendo que
+    // se guardará, y no se guardaría.
+    if(guardadosDetenidos){
+      await psAlert('El último cambio SÍ se guardó, pero esta sesión no puede continuar de forma segura. ' +
+        'Cierra Panorama del Servicio y vuelve a abrirlo antes de empezar una preparación nueva.',
+        { title:'Hay que reiniciar la aplicación', danger:true });
+      return;
+    }
+    const ok = await psConfirm('Se perderán las respuestas actuales.', { title:'¿Empezar una nueva preparación?', confirmLabel:'Empezar de nuevo', danger:true });
+    if(ok){
+      const freshFields = {};
+      TEXT_FIELDS.forEach(k=> freshFields[k]='');
+      Object.assign(state, { step:0, meetingDate:'', decisions:{}, actaFileName:'', actaStatus:null, actaError:'', actaText:'', actaCandidatos:[], saveHistoryStatus:null, pendientesAutocargados:false, pendientesAutocargadosDe:null, loadedPrepId:null, editingFromHistorial:false }, freshFields);
+      render();
+    }
+  };
+  const printBtn = document.getElementById('btn-print');
+  if(printBtn) printBtn.onclick = () => window.print();
+  const dl = document.getElementById('btn-download');
+  if(dl) dl.onclick = () => {
+    const blob = new Blob([guionAsText()], {type:'text/plain;charset=utf-8'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `guion-reunion-${state.todayDate}.txt`;
+    a.click();
+  };
+  const retryBtn = document.getElementById('btn-retry-save');
+  if(retryBtn) retryBtn.onclick = () => autoSaveHistory();
+
+  const inpMeeting = document.getElementById('inp-meeting');
+  if(inpMeeting) inpMeeting.onchange = e => { collectStepInputs(); state.meetingDate = e.target.value; render(); };
+  const inpToday = document.getElementById('inp-today');
+  if(inpToday) inpToday.onchange = e => { collectStepInputs(); state.todayDate = e.target.value; render(); };
+
+  const dzActa = document.getElementById('dz-acta');
+  const fileInputActa = document.getElementById('file-input-acta');
+  if(dzActa){
+    dzActa.onclick = () => fileInputActa.click();
+    dzActa.ondragover = e => { e.preventDefault(); dzActa.classList.add('drag'); };
+    dzActa.ondragleave = () => dzActa.classList.remove('drag');
+    dzActa.ondrop = e => { e.preventDefault(); dzActa.classList.remove('drag'); if(e.dataTransfer.files[0]) handleActaFile(e.dataTransfer.files[0]); };
+  }
+  if(fileInputActa) fileInputActa.onchange = e => { if(e.target.files[0]) handleActaFile(e.target.files[0]); };
+
+  document.querySelectorAll('.add-btn[data-idx]').forEach(btn=>{
+    btn.onclick = () => addCandidatoA(state.actaCandidatos[parseInt(btn.dataset.idx, 10)], btn.dataset.target);
+  });
+}
+
+function collectStepInputs(){
+  const fi = document.getElementById('inp-finalidad'); if(fi) state.finalidad = fi.value;
+  TEXT_FIELDS.forEach(k=>{ const el = document.getElementById('inp-'+k); if(el) state[k] = el.value; });
+}
+
+/* ===================== ARRANQUE ===================== */
+function initSubtitle(){
+  const el = document.getElementById('proj-subtitle');
+  if(el && window.panoramaBridge && window.panoramaBridge.projectName){
+    el.textContent = `Proyecto: ${window.panoramaBridge.projectName}. Guion rápido antes de cada reunión de seguimiento con el cliente: qué ha cambiado desde la última vez y qué falta por cerrar.`;
+  }
+}
+initSubtitle();
+const histBtn = document.getElementById('btn-open-historial');
+if(histBtn) histBtn.onclick = openHistorial;
+render();
+loadProjectData();
+loadLastPrepPendientes();
+</script>
+<script>
+// v2.0.27 — tema visual GLOBAL de toda la app, ver vendor/theme.js. Se
+// aplica lo antes posible (no hay estado propio que cargar antes, a
+// diferencia de Dashboard/Directorio, así que no hace falta esperar a nada
+// más).
+initGlobalTheme();
+
+// v2.0.16 — barra de título propia (ver el <style> de arriba). Nuevo en
+// esta versión, no toca nada de lo que había antes.
+(function(){
+  const tbTitle = document.querySelector('#titlebar .tb-title');
+  if (tbTitle && window.panoramaBridge && window.panoramaBridge.projectName) {
+    tbTitle.textContent = 'Preparación de Reunión — ' + window.panoramaBridge.projectName;
+  }
+  if (window.winControls) {
+    const btnMin = document.getElementById('tb-minimize');
+    const btnMax = document.getElementById('tb-maximize');
+    const btnClose = document.getElementById('tb-close');
+    const titlebar = document.getElementById('titlebar');
+    btnMin.addEventListener('click', () => window.winControls.minimize());
+    btnMax.addEventListener('click', () => window.winControls.toggleMaximize());
+    btnClose.addEventListener('click', () => window.winControls.close());
+    titlebar.addEventListener('dblclick', (e) => {
+      if (e.target.closest('.win-controls')) return;
+      window.winControls.toggleMaximize();
+    });
+    function setMaximizedIcon(isMax) {
+      btnMax.textContent = isMax ? '❐' : '▢';
+      btnMax.title = isMax ? 'Restaurar' : 'Maximizar';
+    }
+    window.winControls.isMaximized().then(setMaximizedIcon).catch(() => {});
+    window.winControls.onMaximizedChanged(setMaximizedIcon);
+  }
+})();
+
+// v2.0.30 — FASE 4: atajo de teclado Ctrl+W para cerrar la ventana. Esta
+// ventana nunca tuvo menú propio (ver openMeetingPrepWindow en main.js), así
+// que no hay acelerador nativo que reimplementar -- mismo patrón que el
+// Ctrl+N del launcher (launcher/renderer.js).
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'w' || e.key === 'W')) {
+    e.preventDefault();
+    if (window.winControls) window.winControls.close();
+  }
+});
+</script>
+</body>
+</html>
