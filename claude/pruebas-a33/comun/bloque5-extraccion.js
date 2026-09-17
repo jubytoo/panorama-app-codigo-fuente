@@ -81,6 +81,16 @@ const BLOQUES_B5 = [
   'function motivoSinRutas(e)',
   'function borrarJournalResuelto(ruta, que)',
   'function soltarExclusivaConRastro(token, que)',
+  // F3 (17 sept 2026): la politica de apertura/navegacion de ventanas. Entra
+  // aqui porque `writeLocalStorageDumpToPartition` y `runInPartition` —que
+  // extraen A2, el Bloque 5 y C1— la llaman al crear su ventana oculta. Sin
+  // esto, esos arneses revientan con "aplicarPoliticaDeNavegacion is not
+  // defined", que es exactamente lo que avisa la cabecera de este archivo.
+  'function urlExternaPermitida(url)',
+  'function urlParaRastro(u)',
+  'function abrirEnNavegador(u, origen)',
+  'function navegacionInternaLegitima(destino, actual)',
+  'function aplicarPoliticaDeNavegacion(wc, etiqueta)',
 ];
 
 const CONSTS_B5 = [

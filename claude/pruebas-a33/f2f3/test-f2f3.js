@@ -168,31 +168,74 @@ ok('F3-A3 ese enlace exige http(s) y lleva rel="noopener" (y desde F1, escapeAtt
   && /target="_blank" rel="noopener"/.test(DASH)
   && /href="\$\{escapeAttr\(e\.ruta\)\}"/.test(DASH));
 nota('Es dato del usuario: la RUTA de un entregable. No es constante, pero sí está acotada a http(s).');
-ok('F3-A4 no se usa shell.openExternal en ningún sitio', cuenta(soloCodigo(MAIN), /shell\.openExternal/g) === 0);
+// Antes de F3 no se usaba en ningún sitio: los enlaces se abrían DENTRO de la
+// app. Desde F3 se usa exactamente en un punto, el de la política.
+ok('F3-A4 [EXIGE] shell.openExternal se usa en UN solo punto: el de la política',
+  cuenta(soloCodigo(MAIN), /shell\.openExternal\(/g) === 1
+  && /function abrirEnNavegador\(u, origen\)/.test(MAIN), String(cuenta(soloCodigo(MAIN), /shell\.openExternal\(/g)));
 // Ojo al contar: hay 4 menciones de `shell.openPath` en main.js — 1 en un
 // comentario, 1 dentro del texto de un console.warn, y 2 LLAMADAS reales.
 ok('F3-A5 lo que sí se usa es shell.openPath, para abrir carpetas/archivos LOCALES (2 llamadas)',
   cuenta(soloCodigo(MAIN), /shell\.openPath\(/g) === 2, String(cuenta(soloCodigo(MAIN), /shell\.openPath\(/g)));
 
 // =============================================================================
-seccion('F3-B. NINGÚN GUARDIÁN DE APERTURA NI DE NAVEGACIÓN');
+seccion('F3-B. LA POLÍTICA DE APERTURA Y NAVEGACIÓN (implementada el 17 sept 2026)');
 // =============================================================================
-for (const [que, re] of [['setWindowOpenHandler', /setWindowOpenHandler/g], ['will-navigate', /will-navigate/g],
-  ['will-redirect', /will-redirect/g], ['will-attach-webview', /will-attach-webview/g],
-  ["'new-window' (legado)", /'new-window'/g]]) {
-  ok(`F3-B ${que}: no existe en main.js`, cuenta(MAIN, re) === 0, String(cuenta(MAIN, re)));
-}
-ok('F3-B6 y hay 10 `new BrowserWindow` productivas, ninguna con guardián',
+// Un solo helper: `setWindowOpenHandler` aparece 2 veces —la guarda que
+// comprueba que el webContents trae la API, y la llamada real— y `will-navigate`
+// una sola. Lo que se custodia es que NO haya lógica repetida por ventana.
+ok('F3-B1 [EXIGE] existe UN helper común, no lógica repetida en diez sitios',
+  /function aplicarPoliticaDeNavegacion\(wc, etiqueta\)/.test(MAIN)
+  && cuenta(MAIN, /wc\.setWindowOpenHandler\(/g) === 1 && cuenta(MAIN, /'will-navigate'/g) === 1);
+ok('F3-B2 [EXIGE] la ventana hija se DENIEGA siempre (el producto no usa popups propios)',
+  /return \{ action: 'deny' \};/.test(MAIN));
+ok('F3-B3 [EXIGE] la URL se valida con `new URL`, no con startsWith ni regex laxa',
+  /function urlExternaPermitida\(url\)/.test(MAIN) && /new URL\(String\(url\)\)/.test(MAIN)
+  && /u\.protocol === 'http:' \|\| u\.protocol === 'https:'/.test(MAIN)
+  && !/startsWith\('http/.test(MAIN));
+ok('F3-B4 [EXIGE] si el parseo falla se devuelve null: no se intenta "arreglar" la URL',
+  /catch \(e\) \{\s*return null;\s*\}/.test(MAIN));
+ok('F3-B5 [EXIGE] shell.openExternal se envuelve y su rechazo se captura (nada sin manejar)',
+  /Promise\.resolve\(shell\.openExternal\(u\.href\)\)\.catch/.test(MAIN));
+ok('F3-B6 [EXIGE] el rastro no imprime la URL entera: solo esquema y host',
+  /function urlParaRastro\(u\)/.test(MAIN) && /u\.protocol \+ '\/\/' \+ \(u\.host/.test(MAIN)
+  && !/openExternal[\s\S]{0,200}appLog\([^)]*u\.href/.test(MAIN));
+ok('F3-B7 [EXIGE] la política se aplica a las 10 BrowserWindow productivas',
+  cuenta(MAIN, /aplicarPoliticaDeNavegacion\([^,]+, '[a-z-]+'\)/g) === 10,
+  String(cuenta(MAIN, /aplicarPoliticaDeNavegacion\([^,]+, '[a-z-]+'\)/g)));
+ok('F3-B8 [CUSTODIA] sigue sin usarse `will-attach-webview` ni el `new-window` legado',
+  cuenta(MAIN, /will-attach-webview/g) === 0 && cuenta(MAIN, /'new-window'/g) === 0);
+// La guardia de navegación NO puede romper lo que el producto sí usa. Se
+// comprobó antes de ponerla: solo `location.reload()` y las descargas `blob:`.
+ok('F3-B9 [EXIGE] la navegación interna legítima se preserva (recarga, ancla y blob:)',
+  /function navegacionInternaLegitima\(destino, actual\)/.test(MAIN)
+  && /if \(destino === actual\) return true;/.test(MAIN)
+  && /d\.protocol === 'blob:'/.test(MAIN)
+  && /d\.pathname === a\.pathname/.test(MAIN));
+ok('F3-B10 [CUSTODIA] siguen siendo 10 `new BrowserWindow`',
   cuenta(MAIN, /new BrowserWindow/g) === 10, String(cuenta(MAIN, /new BrowserWindow/g)));
+
+// La política, EJECUTADA: se extrae el validador real y se prueban los esquemas.
+const POL = new Function('return (' + (MAIN.match(/function urlExternaPermitida\(url\) \{[\s\S]*?\n\}/) || [''])[0] + ')')();
+const DENEGADOS = ['about:blank', 'file:///C:/x.html', 'data:text/html,<b>x', 'javascript:alert(1)',
+  'chrome://settings', 'inventado://x', 'ftp://host/f', '', 'no-es-una-url', 'http://', '//sin-esquema/x'];
+for (const u of DENEGADOS) ok(`F3-B ${JSON.stringify(u).slice(0, 34)} NO se considera externo permitido`, POL(u) === null, String(POL(u)));
+for (const u of ['http://ejemplo.test/x', 'https://ejemplo.test/x?q=1#a']) {
+  ok(`F3-B ${u} SÍ se acepta como externo`, POL(u) !== null && /^https?:$/.test(POL(u).protocol));
+}
 
 // =============================================================================
 seccion('F2/F3-Z. ALCANCE Y ESTADO');
 // =============================================================================
 ok('F2/F3-Z1 F1 está CERRADO (esta ronda no lo reabre)', /\| \*\*F1\*\* \| \*\*CERRADO\*\*/.test(AUD));
-ok('F2/F3-Z2 F2 y F3 siguen PENDIENTES en la tabla de la auditoría',
-  /\| \*\*F2\*\* \| \*\*PENDIENTE\*\*/.test(AUD) && /\| \*\*F3\*\* \| \*\*PENDIENTE\*\*/.test(AUD));
-ok('F2/F3-Z3 esta ronda no toca producción: main.js no declara CSP ni handlers',
-  cuenta(MAIN, /setWindowOpenHandler|Content-Security/g) === 0);
+// Tras esta ronda los dos pasan de «PENDIENTE» a «ABIERTO — DIAGNOSTICADO»:
+// siguen SIN implementar, que es lo que custodia esta aserción.
+ok('F2/F3-Z2 F3 CERRADO y F2 ABIERTO (diagnosticado, es la siguiente ronda)',
+  /\| \*\*F2\*\* \| \*\*ABIERTO — DIAGNOSTICADO\*\*/.test(AUD)
+  && /\| \*\*F3\*\* \| \*\*CERRADO\*\*/.test(AUD));
+ok('F2/F3-Z3 F2 NO se ha implementado: main.js sigue sin declarar CSP',
+  cuenta(MAIN, /Content-Security/g) === 0);
+ok('F2/F3-Z4 …y las 10 ventanas siguen sin <meta> CSP (F2 intacto)', conCsp === 0);
 
 console.log('\n======================================================================');
 console.log(`  F2/F3: ${pass} OK / ${fail} FALLOS`);

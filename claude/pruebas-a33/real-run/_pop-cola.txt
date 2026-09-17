@@ -1,0 +1,96 @@
+        } catch (e) { mundo = { error: String(e.message).slice(0, 60) }; }
+        const f = { ventana: nombre, id: w.webContents.id,
+          padre: (() => { try { const p = w.getParentWindow(); return p ? p.webContents.id : null; } catch (e) { return null; } })(),
+          url: w.webContents.getURL(), titulo: w.getTitle(),
+          contextIsolation: wp.contextIsolation, nodeIntegration: wp.nodeIntegration, sandbox: wp.sandbox,
+          mundo };
+        info('ficha ' + JSON.stringify(Object.assign({}, f, { url: String(f.url).slice(0, 70) })));
+        return f;
+      };
+
+      // 1) about:blank — la "ventana negra" de los arneses.
+      const antes = new Set(BrowserWindow.getAllWindows().map((x) => x.id));
+      await v.webContents.executeJavaScript("window.open('about:blank','_blank')").catch(() => {});
+      await esperar(1500);
+      const hija = BrowserWindow.getAllWindows().find((x) => !antes.has(x.id) && !x.isDestroyed());
+      ok('F3-P1 [REPRODUCIDO] window.open SÍ crea una BrowserWindow nueva: no hay setWindowOpenHandler', !!hija);
+      let fBlank = null;
+      if (hija) {
+        fBlank = await ficha(hija, 'about:blank');
+        ok('F3-P2 esa ventana es la "ventana negra": título "Electron" y url about:blank',
+          /^electron$/i.test(fBlank.titulo) && /^about:blank/.test(fBlank.url), JSON.stringify({ t: fBlank.titulo, u: fBlank.url }));
+        ok('F3-P3 [BARRERA] NO hereda el puente: panoramaBridge ausente',
+          fBlank.mundo.bridge === 'undefined' && fBlank.mundo.metodos === 0, JSON.stringify(fBlank.mundo));
+        ok('F3-P4 [BARRERA] tampoco hay Node: require y process ausentes',
+          fBlank.mundo.require === 'undefined' && fBlank.mundo.process === 'undefined', JSON.stringify(fBlank.mundo));
+        ok('F3-P5 [BARRERA] hereda contextIsolation y sandbox del padre',
+          fBlank.contextIsolation === true && fBlank.sandbox === true && fBlank.nodeIntegration !== true,
+          JSON.stringify({ ci: fBlank.contextIsolation, sb: fBlank.sandbox, ni: fBlank.nodeIntegration }));
+        ok('F3-P6 y tampoco tiene CSP (F2 alcanza también a las ventanas hijas)', fBlank.mundo.csp === false);
+      }
+
+      // 2) ¿Mantiene el opener y puede hablar con la principal?
+      if (hija) {
+        const enlace = await v.webContents.executeJavaScript(
+          "(function(){try{var w=window.open('about:blank','_blank');"
+          + "if(!w) return 'sin-referencia';"
+          + "w.__marcaDelPadre = 'F2F3';"
+          + "return 'escribe-en-la-hija:' + (w.__marcaDelPadre === 'F2F3');}catch(e){return 'error: '+e.message}})()")
+          .catch((e) => 'ERR ' + e.message);
+        info('opener/acceso: ' + enlace);
+        ok('F3-P7 el padre conserva la referencia a la hija y puede escribir en ella (mismo origen)',
+          /escribe-en-la-hija:true/.test(String(enlace)), String(enlace));
+      }
+
+      // 3) Navegación de la hija a un archivo LOCAL inerte: ¿la deja Electron?
+      //    (Sin red: un .html del sandbox.)
+      const inerte = path.join(LAB, 'inerte.html');
+      fs.writeFileSync(inerte, '<!DOCTYPE html><title>inerte</title><body>pagina local inerte</body>', 'utf8');
+      const antes2 = new Set(BrowserWindow.getAllWindows().map((x) => x.id));
+      await v.webContents.executeJavaScript(`window.open(${JSON.stringify(urlDe(inerte))},'_blank')`).catch(() => {});
+      await esperar(2000);
+      const hija2 = BrowserWindow.getAllWindows().find((x) => !antes2.has(x.id) && !x.isDestroyed());
+      ok('F3-P8 [REPRODUCIDO] window.open a un file:// LOCAL también abre ventana, sin ninguna guardia', !!hija2);
+      if (hija2) {
+        const f2 = await ficha(hija2, 'file:// local');
+        ok('F3-P9 esa ventana carga el contenido local y tampoco recibe el puente',
+          /inerte\.html/.test(f2.url) && f2.mundo.bridge === 'undefined', JSON.stringify({ u: f2.url, b: f2.mundo.bridge }));
+        ok('F3-P10 …y toma el título de la PÁGINA, no el genérico de Electron',
+          f2.titulo === 'inerte', f2.titulo);
+      }
+
+      // 4) El único target="_blank" del producto: el enlace de un entregable.
+      //    Se comprueba que el clic REAL abre ventana (con un destino local).
+      const antes3 = new Set(BrowserWindow.getAllWindows().map((x) => x.id));
+      const clic = await v.webContents.executeJavaScript(
+        `(function(){var a=document.createElement('a');a.href=${JSON.stringify(urlDe(inerte))};`
+        + "a.target='_blank';a.rel='noopener';a.textContent='x';document.body.appendChild(a);a.click();return 'clic'})()")
+        .catch((e) => 'ERR ' + e.message);
+      await esperar(2000);
+      const hija3 = BrowserWindow.getAllWindows().find((x) => !antes3.has(x.id) && !x.isDestroyed());
+      info('clic en <a target=_blank>: ' + clic);
+      ok('F3-P11 [REPRODUCIDO] un <a target="_blank"> abre la ventana DENTRO de la app, no en el navegador',
+        !!hija3, String(clic));
+      if (hija3) {
+        const f3 = await ficha(hija3, 'a target=_blank');
+        ok('F3-P12 con rel="noopener", la hija no conserva opener',
+          f3.mundo.opener === 'null' || f3.mundo.opener === 'inaccesible', String(f3.mundo.opener));
+      }
+
+      // 5) Inventario final de ventanas.
+      const inv = BrowserWindow.getAllWindows().filter((x) => !x.isDestroyed()).map((x) => ({
+        id: x.webContents.id, titulo: x.getTitle(), url: x.webContents.getURL().slice(0, 50),
+      }));
+      info('ventanas abiertas al final: ' + JSON.stringify(inv));
+      ok('F3-P13 se han quedado abiertas varias ventanas sin guardián (3 hijas + las productivas)',
+        inv.length >= 5, String(inv.length));
+      tlog('__MODO_TERMINADO__ pop');
+      await esperar(800);
+      app.exit(0);
+      return;
+    }
+  } catch (e) {
+    tlog('EXCEPCION EN EL ARNES: ' + ((e && e.stack) || String(e)));
+    app.exit(4);
+  }
+});

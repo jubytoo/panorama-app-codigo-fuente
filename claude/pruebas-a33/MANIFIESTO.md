@@ -120,6 +120,7 @@ Modificado: `a2/test-cableado.js` (+19 aserciones `REST-FLUSH-1..5`).
 | `c1/` | **C1 — residuos. C1-A cerrado, C1-B diferido.** Desde la ronda C1-A, `test-c1-residuos.js` (**165 OK / 0**) tiene una sección **`C1-A` que EXIGE**: el inventario de arranque deja exactamente una línea con los recuentos esperados, sin rutas (A1); no escribe, no crea, no mueve, no descifra de más, no entra en las cachés de Chromium, con **espías** de `fs`, `dbmod` y `securitymod` (A2); detecta y no elimina el intercalado, el `.tmp-fallido` y la partición huérfana (A3–A5); «Eliminar evaluación» e «Importar» retiran el CV solo con `aplicado+verificado`, sobre las **ramas reales del HTML** (A6–A8); los mensajes ya no prometen «se resuelve sola» (A9). Cinco aserciones descriptivas del diagnóstico (`C1-D3/D4`, `C1-E8b/c`, `C1-E9c`) se **invirtieron**, con nota. `revertir-c1.js` + `comprobar-reversiones-c1.js`: **siete reversiones**, cada una rompe solo lo suyo. `medir-inventario-vivo.js`: el inventario REAL sobre la carpeta de datos, con `fs` y `dbmod` que **lanzan** ante cualquier escritura. `electron-c1.ps1` (**31 OK / 0**, cuatro arranques). *Lo que sigue es la descripción del diagnóstico:* `test-c1-residuos.js` nació como batería **descriptiva** (122 OK / 0: da verde porque describe lo que HAY). Fabrica en sandbox las familias de residuo —backup huérfano anterior e intercalado, fila sin archivo, `.tmp-fallido` íntegro, `.tmp` completo y `.tmp` muerto, tmp de acción sin journal, journal propio/ajeno/ilegible/resuelto, proyecto borrado, CV huérfano, restos de rekey y de restauración, sonda de escritura— con las funciones **reales** de `main.js` y el `db.js` real, e **inyecta fallos de `fs`** acotados al sandbox. `C1-D` demuestra que el «contar y registrar» aprobado **no existe**; `C1-E9c` demuestra el mensaje engañoso del rekey; `C1-R` evalúa como **modelo** el arreglo de la auditoría y enseña por qué es inseguro. `electron-c1.ps1` (**10 OK / 0**, app real + `real-run/c1-particion.js`) mide qué queda de la partición de un proyecto borrado. `inventario-vivo.js` es el inventario de los datos **reales**, de **solo lectura** e imprimiendo solo agregados; comprueba la BD viva, la de P10 y el nº de entradas antes y después (exit 98 si algo cambia). **No confundir los `C1-*` de aquí con el corte `C1` de la matriz del Bloque 4** |
 | `f1/` | **F1 — interpretación de datos como HTML. CERRADO (16 sept 2026).** `test-f1-sinks.js` (**139 OK / 0**) pasó de descriptiva a **EXIGENTE**: ejecuta los constructores reales del dashboard **con los helpers reales del propio archivo** y exige que cada campo quede *inerte* (ni etiqueta, ni handler, ni atributo roto) sin dejar de verse; `</textarea>` dentro del valor; logo solo `data:image/*;base64`; y **round-trip exacto del factory-seed** con `</script>`, `$&`, `$'`, `` $` ``, `$1`, `<`, `>`, `&`, comillas, acentos y emoji. Custodia además lo que NO debe tocarse (markup propio, enums, `modal.js`, builders ya escapados). `electron-f1.ps1` (**47 OK / 0**, cuatro arranques) lo exige en la app real: importar con marcadores, reinicio, título horneado y **un proyecto horneado ANTES de F1** (que debe seguir abriendo). `revertir-f1.js` + `comprobar-reversiones-f1.js` (**19 OK / 0**): **seis reversiones por familias** —texto del dashboard, seed inseguro, `onclick` de Preparación, selector de Evaluación, `data-dedic` del Directorio y logo crudo—, cada una rompe **solo lo suyo**. *Lo que sigue es la descripción del diagnóstico previo:* **SOLO DIAGNÓSTICO — no se había tocado producción.** `test-f1-sinks.js` (**100 OK / 0**, **descriptiva**: da verde porque describe los sinks que HAY) inventaria y ejecuta los constructores reales del dashboard, la Preparación, la Evaluación, el Directorio, el lanzador y de `main.js` (horneado del `factory-seed`, `String.replace` con `$`), clasificando cada interpolación por fuente y por si escapa. `electron-f1.ps1` (**34 OK / 0**, app real + `real-run/f1-inyeccion.js`) demuestra con **marcadores inocuos** (una `<b>`, un `data-f1a`, y una `<img>` con `onerror` que solo pone un atributo en `<html>` — **sin red, sin APIs sensibles, sin acciones destructivas**): al abrir un proyecto importado se interpretan 19 campos del dashboard; el id importado rompe atributos; el sink del `<select>` del historial queda **inerte por el parser**, no por escape; la Evaluación deja el texto literal pero **peso y fecha** van crudos; el título importado **horneado** en `dashboard.html` se ejecuta en el **arranque** (persistente); y el nombre de proyecto rompe el `data-dedic` del Directorio. **Barreras medidas:** `contextIsolation:true`, `sandbox:true`, sin Node en el mundo principal de todas las ventanas, `psConfirm` sobrescribible, **sin CSP** (F2), y `window.open` sin `setWindowOpenHandler` (F3) cuya ventana hija **no** hereda el puente. `f1-inyeccion.js` **no** invoca ninguna API del puente desde el contenido inyectado: la exposición **solo se documenta** |
 | `p17/` | **P17 — el horneado dejaba assets sin resolver. CERRADO (17 sept 2026).** `fixVendorScriptPaths` encadenaba nueve `String.replace(cadena, cadena)`, con DOS defectos de la misma familia: con patrón de cadena solo se sustituye la **primera** coincidencia (y `src="../assets/icon-256.png"` aparece **dos** veces, en el dashboard **y** en el Directorio: el icono de la barra de título salía roto), y la URL iba como **cadena de reemplazo**, donde `$&`/`` $` ``/`$'` tienen semántica (medido antes del arreglo: con `$'` el horneado pasaba de 373 KB a **189 MB** y dejaba **2210** rutas sin resolver). Corregido con **un solo patrón** para los nueve: regex **global** + **función** de reemplazo. `test-p17-assets.js` (**70 OK / 0**, EXIGENTE) ejecuta la función REAL contra las dos plantillas: cero relativos, los dos iconos resueltos, custodia de los nueve patrones, **equivalencia byte a byte** al deshacer solo los assets, y los cuatro casos `$&`/`$'`/`` $` ``/`$1`. `electron-p17.ps1` (**16 OK / 0**) lo exige en la app real sobre el dashboard **y** el Directorio horneados. `revertir-p17.js` + `comprobar-reversiones-p17.js` (**6 OK / 0**): al volver a `String.replace(cadena, cadena)` reaparecen **los dos** defectos |
+| `f2f3/` | **F2 (sin CSP) — ABIERTO, diagnosticado. F3 (sin `setWindowOpenHandler`) — CERRADO el 17 sept 2026.** Desde la implementación de F3, `test-f2f3.js` (**63 OK / 0**) **EXIGE** la política: helper único, ventana hija denegada siempre, `new URL` como validador (no `startsWith`), rechazo de `openExternal` capturado, rastro sin la URL entera, la política en las 10 ventanas, y la navegación interna legítima (recarga, ancla y `blob:`) preservada; ejecuta además el validador real contra 11 destinos denegados y 2 permitidos. `electron-f2f3.ps1` (**35 OK / 0**) lo exige en la app real con un **espía sobre `shell.openExternal`** —sin abrir Internet— cubriendo `about:blank`, `file://`, `data:`, `javascript:`, esquema inventado, URL malformada, `http`/`https` válidos, el enlace de entregable, `will-navigate`, `location.reload()` y `blob:`. `revertir-f3.js` + `comprobar-reversiones-f3.js` (**5 OK / 0**) y `electron-f3-revertido.ps1` (**4 OK / 0**), que reproduce las tres señales del defecto. *Lo que sigue describe el diagnóstico previo de los dos:* **DIAGNÓSTICO, sin implementar.** Dos hallazgos separados que comparten superficie. `test-f2f3.js` (**45 OK / 0**, descriptiva) recupera los dos hallazgos originales **literalmente** y mide: 0 CSP por `<meta>` **y** 0 por cabecera; de qué depende cada ventana (7 con `<script>` en línea, 9 con estilos en línea, 0 recursos externos, 1 Worker, `blob:` solo para descargar); `eval`/`new Function` **ausentes en el código propio** y presentes solo en mammoth/pdf.js; y la superficie de F3 (0 `window.open` del producto, **un** `target="_blank"`, 0 guardianes, 10 `new BrowserWindow`). `electron-f2f3.ps1` (**23 OK / 0**) lo mide en la app real: prueba una **CSP candidata** contra scripts/estilos en línea, vendor por `file://`, Worker de pdf.js y descargas `blob:`, y contesta la pregunta decisiva —**`unsafe-eval` NO hace falta**: con `new Function` bloqueado, mammoth lee un `.docx` real y pdf.js abre un `.pdf` real construidos por la propia batería—; y reproduce F3 (que venía **[LEÍDO]**): `window.open` abre `BrowserWindow`, es la «ventana negra» (`Electron` / `about:blank`), y la hija **no** hereda puente ni Node |
 | `real-run/` | Envoltorios que cargan el `main.js` REAL dentro de Electron. **Ojo con dos homonimias:** `b5.js` y `b4.js` son de los **Bloques 5 y 4 de A3.3**, no de los hallazgos B4/B5 de la auditoría; esos son `b4-reorder.js` y `b5-reentrancia.js`. `c1-particion.js` es de C1; `f1-inyeccion.js` y `f1-limpio.js` son de F1; `p17-assets.js` es de P17 |
 | `lock-harness/`, `nucleo-a33/`, `probe/`, y los sueltos de la raíz | Material de rondas anteriores (A1, A2 original, B2, `setMeta`, benchmarks). Se conservan como histórico |
 
@@ -131,6 +132,7 @@ Modificado: `a2/test-cableado.js` (+19 aserciones `REST-FLUSH-1..5`).
 REGRESIÓN AUTOMATIZADA COMPLETA:  1745 OK / 0 FALLOS   (16 sept 2026, tras C1-A)
 TODOS LOS test-*.js, TRAS F1:     2961 OK / 0 FALLOS   (16 sept 2026, tras F1)
 TODOS LOS test-*.js, TRAS P17:    3031 OK / 0 FALLOS   (17 sept 2026, tras P17)
+TODOS LOS test-*.js, TRAS F3:     3094 OK / 0 FALLOS   (17 sept 2026, tras F3)
 ```
 
 La primera cifra es la del núcleo, como se venía contando. La segunda es la
@@ -140,8 +142,8 @@ sumados— para dejar constancia de que F1 no rompió nada: núcleo y bloques
 **2657**, más **C1 165** y **F1 139**. Aparte: reversiones de F1 **19 OK/0** y
 las 7 de C1-A, que siguen rompiendo cada una por lo suyo.
 
-Contra `main.js` = `434BB2946C3D87F1D44E829C09D3C5EE5BE985F8545586B0CB9F7AB34D0C02C5`
-(tras P17; antes `0BC92A46…` tras F1, y `F81F0A3D…` tras C1-A) y
+Contra `main.js` = `16AB5F53B57F961927F36A23058CB7CDC043D76446C5AFF6F885E47CECFE4890`
+(tras F3; antes `434BB294…` tras P17, `0BC92A46…` tras F1, `F81F0A3D…` tras C1-A) y
 `db.js` = `B03C81FF5FC300009DC315E4B20F9BF88DCC6902B18C2EF434B251A022EDD830`
 (81 870 B — sin cambios desde B4, que solo le cambió comentarios; sin ellos el
 código es idéntico byte a byte al de antes). Aparte, en la misma tirada: E1 47,
@@ -159,6 +161,16 @@ P12 73, E2 67, B1 77, B3 85, B4 144, B5 68 y **C1 165**, todas a 0 fallos.
 > nota: `E1-M4` (hash) y `E2-A5`, que custodiaba la **forma antigua** del
 > `.replace` de `service-status.js` — su intención (que esa ruta se reescriba al
 > hornear) no cambia, solo dónde se comprueba.
+>
+> **F3 lo mueve una vez más** (`434BB294…` → `16AB5F53…`): la política de
+> apertura y navegación. Aquí **sí hubo una regresión de verdad, no solo
+> anclajes**: A2 se fue a **54 fallos** con `aplicarPoliticaDeNavegacion is not
+> defined`, porque sus arneses extraen `writeLocalStorageDumpToPartition` y
+> `runInPartition`, que ahora llaman al helper. Es exactamente el aviso que da
+> la cabecera de `comun/bloque5-extraccion.js`: **si la lista se queda corta, el
+> arnés revienta a propósito**. Se añadieron las cinco funciones de F3 a esa
+> lista compartida. Aparte, `E1-M4`, `F1-Z1` y `F2/F3-Z2` se actualizaron con su
+> nota.
 
 > **C1-A tampoco mueve la cifra del núcleo**, y es lo esperado: sus
 > aserciones se cuentan en `c1/`. Lo que sí hubo que actualizar **a
@@ -262,6 +274,8 @@ no solo lo de B3. Todas las cifras coinciden con las registradas:
 | `f1/electron-f1.ps1` | **47 / 0** *(tras implementar F1; **exige** cero interpretación en 4 arranques reales — importado, reinicio, título horneado y proyecto horneado antes de F1. Antes del arreglo, en diagnóstico: 34 / 0 describiendo el defecto)* |
 | `f1/electron-f1-limpio.ps1` | **52 / 0** *(validación con datos ORDINARIOS: las 5 pantallas, caracteres `& " < >`, proyecto pre-F1 y logos, con capturas)* |
 | `p17/electron-p17.ps1` | **16 / 0** *(assets del horneado en la app real: dashboard **y** Directorio, cero recursos rotos)* |
+| `f2f3/electron-f2f3.ps1` | **35 / 0** *(tras implementar F3; **exige** 0 ventanas nuevas y `shell.openExternal` espiado, sin abrir Internet. Antes del arreglo, en diagnóstico: 23 / 0)* |
+| `f2f3/electron-f3-revertido.ps1` | **4 / 0** *(sin política, el defecto REAPARECE: `about:blank`, `file://` y `<a target="_blank">`)* |
 
 En los once: **BD viva idéntica por SHA-256** antes y después, carpeta de la
 BD sin archivos nuevos, **archivos productivos intactos** y sandbox borrado.
@@ -520,14 +534,14 @@ pruebas** (`_a33-…`) y abortan si contiene `bd-panoramaservicio`.
 
 ## 7. INTEGRIDAD DE ESTA COPIA
 
-`SHA256SUMS.txt` (en esta misma carpeta) lista el **SHA-256 de los 226
+`SHA256SUMS.txt` (en esta misma carpeta) lista el **SHA-256 de los 234
 archivos** de la batería, con ruta relativa. Se regenera con
 `comun/regenerar-sumas.js` y se comprueba con `comun/verificar-copia.js`
 (recorrido independiente, exit 0 solo si no falta ni difiere nada y **no hay
 ningún `.sqlite3` dentro del repositorio**).
 
-Última verificación (17 sept 2026, tras implementar P17): **226 listados,
-0 faltan, 0 difieren, 0 `.sqlite3`**, 4 127 475 bytes. Las carpetas
+Última verificación (17 sept 2026, tras implementar F3): **234 listados,
+0 faltan, 0 difieren, 0 `.sqlite3`**, 4 210 383 bytes. Las carpetas
 `*/revertidos/` no se listan: las regeneran los `revertir-*.js`.
 
 > **Ojo:** este `MANIFIESTO.md` **sí** entra en `SHA256SUMS.txt`, aunque el

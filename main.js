@@ -1801,6 +1801,110 @@ async function parseAndDecryptImportedProjectJson(text, parentWin) {
   return { state: candidate, history };
 }
 
+// ------------------------------------------------------------------
+// F3 (17 sept 2026) — POLÍTICA DE APERTURA Y NAVEGACIÓN DE VENTANAS.
+//
+// Hasta aquí ninguna ventana interceptaba `window.open` ni las navegaciones.
+// Medido en Electron real antes de tocar nada: `window.open('about:blank')`
+// creaba una BrowserWindow de verdad —la «ventana negra» titulada «Electron»
+// que se veía en los arneses—, un `file://` local también abría ventana, y un
+// `<a target="_blank">` abría el destino DENTRO de la aplicación en vez de en
+// el navegador del usuario.
+//
+// No era escalada de privilegios (la hija hereda contextIsolation+sandbox y no
+// recibe ni `panoramaBridge` ni Node), pero sí una superficie de navegación
+// innecesaria: contenido remoto dentro del marco de la app, sin barra de
+// direcciones. Y el enlace legítimo de un entregable se abría donde no debía.
+//
+// La política: el producto NO necesita ventanas emergentes propias —no llama a
+// `window.open` en ningún sitio—, así que se DENIEGA siempre la ventana hija.
+// Lo único que se hace aparte es mandar http/https al navegador del sistema.
+// ------------------------------------------------------------------
+
+// Solo http/https, y solo si la URL parsea de verdad. Nada de `startsWith` ni
+// de regex laxas: si `new URL` falla, se deniega y no se intenta "arreglarla".
+function urlExternaPermitida(url) {
+  try {
+    const u = new URL(String(url));
+    return (u.protocol === 'http:' || u.protocol === 'https:') ? u : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// Para el rastro: ni la URL entera (puede llevar identificadores o datos en la
+// query) ni nada que el usuario no deba ver en un log. Esquema y host bastan.
+function urlParaRastro(u) {
+  try {
+    return u.protocol + '//' + (u.host || '(sin host)');
+  } catch (e) {
+    return '(url no representable)';
+  }
+}
+
+// Abre en el navegador del sistema. `shell.openExternal` devuelve una promesa
+// que PUEDE rechazar (protocolo sin aplicación asociada, política del sistema):
+// se captura siempre, porque un rechazo sin manejar tumbaría el proceso con
+// B2. Si falla, queda rastro y NO se abre nada dentro de Electron.
+function abrirEnNavegador(u, origen) {
+  try {
+    Promise.resolve(shell.openExternal(u.href)).catch((e) => {
+      appLog(`No se pudo abrir un enlace externo (${origen}) en el navegador del sistema: `
+        + `${urlParaRastro(u)} — ${motivoSinRutas(e)}`);
+    });
+  } catch (e) {
+    appLog(`No se pudo abrir un enlace externo (${origen}) en el navegador del sistema: `
+      + `${urlParaRastro(u)} — ${motivoSinRutas(e)}`);
+  }
+}
+
+// ¿Es una navegación que el producto SÍ usa hoy? Se comprobó antes de poner la
+// guardia: lo único que navega de verdad es `location.reload()` del dashboard,
+// y las descargas, que van por `blob:` con <a download>. Todo lo demás (el
+// resto de ventanas se cargan con `loadFile` desde el proceso principal, que
+// no dispara `will-navigate`) es inesperado.
+function navegacionInternaLegitima(destino, actual) {
+  if (destino === actual) return true;              // recarga de la misma página
+  try {
+    const d = new URL(destino);
+    if (d.protocol === 'blob:') return true;        // descargas (exportar CSV/Excel/…)
+    const a = new URL(actual);
+    // Cambio de ancla dentro del MISMO documento.
+    return d.protocol === a.protocol && d.host === a.host && d.pathname === a.pathname;
+  } catch (e) {
+    return false;
+  }
+}
+
+function aplicarPoliticaDeNavegacion(wc, etiqueta) {
+  // Un `webContents` que no traiga estas APIs no puede llevar política. En
+  // producción SIEMPRE las trae; esto solo evita reventar con un doble de
+  // pruebas mínimo (los arneses de A2/Bloque 5 usan uno para las ventanas
+  // ocultas de partición).
+  if (!wc || typeof wc.setWindowOpenHandler !== 'function' || typeof wc.on !== 'function') return;
+  if (typeof wc.isDestroyed === 'function' && wc.isDestroyed()) return;
+  // 1) Ventanas nuevas: SIEMPRE denegadas. Si el destino es http/https, se
+  //    manda al navegador del sistema; el resto (about:, file:, data:,
+  //    javascript:, esquemas inventados, URLs rotas) se deniega sin más.
+  wc.setWindowOpenHandler(({ url }) => {
+    const u = urlExternaPermitida(url);
+    if (u) abrirEnNavegador(u, etiqueta);
+    else appLogUnaVezPorSesion(`f3-open-${etiqueta}`,
+      `Se ha bloqueado la apertura de una ventana no prevista desde ${etiqueta}.`);
+    return { action: 'deny' };
+  });
+  // 2) Navegaciones dentro de la propia ventana.
+  wc.on('will-navigate', (evt, url) => {
+    const actual = (() => { try { return wc.getURL(); } catch (e) { return ''; } })();
+    if (navegacionInternaLegitima(url, actual)) return;
+    evt.preventDefault();
+    const u = urlExternaPermitida(url);
+    if (u) abrirEnNavegador(u, etiqueta + ' (enlace)');
+    else appLogUnaVezPorSesion(`f3-nav-${etiqueta}`,
+      `Se ha bloqueado una navegación no prevista en ${etiqueta}.`);
+  });
+}
+
 function createLauncherWindow() {
   if (launcherWin && !launcherWin.isDestroyed()) {
     launcherWin.focus();
@@ -1866,6 +1970,7 @@ function createLauncherWindow() {
   launcherWin.on('unmaximize', () => {
     if (launcherWin && !launcherWin.isDestroyed()) launcherWin.setBounds(launcherNormalRect);
   });
+  aplicarPoliticaDeNavegacion(launcherWin.webContents, 'lanzador'); // F3
   launcherWin.loadFile(path.join(__dirname, 'launcher', 'index.html'));
   launcherWin.once('ready-to-show', () => {
     closeSplashWindow(() => {
@@ -1927,6 +2032,7 @@ function showSplashWindow() {
       nodeIntegration: false,
     },
   });
+  aplicarPoliticaDeNavegacion(splashWin.webContents, 'splash'); // F3
   splashWin.loadFile(path.join(__dirname, 'launcher', 'splash.html'));
   splashWin.on('closed', () => {
     splashWin = null;
@@ -2912,6 +3018,7 @@ function openProjectWindow(row) {
   const projectNormalRect = normalRectFor(projectBounds, projectWorkArea);
   win.maximize();
   win.on('unmaximize', () => { if (!win.isDestroyed()) win.setBounds(projectNormalRect); });
+  aplicarPoliticaDeNavegacion(win.webContents, 'proyecto'); // F3
   win.loadFile(resolveDashboardFileForProject(row));
   // v2.0.42: bug real encontrado probando en Windows real -- el icono de
   // maximizar/restaurar de la barra de título propia salía mostrando
@@ -2999,6 +3106,7 @@ function openMeetingPrepWindow(row) {
       ],
     },
   });
+  aplicarPoliticaDeNavegacion(win.webContents, 'preparacion'); // F3
   win.loadFile(path.join(__dirname, 'preparacion-reunion', 'plantilla_preparacion_reunion.html'));
   win.once('ready-to-show', () => { if (!win.isDestroyed()) win.show(); });
   win.on('maximize', () => { if (!win.isDestroyed()) win.webContents.send('win:maximizedChanged', true); });
@@ -3073,6 +3181,7 @@ function openCandidateEvalWindow(row, opts) {
       ],
     },
   });
+  aplicarPoliticaDeNavegacion(win.webContents, 'evaluacion'); // F3
   win.loadFile(path.join(__dirname, 'evaluacion-candidatos', 'plantilla_evaluacion_candidatos.html'));
   win.once('ready-to-show', () => { if (!win.isDestroyed()) win.show(); });
   win.on('maximize', () => { if (!win.isDestroyed()) win.webContents.send('win:maximizedChanged', true); });
@@ -3133,6 +3242,7 @@ function writeLocalStorageDumpToPartition(partitionName, dump, { clearFirst } = 
       show: false,
       webPreferences: { partition: partitionName },
     });
+    aplicarPoliticaDeNavegacion(helperWin.webContents, 'volcado-localstorage'); // F3
     helperWin
       .loadFile(path.join(__dirname, 'dashboard', 'restore-helper.html'))
       .then(async () => {
@@ -3184,6 +3294,7 @@ function runInPartition(partitionName, script) {
         /* no crítico */
       }
     };
+    aplicarPoliticaDeNavegacion(helperWin.webContents, 'particion-auxiliar'); // F3
     helperWin
       .loadFile(path.join(__dirname, 'dashboard', 'restore-helper.html'))
       .then(async () => {
@@ -4078,6 +4189,7 @@ function openBackupPickerWindow(row, parentWin) {
       ],
     },
   });
+  aplicarPoliticaDeNavegacion(win.webContents, 'selector-backups'); // F3
   win.loadFile(path.join(__dirname, 'backup-picker', 'index.html'));
   win.once('ready-to-show', () => { if (!win.isDestroyed()) win.show(); });
   win.on('maximize', () => { if (!win.isDestroyed()) win.webContents.send('win:maximizedChanged', true); });
@@ -6885,7 +6997,8 @@ async function openSecurityWindow(mode, parentWin) {
         nodeIntegration: false,
       },
     });
-    securityWin.loadFile(path.join(__dirname, 'security-window', 'index.html'));
+    aplicarPoliticaDeNavegacion(securityWin.webContents, 'seguridad'); // F3
+  securityWin.loadFile(path.join(__dirname, 'security-window', 'index.html'));
     securityWin.webContents.once('did-finish-load', () => {
       if (securityWin && !securityWin.isDestroyed()) {
         securityWin.webContents.send('security-win:init', {
@@ -6952,7 +7065,8 @@ function promptForPassword(parentWin, message) {
         nodeIntegration: false,
       },
     });
-    passwordPromptWin.loadFile(path.join(__dirname, 'launcher', 'password-prompt.html'));
+    aplicarPoliticaDeNavegacion(passwordPromptWin.webContents, 'contrasena'); // F3
+  passwordPromptWin.loadFile(path.join(__dirname, 'launcher', 'password-prompt.html'));
     passwordPromptWin.once('ready-to-show', () => {
       if (passwordPromptWin && !passwordPromptWin.isDestroyed()) passwordPromptWin.show();
     });

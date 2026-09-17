@@ -1308,6 +1308,155 @@ genéricas.
 > / `webContents.hostWebContents`) **antes** de dar por hecho que es F3. Solo
 > entonces se diagnostica. No se toca producto por esta observación.
 
+---
+
+## §F2 / F3 — La superficie del renderer. DIAGNÓSTICO (17 sept 2026), sin implementar
+
+Se estudian juntos porque comparten superficie, pero **siguen siendo dos
+hallazgos separados**, con conclusiones distintas. Batería `f2f3/`:
+`test-f2f3.js` **45 OK/0** (descriptiva) + `electron-f2f3.ps1` **23 OK/0** en la
+app real. **Producción sin tocar.**
+
+### F2 — sin CSP
+
+**Original (auditoría, [MEDIDO]):** «0 de 10 archivos HTML tienen
+`<meta http-equiv="Content-Security-Policy">`. Una CSP no bloquearía el XSS de
+F1 […] pero sí cortaría la exfiltración […]. Coste: una línea por plantilla.»
+
+**Estado hoy:** confirmado **por las dos vías** — 0 `<meta>` en las 10 ventanas
+y **0** cabeceras (`main.js` no usa `webRequest`/`onHeadersReceived`).
+
+**De qué depende el producto** (lo que condiciona la CSP):
+
+| Dependencia | Medido | Clase |
+|---|---|---|
+| `<script>` en línea | 7 de 10 ventanas | **A — necesario hoy** |
+| Estilos en línea (`<style>` + `style="`) | 9 de 10 (193 atributos solo en el dashboard) | **A** |
+| Recursos externos http(s) | **0** en las 10 | — |
+| `eval`/`new Function` en código propio | **0** | — |
+| `eval`/`new Function` en vendor | mammoth 7, pdf.js 3, pdf.worker 2 | **C — legado, NO ejecutado** |
+| Worker | 1 (pdf.js, en Preparación) | **A** |
+| `blob:` | 4 ventanas, **solo para descargar** | **A** |
+| `fetch`/XHR en renderers | **0** (las actas se leen con `file.arrayBuffer()`) | — |
+
+**Resultado decisivo, medido en Electron real:** con `new Function`
+**demostradamente bloqueado** (EvalError, control de que la CSP actúa), mammoth
+leyó un `.docx` real y pdf.js abrió un `.pdf` real **y arrancó su Worker**. Es
+decir: **`unsafe-eval` NO hace falta**; esas apariciones en los bundles
+minificados son rutas muertas.
+
+**CSP mínima compatible, probada** (no implementada):
+
+```
+default-src 'none'; script-src 'self' 'unsafe-inline' file:;
+style-src 'self' 'unsafe-inline' file:; img-src 'self' data: file:;
+font-src 'self' file:; connect-src 'none'; form-action 'none';
+frame-src 'none'; object-src 'none'; worker-src 'self' file:; base-uri 'none'
+```
+
+`'unsafe-inline'` es **inevitable hoy** y hay que decirlo claro: con él, la CSP
+**no impide la ejecución** de un script inyectado. ¿Qué aporta entonces, ya
+cerrado F1? **Corta la salida**: con `connect-src 'none'` el `fetch` externo
+queda bloqueado y con `img-src` acotado una imagen remota tampoco carga —las dos
+cosas, comprobadas—. Convierte una hipotética reaparición de un sink en
+*defacement local* en vez de en fuga de datos. `base-uri 'none'` y
+`form-action 'none'` cierran dos vías clásicas más.
+
+**Archivos que tocaría:** las 10 plantillas HTML (una línea cada una) **o**
+`main.js` en un solo punto si se prefiere por cabecera. **Riesgo de regresión:**
+bajo pero real — cualquier recurso que hoy no esté en el inventario dejaría de
+cargar en silencio; por eso la batería mide antes de proponer.
+
+### F3 — sin `setWindowOpenHandler`
+
+**Original (auditoría, [LEÍDO]):** «Ninguna ventana intercepta `window.open` ni
+navegaciones. Combinado con F1, un `<a href="https://…" target="_blank">`
+inyectado abriría una BrowserWindow de Electron con contenido remoto.»
+
+Venía **[LEÍDO]** — nunca se había reproducido. **Ahora sí, en Electron real.**
+
+**Superficie real, medida:**
+- El producto **nunca** llama a `window.open` (0 ocurrencias): toda la
+  superficie de popups es **no intencionada**.
+- Hay **un** `target="_blank"`: el enlace de la *ruta* de un entregable, acotado
+  a `http(s)` y con `rel="noopener"` (y escapado desde F1). Es dato del usuario.
+- **0** `setWindowOpenHandler`, `will-navigate`, `will-redirect`,
+  `will-attach-webview` y `new-window`, con **10** `new BrowserWindow`.
+- No se usa `shell.openExternal` en ningún sitio; sí `shell.openPath` (2
+  llamadas) para abrir carpetas/archivos **locales**.
+
+**Reproducido:** `window.open('about:blank')` crea una `BrowserWindow` real —
+**esa es la «ventana negra»**: título `Electron`, url `about:blank`, sin
+contenido. Un `window.open` a un `file://` local también abre ventana, y un clic
+en `<a target="_blank">` abre el destino **dentro de la app**, no en el
+navegador del usuario.
+
+**Barreras que ya existen** (medidas en las hijas): heredan
+`contextIsolation:true` y `sandbox:true`, **no** reciben `panoramaBridge`
+(0 métodos) y **no** tienen Node (`require`/`process` ausentes). Con
+`rel="noopener"` la hija pierde el `opener`; sin él, el padre conserva la
+referencia y puede escribirle (mismo origen).
+
+**Severidad real:** **no es escalada de privilegios** — la hija es, como mucho,
+una pestaña de navegador sin barra de direcciones. El riesgo es otro: contenido
+remoto **dentro del marco de la aplicación**, sin URL visible (superficie de
+engaño), y un enlace legítimo que se abre donde no debe. Es más **corrección de
+comportamiento** que agujero.
+
+### F3 — IMPLEMENTADO Y CERRADO (17 sept 2026)
+
+Corregido en **`main.js` y solo en `main.js`**. Un helper único,
+`aplicarPoliticaDeNavegacion(wc, etiqueta)`, aplicado a las **10** ventanas:
+
+- **`setWindowOpenHandler` → `{ action: 'deny' }` SIEMPRE.** El producto no usa
+  popups propios, así que no hay excepciones.
+- **`http(s)` → `shell.openExternal`.** La URL se valida con **`new URL`** (nada
+  de `startsWith` ni regex laxa); si el parseo falla, se deniega y no se intenta
+  «arreglarla». El rechazo de `openExternal` se captura siempre —nada sin
+  manejar— y el rastro **no imprime la URL entera**: solo esquema y host.
+- **`will-navigate`**: se bloquea lo inesperado, **preservando lo que el
+  producto sí usa**. Se comprobó ANTES de poner la guardia: lo único que navega
+  de verdad es `location.reload()` del dashboard, y las exportaciones, que van
+  por `blob:`. Ambas siguen funcionando.
+
+**Resultados:** `f2f3/test-f2f3.js` **63 OK/0** (exigente) · `electron-f2f3.ps1`
+**35 OK/0** en la app real, con **espía sobre `shell.openExternal`** (no se abre
+Internet) · reversión `revertir-f3.js` + `comprobar-reversiones-f3.js` **5 OK/0**
+y `electron-f3-revertido.ps1` **4 OK/0**, que reproduce las tres señales del
+defecto al quitar la política.
+
+Cubierto en Electron real: `about:blank`, `file://`, `data:`, `javascript:`,
+esquema inventado y URL malformada → **0 ventanas y 0 salidas al navegador**;
+`http`/`https` válidos → **BrowserWindow denegada y `openExternal` exactamente
+una vez**; el enlace de un entregable → sale al navegador; navegación externa →
+bloqueada dentro de Electron; `location.reload()` y `blob:` → intactos.
+**Ya no aparece ninguna ventana titulada «Electron».**
+
+**Regresión encontrada y corregida durante la ronda:** los arneses de A2, Bloque
+5 y C1 extraen `writeLocalStorageDumpToPartition`/`runInPartition` de `main.js`,
+que ahora llaman al helper. A2 se puso en **54 fallos** con
+`aplicarPoliticaDeNavegacion is not defined` — exactamente lo que anuncia la
+cabecera de `comun/bloque5-extraccion.js`. Se añadieron las cinco funciones a esa
+lista compartida y el helper tolera un `webContents` sin esas APIs (un doble de
+pruebas); en producción siempre las trae.
+
+`main.js`: `434BB294…` → `16AB5F53…`. Anclajes actualizados con su nota: `E1-M4`
+(hash), `F1-Z1` y `F2/F3-Z2` (esperaban ver F3 «PENDIENTE»).
+
+### Conclusión separada
+
+**F2 y F3 no se funden.** F2 es **mitigación de daños** (no evita la ejecución,
+corta la salida) y toca 10 archivos; F3 es **corrección de comportamiento** con
+un beneficio inmediato y visible para el usuario (los enlaces externos se abren
+en su navegador) y toca **uno**.
+
+**Decisión del usuario (17 sept 2026): F3 primero — implementado y cerrado.
+F2 queda ABIERTO / DIAGNOSTICADO / SIGUIENTE**, con su CSP candidata ya probada
+contra mammoth y pdf.js reales, para su propia ronda de implementación y
+regresión.
+
+---
+
 ### P17 — icono roto en la barra de título del dashboard horneado — **CERRADO** *(17 sept 2026)*
 
 **No es de F1 y no se ha tocado.** `dashboard/plantilla_dashboard.html` tiene

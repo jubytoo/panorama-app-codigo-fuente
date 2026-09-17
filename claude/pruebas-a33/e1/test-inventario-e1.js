@@ -238,6 +238,11 @@ if (fs.existsSync(PRE_INDEX)) {
 //            ocurrencias de icon-256.png, no solo la primera) y FUNCIÓN de
 //            reemplazo (la ruta se inserta literal, sin semántica de `$`).
 //            Única función tocada. Tampoco toca el lanzador.
+//         -> 16AB5F53… (ronda F3, 17 sept 2026): política de apertura y
+//            navegación de ventanas. `aplicarPoliticaDeNavegacion` (+4
+//            auxiliares) y su llamada en las 10 BrowserWindow: la ventana hija
+//            se deniega siempre y http(s) sale a `shell.openExternal`. SÍ toca
+//            el lanzador, pero solo para aplicarle la política.
 //
 //   db.js    1B16381F… (intacto desde el Bloque 1 hasta B3)
 //         -> B03C81FF… (ronda B4, 16 sept 2026): **SOLO COMENTARIOS**. Dos
@@ -249,7 +254,7 @@ if (fs.existsSync(PRE_INDEX)) {
 // `dashboard/plantilla_dashboard.html` NO esta en esta tabla a proposito: E1 no
 // lo toca ni lo miraba, y lo han modificado P12 y E2 por su cuenta.
 const HASHES_TRAS_A2 = {
-  'main.js': '434BB2946C3D87F1D44E829C09D3C5EE5BE985F8545586B0CB9F7AB34D0C02C5',
+  'main.js': '16AB5F53B57F961927F36A23058CB7CDC043D76446C5AFF6F885E47CECFE4890',
   'preload.js': 'AA77316F3FDB384D582F8270213A846EE1A1D2E067784EE17DF8D65CC1F6A27B',
   'preload-launcher.js': '01D38C31D5FB9B23E5AD9FC617DEB7E3960E88EBF5A0ACF89C9C8EDDAA21ECFD',
   'preload-backup-picker.js': '19D2D1BAD74F774797E5F129F99FFAF2A19BF77E370BF1727161447B326D3061',
