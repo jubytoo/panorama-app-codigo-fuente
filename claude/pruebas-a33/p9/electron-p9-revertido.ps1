@@ -52,10 +52,14 @@ Ok 'P9-EREV A: un location.json con BOM vuelve a no leerse -> se detiene (PS-102
 Revertida 'B-invalido-como-ausente' @('residuoreal/bom-doble', 'limpia/bom-doble', 'guard/bom-doble'); $b = $script:ultimo
 $x = $b.'residuoreal/bom-doble'
 Ok 'P9-EREV B: config invalida -> abre la COPIA del residuo real SIN aviso y la MODIFICA (hash cambia)' ($x.db -eq 'POR DEFECTO' -and $x.residuo -eq 'MODIFICADO' -and $x.dialogos -notmatch 'PS-1020') ($x | ConvertTo-Json -Compress)
+# 18 sept 2026 - ACTUALIZADAS POR P22. Con P9 revertido, su defecto SI reaparece
+# (la config invalida vuelve a tratarse como ausente: no hay PS-1020), pero P22
+# es una SEGUNDA CAPA y frena el dano: ya no se crea en silencio ni se desactiva
+# la proteccion. Es defensa en profundidad, y ahora se exige.
 $x = $b.'limpia/bom-doble'
-Ok 'P9-EREV B: config invalida + carpeta local limpia -> CREA una BD nueva sin aviso' ($x.residuo -eq 'CREADO' -and $x.ndialogos -eq 0) ($x | ConvertTo-Json -Compress)
+Ok 'P9-EREV B: config invalida + carpeta local limpia -> el defecto de P9 reaparece (sin PS-1020) pero P22 no deja crear en silencio: PS-1021 y autorizacion expresa' ($x.residuo -eq 'CREADO' -and $x.dialogos -notmatch 'PS-1020' -and $x.ndialogos -eq 1 -and $x.ps -match 'PS-1021' -and $x.autorizacion -match 'autoriz. expresamente') ($x | ConvertTo-Json -Compress)
 $x = $b.'guard/bom-doble'
-Ok 'P9-EREV B: config invalida -> la proteccion de apagado se DESACTIVA (marca borrada, reg delete pedido)' ($x.guardia -match '^marca BORRADA' -and $x.bloqueados -match 'reg\.exe delete') ($x | ConvertTo-Json -Compress)
+Ok 'P9-EREV B: config invalida -> la proteccion de apagado YA NO se desactiva: la sesion local temporal de P22 la respeta aunque P9 este revertido (P20)' ($x.guardia -match '^marca SIGUE' -and $x.bloqueados -notmatch 'reg\.exe delete|schtasks') ($x | ConvertTo-Json -Compress)
 
 Revertida 'C-sin-ruta-absoluta' @('residuo/relativa'); $c = $script:ultimo
 $x = $c.'residuo/relativa'

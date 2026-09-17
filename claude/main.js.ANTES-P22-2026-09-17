@@ -542,43 +542,6 @@ const ERROR_CODES = {
       'de datos y sin tocar la protección de apagado. Hay que corregir ese archivo. No lo borres: sin él, la ' +
       'app usaría la carpeta de datos por defecto.',
   },
-  'PS-1021': {
-    titulo: 'Se iba a usar la carpeta de datos LOCAL de este equipo',
-    explicacion:
-      'La app llegó a la carpeta de datos por defecto por un camino de reserva: la carpeta configurada no ' +
-      'estaba disponible (PS-1005), no tenía base de datos (PS-1009), no se pudo comprobar (PS-1022), o ya ' +
-      'no hay ninguna configurada. Antes de abrir —o de crear— nada ahí, la app pregunta y enseña qué ' +
-      'encontró: fecha y tamaño de esa base de datos local, que puede ser mucho más antigua que la de ' +
-      'verdad. Cerrar es lo que se hace por defecto; usarla o crear una vacía exige elegirlo expresamente. ' +
-      'Mientras no se elige, no se abre, no se crea y no se toca nada.',
-  },
-  'PS-1022': {
-    titulo: 'La base de datos de la carpeta configurada no se puede comprobar',
-    explicacion:
-      'El archivo está donde debe, pero no se pudo leer ni verificar en el tiempo de espera (bloqueado por ' +
-      'otro programa, permisos, disco o red con problemas, sincronización a medias). Antes, la app se ' +
-      'pasaba a la carpeta de datos local en silencio; ahora se para y pregunta: reintentar, usar los datos ' +
-      'locales de este equipo a sabiendas, o cerrar. No se abre ninguna base de datos hasta que se elija.',
-  },
-  'PS-1023': {
-    titulo: 'La base de datos local no es utilizable',
-    explicacion:
-      'En la carpeta de datos por defecto hay un "panorama.sqlite3" que existe pero no es una base de datos ' +
-      'reconocible: está vacío (0 bytes), no empieza por la cabecera de SQLite, o no se puede comprobar. La ' +
-      'app se cierra sin tocarlo: NO lo abre, NO lo sustituye, NO lo vacía y NO crea otra base encima. Un ' +
-      'archivo así puede ser una copia a medias o un resto de un fallo anterior, y borrarlo o pisarlo sería ' +
-      'destruir la única pista de lo que pasó.',
-  },
-  'PS-1024': {
-    titulo: 'No se pudo dejar constancia de la ubicación de datos de este equipo',
-    explicacion:
-      'La app usa una carpeta de datos configurada, pero no pudo guardar (y releer) la constancia de ello en ' +
-      'la configuración local de Windows. Esa constancia es la que impide que, más adelante y sin ' +
-      'location.json, un arranque confunda este equipo con una instalación nueva. La app sigue funcionando ' +
-      'con normalidad, pero esa defensa queda degradada hasta que se pueda escribir: revisa los permisos de ' +
-      'la carpeta de configuración. El registro local de ubicaciones de A3.3 sigue guardando la misma ' +
-      'información por su cuenta.',
-  },
   'PS-2001': {
     titulo: 'Datos del proyecto no encontrados al abrirlo',
     explicacion:
@@ -1236,233 +1199,6 @@ function marcarUbicacionInicializada(dir, commitId) {
 }
 
 // ------------------------------------------------------------------
-// P22 (17 sept 2026) — «ESTE EQUIPO YA USÓ UNA UBICACIÓN DE DATOS PROPIA»
-//
-// Sin esta constancia, un arranque sin `location.json` no puede distinguir una
-// instalación nueva de verdad de un equipo que se quedó sin su configuración:
-// los dos ven la carpeta por defecto vacía o con restos, y hoy los dos
-// terminaban creando o abriendo una base de datos local sin preguntar.
-//
-// Vive en la carpeta de configuración LOCAL (la misma que location.json, el
-// registro de A3.3 y el installation-id) porque su función es recordar algo que
-// la carpeta de datos ya no puede demostrar por sí sola.
-//
-//   { "v":1,
-//     "personalizada": { "clave_sha256": "<sha256 de la ruta normalizada>",
-//                        "compartida": true|false,
-//                        "primera_vez": "<ISO>", "ultima_vez": "<ISO>" },
-//     "decisiones": [ { "que": "volver-a-por-defecto", "at": "<ISO>" } ] }
-//
-// La RUTA NO se guarda: solo su hash. Con eso basta para responder «¿hubo
-// alguna vez una ubicación propia?» y para saber si la de ahora es la misma,
-// sin dejar escrita una ruta que puede identificar a una persona o un cliente.
-//
-// NADIE la borra: ni PS-1005, ni PS-1009, ni un fallo de Drive, ni una sesión
-// local temporal. «Volver a la carpeta por defecto» AÑADE su decisión, con
-// fecha, en vez de borrar la historia.
-// ------------------------------------------------------------------
-function rutaHistorialUbicacion() {
-  return path.join(app.getPath('appData'), 'panorama-app-config', 'historial-ubicacion.json');
-}
-function claveHashUbicacion(dir) {
-  return crypto.createHash('sha256').update(claveUbicacion(dir), 'utf8').digest('hex');
-}
-
-// Estados explícitos, igual que el registro de ubicaciones: un archivo que
-// existe y no se entiende NO es «no hay historial».
-function leerHistorialUbicacion() {
-  let txt;
-  try {
-    txt = fs.readFileSync(rutaHistorialUbicacion(), 'utf8');
-  } catch (e) {
-    if (e && e.code === 'ENOENT') return { ok: true, historial: null };
-    return { ok: false, motivo: `no se pudo leer el historial de ubicación (${(e && e.code) || e})` };
-  }
-  try {
-    const j = JSON.parse(txt.replace(/^﻿/, ''));
-    if (!j || j.v !== 1 || typeof j !== 'object') return { ok: false, motivo: 'el historial de ubicación tiene un formato no reconocido' };
-    return { ok: true, historial: j };
-  } catch (e) {
-    return { ok: false, motivo: 'el historial de ubicación no es JSON válido' };
-  }
-}
-
-// Escritura atómica (tmp + fsync + rename) y VERIFICADA releyendo, igual que el
-// registro de ubicaciones: esto es evidencia de integridad, no una preferencia.
-// Devuelve { ok } o { ok:false, motivo } — nunca falla en silencio.
-function guardarHistorialUbicacion(j) {
-  const ruta = rutaHistorialUbicacion();
-  const tmp = `${ruta}.tmp-${process.pid}-${Date.now()}`;
-  const FSYNC_NO_SOPORTADO = new Set(['EINVAL', 'ENOSYS', 'ENOTSUP', 'EOPNOTSUPP']);
-  try {
-    fs.mkdirSync(path.dirname(ruta), { recursive: true });
-    const fd = fs.openSync(tmp, 'w');
-    try {
-      const buf = Buffer.from(JSON.stringify(j), 'utf8');
-      let escritos = 0;
-      while (escritos < buf.length) {
-        const n = fs.writeSync(fd, buf, escritos, buf.length - escritos, escritos);
-        if (!(n > 0)) throw new Error('writeSync sin progreso');
-        escritos += n;
-      }
-      try {
-        fs.fsyncSync(fd);
-      } catch (e) {
-        if (!FSYNC_NO_SOPORTADO.has(e && e.code)) throw new Error(`fsync falló (${(e && e.code) || '?'}): ${e && e.message}`);
-      }
-    } finally {
-      fs.closeSync(fd);
-    }
-    fs.renameSync(tmp, ruta);
-  } catch (e) {
-    try { fs.unlinkSync(tmp); } catch (e2) {}
-    return { ok: false, motivo: String((e && e.message) || e) };
-  }
-  const r = leerHistorialUbicacion();
-  if (!r.ok || !r.historial) return { ok: false, motivo: `tras escribir no se pudo releer: ${r.motivo || 'quedó vacío'}` };
-  return { ok: true, historial: r.historial };
-}
-
-// P22: mientras esta sesión no haya podido dejar la constancia, la ausencia de
-// historial NO puede leerse como «instalación nueva» (ver huboUbicacionPersonalizada).
-let historialUbicacionDegradado = null;   // { motivo } si no se pudo persistir
-
-function registrarUbicacionPersonalizada(dir, compartida) {
-  const ahora = new Date().toISOString();
-  const r = leerHistorialUbicacion();
-  if (!r.ok) {
-    historialUbicacionDegradado = { motivo: r.motivo };
-    appLog(`ERROR PS-1024 — ${r.motivo}; la constancia de ubicación propia queda degradada esta sesión.`);
-    return { ok: false, motivo: r.motivo };
-  }
-  const j = r.historial && typeof r.historial === 'object' ? r.historial : { v: 1 };
-  j.v = 1;
-  const clave = claveHashUbicacion(dir);
-  const antes = j.personalizada && j.personalizada.clave_sha256 === clave ? j.personalizada : null;
-  j.personalizada = {
-    clave_sha256: clave,
-    compartida: !!compartida,
-    primera_vez: (antes && antes.primera_vez) || (j.personalizada && j.personalizada.primera_vez) || ahora,
-    ultima_vez: ahora,
-  };
-  if (!Array.isArray(j.decisiones)) j.decisiones = [];
-  const g = guardarHistorialUbicacion(j);
-  if (!g.ok) {
-    historialUbicacionDegradado = { motivo: g.motivo };
-    appLog(`ERROR PS-1024 — no se pudo dejar constancia de la ubicación de datos propia: ${g.motivo}`);
-    return g;
-  }
-  historialUbicacionDegradado = null;
-  return g;
-}
-
-function registrarDecisionUbicacion(que) {
-  const r = leerHistorialUbicacion();
-  if (!r.ok) { appLog(`ERROR PS-1024 — no se pudo anotar la decisión «${que}»: ${r.motivo}`); return { ok: false, motivo: r.motivo }; }
-  const j = r.historial && typeof r.historial === 'object' ? r.historial : { v: 1 };
-  j.v = 1;
-  if (!Array.isArray(j.decisiones)) j.decisiones = [];
-  j.decisiones.push({ que, at: new Date().toISOString() });
-  const g = guardarHistorialUbicacion(j);
-  if (!g.ok) appLog(`ERROR PS-1024 — no se pudo anotar la decisión «${que}»: ${g.motivo}`);
-  return g;
-}
-
-// ¿Este equipo ha usado alguna vez una carpeta de datos propia?
-//
-// El historial es la señal principal, pero NO la única: un equipo que venga de
-// una versión anterior puede no tenerlo todavía. Se aceptan como equivalentes
-// dos señales que ya existían —el registro de ubicaciones de A3.3 con una clave
-// que NO es la carpeta por defecto, y la marca de la protección de apagado— y la
-// propia configuración válida de esta sesión. Y ante cualquier duda (historial
-// ilegible, o esta sesión no pudo escribirlo) se responde que SÍ: no poder
-// demostrar que hubo ubicación propia nunca puede valer como prueba de que no
-// la hubo.
-function huboUbicacionPersonalizada() {
-  if (customUserDataDirTarget) return { si: true, fuente: 'location.json de esta sesión' };
-  const r = leerHistorialUbicacion();
-  if (!r.ok) return { si: true, fuente: 'historial de ubicación ilegible (se supone que sí)', degradado: true };
-  if (r.historial && r.historial.personalizada && r.historial.personalizada.clave_sha256) {
-    return { si: true, fuente: 'historial de ubicación', desde: r.historial.personalizada.primera_vez, compartida: !!r.historial.personalizada.compartida };
-  }
-  if (historialUbicacionDegradado) return { si: true, fuente: 'no se pudo dejar constancia en esta sesión (se supone que sí)', degradado: true };
-  const reg = leerRegistroUbicaciones();
-  if (!reg.ok) return { si: true, fuente: 'registro de ubicaciones ilegible (se supone que sí)', degradado: true };
-  const claveDefecto = claveUbicacion(defaultUserDataDir);
-  const otras = Object.keys(reg.ubicaciones).filter((k) => k !== claveDefecto);
-  if (otras.length) return { si: true, fuente: 'registro de ubicaciones de A3.3' };
-  try {
-    if (isDriveSyncGuardEnabled()) return { si: true, fuente: 'protección de apagado activa' };
-  } catch (e) { /* si no se puede mirar, no aporta */ }
-  return { si: false };
-}
-
-// ------------------------------------------------------------------
-// P22 — ¿QUÉ HAY EN LA CARPETA DE DATOS LOCAL? CUATRO ESTADOS, NO DOS.
-//
-//   'ausente'         ENOENT DEMOSTRADO: de verdad no hay base de datos.
-//   'existente'       hay un archivo con la cabecera de SQLite.
-//   'invalida'        el archivo ESTÁ, pero no es utilizable: 0 bytes, o no
-//                     empieza por "SQLite format 3\0", o no es un archivo.
-//   'no-comprobable'  existe o no, pero no se puede determinar (EACCES, EBUSY,
-//                     EIO, unidad a medio montar...).
-//
-// 'invalida' NO es «no hay base de datos»: un archivo así puede ser una copia a
-// medias o el resto de un fallo, y tratarlo como ausencia llevaría a crear una
-// base nueva ENCIMA. Los dos últimos estados se cierran en falso (PS-1023).
-//
-// Solo se leen 16 bytes y el `stat`: NUNCA se abre la base de datos.
-// ------------------------------------------------------------------
-const CABECERA_SQLITE = Buffer.from('SQLite format 3\0', 'latin1');
-
-function estadoBaseDeDatosLocal(dir) {
-  const ruta = path.join(dir, 'panorama.sqlite3');
-  const visible = estadoDeArchivoEnRuta(ruta);
-  if (visible.estado === 'no-visible') return { estado: 'ausente' };
-  if (visible.estado === 'no-accesible') return { estado: 'no-comprobable', codigo: visible.codigo, motivo: 'no se puede comprobar si hay una base de datos' };
-  let st;
-  try {
-    st = fs.statSync(ruta);
-  } catch (e) {
-    return { estado: 'no-comprobable', codigo: (e && e.code) || '?', motivo: 'no se pudo consultar el archivo' };
-  }
-  if (!st.isFile()) return { estado: 'invalida', motivo: 'en su sitio hay algo que no es un archivo', size: st.size, mtime: st.mtimeMs };
-  if (st.size === 0) return { estado: 'invalida', motivo: 'el archivo está vacío (0 bytes)', size: 0, mtime: st.mtimeMs };
-  let cabecera = null;
-  let fd = null;
-  try {
-    fd = fs.openSync(ruta, 'r');
-    const buf = Buffer.alloc(CABECERA_SQLITE.length);
-    const n = fs.readSync(fd, buf, 0, buf.length, 0);
-    cabecera = buf.slice(0, n);
-  } catch (e) {
-    return { estado: 'no-comprobable', codigo: (e && e.code) || '?', motivo: 'no se pudo leer la cabecera del archivo', size: st.size, mtime: st.mtimeMs };
-  } finally {
-    if (fd !== null) { try { fs.closeSync(fd); } catch (e) {} }
-  }
-  if (!cabecera.equals(CABECERA_SQLITE)) {
-    return { estado: 'invalida', motivo: 'el archivo no empieza por la cabecera de una base de datos SQLite', size: st.size, mtime: st.mtimeMs };
-  }
-  let gen = false;
-  try { gen = fs.existsSync(ruta + '.gen'); } catch (e) { /* no crítico */ }
-  return { estado: 'existente', size: st.size, mtime: st.mtimeMs, gen };
-}
-
-// Texto para los diálogos: fecha, tamaño y si lleva el testigo de A3.3. Nunca
-// la ruta, y nunca nada que obligue a abrir la base de datos.
-function descripcionBaseDeDatosLocal(bd) {
-  if (bd.estado === 'ausente') return 'En este equipo no hay ninguna base de datos local.';
-  if (bd.estado === 'no-comprobable') return `Hay algo en su sitio, pero no se puede comprobar (${bd.codigo}).`;
-  if (bd.estado === 'invalida') return `Hay un archivo de base de datos local, pero no es utilizable: ${bd.motivo}.`;
-  const fecha = new Date(bd.mtime);
-  const dias = Math.floor((Date.now() - bd.mtime) / 86400000);
-  return 'En este equipo HAY datos locales:\n' +
-    `  · última modificación: ${fecha.toLocaleString()}${Number.isFinite(dias) && dias >= 1 ? ` (hace ${dias} día${dias === 1 ? '' : 's'})` : ''}\n` +
-    `  · tamaño: ${(bd.size / 1024).toFixed(0)} KB\n` +
-    `  · ${bd.gen ? 'con el testigo de integridad de A3.3' : 'sin el testigo de integridad de A3.3 (la escribió una versión anterior)'}`;
-}
-
-// ------------------------------------------------------------------
 // A3.3 BLOQUE 2 — POLÍTICA DE UBICACIÓN
 //
 // Regla de fondo: una carpeta PERSONALIZADA nunca se clasifica como 'local'.
@@ -1667,22 +1403,6 @@ function decidirCrearSiAusente() {
   // (sin registro) Primera vez de verdad: no consta la ubicación Y se ha
   // comprobado que la base de datos no está.
   if (!isUsingCustomDataLocationNow()) {
-    // P22: «carpeta por defecto vacía» solo es una primera ejecución si este
-    // equipo NO ha usado nunca una ubicación de datos propia. Si la ha usado
-    // —o si no se puede demostrar que no—, crear aquí una base vacía es
-    // justamente el error: hace falta que el usuario lo pida expresamente.
-    if (usuarioAutorizaCrearLocal) {
-      return { crear: true, motivo: 'el usuario autorizó expresamente crear una base de datos local vacía (PS-1021)' };
-    }
-    const hist = huboUbicacionPersonalizada();
-    if (hist.si) {
-      return {
-        crear: false,
-        historicaConocida: true,
-        motivo: `este equipo ya ha usado una carpeta de datos propia (${hist.fuente}): no se crea una base de ` +
-          'datos local vacía sin autorización expresa',
-      };
-    }
     return {
       crear: true,
       motivo: 'carpeta por defecto sin registro local y con la base de datos demostrablemente ausente ' +
@@ -2363,7 +2083,7 @@ const CSP_PERFILES = Object.freeze({
   // línea, así que tampoco reciben `'unsafe-inline'` para scripts.
   sinScriptEnLinea: [
     "default-src 'none'",
-    "script-src 'self' 'unsafe-eval'",
+    "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data:",
     "worker-src 'none'",
@@ -2373,7 +2093,7 @@ const CSP_PERFILES = Object.freeze({
   // selector de backups, Seguridad y la ventanita de contraseña.
   interfaz: [
     "default-src 'none'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    "script-src 'self' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data:",
     "font-src 'self'",
@@ -2383,7 +2103,7 @@ const CSP_PERFILES = Object.freeze({
   // Preparación de Reunión: lo mismo, más el Worker de pdf.js (por blob:).
   lectorDeActas: [
     "default-src 'none'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    "script-src 'self' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data:",
     "font-src 'self'",
@@ -8612,10 +8332,6 @@ async function changeUserDataLocation(parentWin) {
     return;
   }
 
-  // P22: constancia durable de que este equipo usa una carpeta de datos propia,
-  // en cuanto se guarda la elección (no al siguiente arranque).
-  registrarUbicacionPersonalizada(target, isShared);
-
   await modalAlert(
     parentWin,
     'La aplicación se va a reiniciar para usar la nueva carpeta de datos.\n\n' +
@@ -8639,10 +8355,6 @@ async function resetUserDataLocationToDefault(parentWin) {
     { title: 'Volver a la carpeta de datos por defecto', confirmLabel: 'Volver a la de por defecto' }
   );
   if (!confirmed) return;
-  // P22: la historia NO se borra. Se anota la decisión (con su fecha) y se
-  // quita solo location.json: así, si mañana aparece una base de datos local
-  // rara, la app sigue sabiendo que este equipo tuvo una ubicación propia.
-  registrarDecisionUbicacion('volver-a-por-defecto');
   try {
     fs.unlinkSync(configFile);
   } catch (e) {
@@ -9076,13 +8788,6 @@ function syncDriveSyncGuardWithLocation() {
   // P9: con location.json inutilizable no está demostrado que la ubicación
   // "no sea compartida", así que la protección se deja exactamente como está.
   if (configUbicacionNoResuelta) return;
-  // P22: una sesión LOCAL TEMPORAL (el usuario aceptó usar la carpeta local
-  // porque la suya no estaba disponible, o porque falta la configuración) no es
-  // un cambio de ubicación: no se desactiva la protección, no se borra su marca
-  // y no se pierde la señal de que este equipo usa una carpeta compartida.
-  // Volver a la carpeta por defecto A PROPÓSITO sí sigue sincronizándola: eso
-  // es una decisión permanente, no un camino de reserva.
-  if (sesionLocalTemporal) return;
   const shouldBeOn = isUsingSharedDataLocationNow();
   const isOn = isDriveSyncGuardEnabled();
   if (shouldBeOn && !isOn) {
@@ -9804,10 +9509,8 @@ function delayMs(ms) {
 // applyCustomUserDataDirIfConfigured): ya con la splash visible, así que
 // aquí SÍ se puede esperar sin bloquear el proceso. Si tras esto sigue sin
 // poder acceder, para el arranque con un diálogo que hay que atender.
-// P22: devuelve 'seguir' o 'cerrar' — «Cerrar» (y Esc/la X) cierran la app en
-// vez de caer en la carpeta local.
 async function resolveUserDataDirFailureInteractively() {
-  if (!customUserDataDirFailure) return 'seguir';
+  if (!customUserDataDirFailure) return;
   const target = customUserDataDirFailure.attempted;
 
   const deadline = Date.now() + USERDATA_POST_READY_RETRY_MS;
@@ -9820,7 +9523,7 @@ async function resolveUserDataDirFailureInteractively() {
       app.setPath('userData', target);
       customUserDataDirFailure = null;
       appLog(`Carpeta de datos personalizada disponible tras esperar: ${target}`);
-      return 'seguir';
+      return;
     }
     customUserDataDirFailure = { attempted: target, error: err };
   }
@@ -9829,34 +9532,34 @@ async function resolveUserDataDirFailureInteractively() {
   // 20s aquí): no se sigue decidiendo en silencio. Se para hasta que el
   // usuario elija — reintentar (otra ronda igual de larga) o seguir con
   // datos locales por ahora, con conocimiento de causa.
-  //
-  // P22: la elección «datos locales» ya no es implícita ni a ciegas. El
-  // diálogo dice QUÉ hay en la carpeta local (fecha, tamaño), ofrece «Usar
-  // estos datos locales» o «Crear una base de datos local vacía» como botón
-  // EXPLÍCITO, y Esc/la X cierran la aplicación en vez de elegir lo local.
   for (;;) {
-    const accion = preguntarPorLaCarpetaLocal({
-      codigo: 'PS-1005',
-      titulo: 'No se puede acceder a la carpeta de datos',
-      mensaje: 'No se puede acceder a tu carpeta de datos configurada.',
-      cuerpo:
+    const choice = dialog.showMessageBoxSync(undefined, {
+      type: 'warning',
+      title: 'No se puede acceder a la carpeta de datos',
+      message: 'No se puede acceder a tu carpeta de datos configurada.',
+      detail:
         `Carpeta: ${customUserDataDirFailure.attempted}\n\n` +
         `Motivo: ${customUserDataDirFailure.error}\n\n` +
         'Esto suele pasar cuando Google Drive (u OneDrive) todavía no ha terminado de montar la unidad ' +
-        '— por ejemplo, justo tras encender el ordenador. Puedes esperar un poco más y reintentar.',
-      etiquetaReintento: 'Reintentar',
+        '— por ejemplo, justo tras encender el ordenador. Puedes esperar un poco más y reintentar, o abrir ' +
+        'la app con datos locales por ahora: no verás tus proyectos más recientes hasta que la carpeta de ' +
+        'verdad esté disponible y vuelvas a abrir la app.' +
+        errorCodeSuffix('PS-1005'),
+      buttons: ['Reintentar', 'Abrir con datos locales (temporal)'],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
     });
-    if (accion === 'cerrar') return 'cerrar';
-    if (accion === 'local' || accion === 'crear') {
-      appLog(`Continuando con datos locales temporales (elección explícita) — no se pudo acceder a: ${customUserDataDirFailure.attempted}`);
-      return 'seguir';
+    if (choice === 1) {
+      appLog(`Continuando con datos locales temporales — no se pudo acceder a: ${customUserDataDirFailure.attempted}`);
+      return;
     }
     const immediateErr = await probeWritableDirAsync(target);
     if (!immediateErr) {
       app.setPath('userData', target);
       customUserDataDirFailure = null;
       appLog(`Carpeta de datos personalizada disponible tras reintento manual: ${target}`);
-      return 'seguir';
+      return;
     }
     customUserDataDirFailure = { attempted: target, error: immediateErr };
 
@@ -9874,7 +9577,7 @@ async function resolveUserDataDirFailureInteractively() {
       }
       customUserDataDirFailure = { attempted: target, error: err2 };
     }
-    if (recovered) return 'seguir';
+    if (recovered) return;
     // sigue sin funcionar: vuelve a preguntar
   }
 }
@@ -10085,10 +9788,10 @@ function estadoDeArchivoEnRuta(p) {
 }
 
 async function checkCustomLocationDatabaseSanity() {
-  if (!customUserDataDirTarget || customUserDataDirFailure) return 'seguir'; // solo aplica con carpeta personalizada ya accesible
+  if (!customUserDataDirTarget || customUserDataDirFailure) return; // solo aplica con carpeta personalizada ya accesible
   const dbPath = path.join(app.getPath('userData'), 'panorama.sqlite3');
   const inicial = estadoDeArchivoEnRuta(dbPath);
-  if (inicial.estado === 'visible') return 'seguir'; // lo normal — ya está ahí
+  if (inicial.estado === 'visible') return; // lo normal — ya está ahí
 
   // Espera silenciosa primero (mismo margen que ya se usa para el montaje de la carpeta): un
   // archivo de este tamaño suele terminar de bajar en segundos una vez la carpeta ya está montada,
@@ -10100,7 +9803,7 @@ async function checkCustomLocationDatabaseSanity() {
     ultimo = estadoDeArchivoEnRuta(dbPath);
     if (ultimo.estado === 'visible') {
       appLog(`Base de datos de la carpeta personalizada apareció tras esperar: ${dbPath}`);
-      return 'seguir';
+      return;
     }
   }
 
@@ -10109,44 +9812,15 @@ async function checkCustomLocationDatabaseSanity() {
   // una indisponibilidad en una creación. Se cae a la carpeta por defecto por
   // esta sesión, que es lo que ya hace la app cuando la carpeta no responde, y
   // NO se autoriza ninguna creación en la personalizada.
-  // P22 — ESTE ERA EL CAMINO PEOR: la base de datos configurada EXISTE pero no
-  // se puede comprobar, y hasta ahora la app se pasaba a la carpeta local EN
-  // SILENCIO; lo siguiente que veía el usuario era la contraseña de siempre,
-  // con otra base de datos debajo. Ahora se para y se pregunta (PS-1022), y no
-  // se abre NADA local hasta que se elija.
   if (ultimo.estado === 'no-accesible') {
-    appLog(`ERROR PS-1022 — la base de datos de la carpeta configurada no se puede comprobar (${ultimo.codigo}): ` +
-      'no se ofrece empezar desde cero y NO se cambia de carpeta sin preguntar.');
-    for (;;) {
-      const accion = preguntarPorLaCarpetaLocal({
-        codigo: 'PS-1022',
-        titulo: 'No se puede comprobar la base de datos configurada',
-        mensaje: 'La base de datos de tu carpeta de datos configurada está ahí, pero no se puede leer ni comprobar.',
-        cuerpo:
-          `Carpeta: ${customUserDataDirTarget}\n\n` +
-          `Motivo: ${ultimo.codigo} (${ultimo.motivo})\n\n` +
-          'Suele ser un archivo bloqueado por otro programa, una sincronización a medias o un problema de ' +
-          'permisos. Puedes reintentar.',
-        etiquetaReintento: 'Reintentar',
-      });
-      if (accion === 'cerrar') return 'cerrar';
-      if (accion === 'local' || accion === 'crear') {
-        app.setPath('userData', defaultUserDataDir);
-        customUserDataDirFailure = {
-          attempted: customUserDataDirTarget,
-          error: `No se pudo comprobar panorama.sqlite3 ahí (${ultimo.codigo}: ${ultimo.motivo})`,
-        };
-        appLog('PS-1022 — el usuario eligió expresamente usar la carpeta de datos local en esta sesión.');
-        return 'seguir';
-      }
-      const otra = estadoDeArchivoEnRuta(dbPath);
-      if (otra.estado === 'visible') {
-        appLog('La base de datos de la carpeta configurada ya se puede comprobar tras el reintento manual.');
-        return 'seguir';
-      }
-      ultimo = otra;
-      if (otra.estado === 'no-visible') break;   // ya no es «no comprobable»: sigue el camino de PS-1009
-    }
+    appLog(`A3.3 — la base de datos de la carpeta personalizada no se puede comprobar (${ultimo.codigo}): ` +
+      'no se ofrece empezar desde cero. Se usa la carpeta por defecto por esta sesión.');
+    app.setPath('userData', defaultUserDataDir);
+    customUserDataDirFailure = {
+      attempted: customUserDataDirTarget,
+      error: `No se pudo comprobar panorama.sqlite3 ahí (${ultimo.codigo}: ${ultimo.motivo})`,
+    };
+    return;
   }
 
   // Sigue sin aparecer tras ~20s: puede ser Drive yendo lento, o de verdad la primera vez que se
@@ -10164,18 +9838,11 @@ async function checkCustomLocationDatabaseSanity() {
         'termine de sincronizar.\n\nSi es la primera vez que usas esta carpeta a propósito (todavía no hay ' +
         'nada guardado en ningún otro PC), es normal que esté vacía y puedes continuar sin problema.' +
         errorCodeSuffix('PS-1009'),
-      // P22: «usar la carpeta por defecto» ya no significa «abrir lo que haya
-      // sin mirar»: lleva a una confirmación informada (PS-1021). Y aparece
-      // «Cerrar», que es además lo que hacen Esc y la X.
-      buttons: ['Esperar más (reintentar)', 'Sí, empezar aquí desde cero', 'Usar los datos locales de este equipo', 'Cerrar'],
+      buttons: ['Esperar más (reintentar)', 'Sí, empezar aquí desde cero', 'Usar la carpeta de datos por defecto por ahora'],
       defaultId: 0,
-      cancelId: 3,
+      cancelId: 0,
       noLink: true,
     });
-    if (choice === 3) {
-      appLog('PS-1009 — el usuario eligió cerrar en vez de usar la carpeta de datos local.');
-      return 'cerrar';
-    }
     if (choice === 1) {
       // A3.3 BLOQUE 2: esta elección es la ÚNICA que autoriza crear en una
       // carpeta personalizada. main.js autoriza; db.js sigue verificando
@@ -10184,30 +9851,19 @@ async function checkCustomLocationDatabaseSanity() {
       // tienen que decir que sí.
       usuarioAutorizaEmpezarDesdeCero = true;
       appLog(`El usuario confirmó empezar desde cero en la carpeta personalizada (no se encontró panorama.sqlite3): ${dbPath}`);
-      return 'seguir';
+      return;
     }
     if (choice === 2) {
       // Mismo espíritu que el fallback ya existente de "carpeta no disponible": se usa la carpeta
       // local por esta vez, sin tocar ni borrar la configuración guardada — al siguiente arranque
       // se vuelve a intentar la personalizada igual que siempre.
-      // P22: antes de usarla, confirmación informada de QUÉ hay en ella. Si se
-      // cancela, se vuelve a este mismo diálogo.
-      const accion = preguntarPorLaCarpetaLocal({
-        codigo: 'PS-1021',
-        titulo: 'Usar los datos locales de este equipo',
-        mensaje: 'Vas a usar la base de datos LOCAL de este equipo, no la de tu carpeta configurada.',
-        cuerpo: `Carpeta configurada: ${customUserDataDirTarget}\n\n` +
-          'En esa carpeta no aparece ninguna base de datos todavía.',
-        etiquetaReintento: null,
-      });
-      if (accion === 'cerrar') continue;    // vuelve a preguntar lo de arriba
       app.setPath('userData', defaultUserDataDir);
       customUserDataDirFailure = {
         attempted: customUserDataDirTarget,
         error: 'No se encontró panorama.sqlite3 ahí (el usuario eligió no continuar en esa carpeta)',
       };
-      appLog(`Continuando con datos locales temporales (elección explícita) — no se encontró panorama.sqlite3 en: ${dbPath}`);
-      return 'seguir';
+      appLog(`Continuando con datos locales temporales — no se encontró panorama.sqlite3 en: ${dbPath}`);
+      return;
     }
     // choice === 0 (o se cerró el diálogo): reintentar — otra ronda de espera igual de larga
     const deadline2 = Date.now() + USERDATA_POST_READY_RETRY_MS;
@@ -10218,7 +9874,7 @@ async function checkCustomLocationDatabaseSanity() {
     }
     if (appeared) {
       appLog(`Base de datos de la carpeta personalizada apareció tras reintento manual: ${dbPath}`);
-      return 'seguir';
+      return;
     }
     // sigue sin aparecer: vuelve a preguntar
   }
@@ -10436,145 +10092,6 @@ function startUserDataWatchdog() {
 //
 // El mensaje no muestra la ruta real: solo la forma %APPDATA%\... del archivo.
 // ------------------------------------------------------------------
-// ------------------------------------------------------------------
-// P22 (17 sept 2026) — UNA SOLA PUERTA ANTES DE TOCAR LA CARPETA DE DATOS LOCAL.
-//
-// Hasta ahora, cuatro caminos legítimos terminaban en la carpeta por defecto y
-// abrían (y modificaban) lo que hubiera, o creaban una base de datos nueva, sin
-// decir de qué base se trataba: PS-1005 «datos locales», PS-1009 «usar la
-// carpeta por defecto», el arranque sin `location.json`, y —el peor— una base
-// de datos configurada que existe pero no se puede comprobar, que cambiaba de
-// carpeta EN SILENCIO.
-//
-// Todos pasan ahora por aquí, y aquí no se abre ni se crea nada: solo se mira
-// (stat + 16 bytes) y se pregunta. Hasta que el usuario elige expresamente, la
-// base de datos local no se toca: ni `.gen`, ni registro de A3.3, ni
-// migraciones, ni backups, ni Seguridad, ni `getDb`.
-//
-// Lo que NO se puede evitar, y queda dicho: Chromium ya ha creado sus propios
-// archivos de perfil en esa carpeta antes de que este archivo pueda decidir
-// nada. Lo que esta puerta garantiza es la BASE DE DATOS, no la carpeta entera.
-// ------------------------------------------------------------------
-let sesionLocalTemporal = false;      // el usuario aceptó usar la carpeta local EN ESTE ARRANQUE
-let usuarioAutorizaCrearLocal = false; // …y eligió crear una base de datos local vacía
-
-// ¿Hay que preguntar antes de usar la carpeta por defecto? Sí siempre que
-// venga de un camino de reserva; y también sin configuración, salvo en el caso
-// del equipo PURAMENTE LOCAL de toda la vida: ese ya tiene su propia carpeta
-// registrada en A3.3 y no se le va a preguntar en cada arranque. Un equipo que
-// viene de una versión anterior a A3.3 (registro vacío) recibe la pregunta UNA
-// vez, y a partir de ahí queda registrado.
-function carpetaLocalNecesitaConfirmacion(motivo, hist) {
-  if (motivo !== 'sin-configuracion') return true;
-  if (hist.si) return true;
-  const est = estadoUbicacion(defaultUserDataDir);
-  if (est.corrupto) return true;                  // registro ilegible: ante la duda, se pregunta
-  return est.estado !== 'inicializada';
-}
-
-function avisoBaseLocalInutilizable(bd) {
-  appLog(`ERROR PS-1023 — la base de datos local no es utilizable (${bd.estado}: ${bd.motivo || bd.codigo}). No se abre, no se sustituye y no se crea otra.`);
-  try {
-    dialog.showMessageBoxSync(undefined, {
-      type: 'error',
-      title: 'La base de datos local no es utilizable',
-      message: 'En la carpeta de datos de este equipo hay un archivo de base de datos que no se puede usar.',
-      detail:
-        `${descripcionBaseDeDatosLocal(bd)}\n\n` +
-        'Panorama del Servicio NO lo ha abierto, NO lo ha sustituido, NO lo ha vaciado y NO ha creado otra ' +
-        'base de datos encima: un archivo así puede ser una copia a medias o el resto de un fallo anterior, y ' +
-        'pisarlo destruiría la única pista de lo que pasó.\n\n' +
-        'La aplicación se va a cerrar. Si tu carpeta de datos de verdad está en Google Drive/OneDrive, ' +
-        'comprueba que esté disponible y vuelve a abrir.' +
-        errorCodeSuffix('PS-1023'),
-      buttons: ['Cerrar'],
-      defaultId: 0,
-      cancelId: 0,
-      noLink: true,
-    });
-  } catch (e) {
-    appLog(`No se pudo mostrar el aviso PS-1023: ${String((e && e.message) || e)}`);
-  }
-}
-
-// Diálogo común de los caminos de reserva. Devuelve:
-//   'reintentar' | 'local' (usar los datos locales) | 'crear' (base vacía) | 'cerrar'
-// CERRAR es siempre la opción de escape (Esc y la X): nunca «usar local».
-function preguntarPorLaCarpetaLocal({ codigo, titulo, mensaje, cuerpo, etiquetaReintento }) {
-  const bd = estadoBaseDeDatosLocal(defaultUserDataDir);
-  if (bd.estado === 'invalida' || bd.estado === 'no-comprobable') {
-    avisoBaseLocalInutilizable(bd);
-    return 'cerrar';
-  }
-  const hist = huboUbicacionPersonalizada();
-  const botones = [];
-  const acciones = [];
-  if (etiquetaReintento) { botones.push(etiquetaReintento); acciones.push('reintentar'); }
-  if (bd.estado === 'existente') { botones.push('Usar estos datos locales'); acciones.push('local'); }
-  else { botones.push('Crear una base de datos local vacía'); acciones.push('crear'); }
-  botones.push('Cerrar');
-  acciones.push('cerrar');
-  const idCerrar = acciones.indexOf('cerrar');
-  let elegido;
-  try {
-    elegido = dialog.showMessageBoxSync(undefined, {
-      type: 'warning',
-      title: titulo,
-      message: mensaje,
-      detail:
-        `${cuerpo}\n\n${descripcionBaseDeDatosLocal(bd)}\n\n` +
-        (bd.estado === 'existente'
-          ? 'Esos datos locales pueden ser MUCHO más antiguos que los de tu carpeta de siempre, y lo que ' +
-            'cambies aquí no estará en ella.'
-          : 'Crear una base de datos local vacía NO recupera nada: empezarías de cero en este equipo.') +
-        (hist.si ? `\n\nEste equipo ya ha usado una carpeta de datos propia (${hist.fuente}).` : '') +
-        errorCodeSuffix(codigo),
-      buttons: botones,
-      defaultId: etiquetaReintento ? 0 : idCerrar,
-      cancelId: idCerrar,
-      noLink: true,
-    });
-  } catch (e) {
-    appLog(`No se pudo mostrar el aviso ${codigo}: ${String((e && e.message) || e)}`);
-    return 'cerrar';
-  }
-  const accion = acciones[elegido] || 'cerrar';
-  appLog(`${codigo} — carpeta de datos local: el usuario eligió «${botones[elegido] || 'Cerrar'}» (base local: ${bd.estado}).`);
-  if (accion === 'local' || accion === 'crear') {
-    // Sesión LOCAL TEMPORAL: solo si hay otra ubicación de por medio (configurada
-    // o histórica). En un equipo puramente local esto es su modo normal.
-    if (customUserDataDirTarget || hist.si) sesionLocalTemporal = true;
-    if (accion === 'crear') usuarioAutorizaCrearLocal = true;
-  }
-  return accion;
-}
-
-// Puerta del arranque SIN `location.json` (camino C).
-// Devuelve 'seguir' | 'cerrar'.
-function autorizarCarpetaLocal(motivo) {
-  const bd = estadoBaseDeDatosLocal(defaultUserDataDir);
-  if (bd.estado === 'invalida' || bd.estado === 'no-comprobable') {
-    avisoBaseLocalInutilizable(bd);
-    return 'cerrar';
-  }
-  const hist = huboUbicacionPersonalizada();
-  if (!carpetaLocalNecesitaConfirmacion(motivo, hist)) return 'seguir';
-  if (bd.estado === 'ausente' && !hist.si) return 'seguir';   // primera ejecución legítima
-  const accion = preguntarPorLaCarpetaLocal({
-    codigo: 'PS-1021',
-    titulo: bd.estado === 'existente' ? 'Hay datos locales en este equipo' : 'No hay ninguna carpeta de datos configurada',
-    mensaje: bd.estado === 'existente'
-      ? 'Panorama del Servicio va a usar la base de datos LOCAL de este equipo.'
-      : 'Panorama del Servicio no tiene ninguna carpeta de datos configurada.',
-    cuerpo: bd.estado === 'existente'
-      ? 'No hay ninguna carpeta de datos configurada (el archivo de configuración no está), así que la única ' +
-        'base de datos disponible es la local de este equipo.'
-      : 'No hay configuración de ubicación ni base de datos local.',
-    etiquetaReintento: null,
-  });
-  return accion === 'cerrar' ? 'cerrar' : 'seguir';
-}
-
 function detenerArranquePorConfigUbicacion() {
   const { estado, motivo } = configUbicacionNoResuelta;
   appLog(`ERROR PS-1020 — location.json ${estado}: ${motivo}. No se abre, crea ni modifica ninguna base de datos.`);
@@ -10617,24 +10134,9 @@ app.whenReady().then(async () => {
     detenerArranquePorConfigUbicacion();
     return;
   }
-  // P22 — dos cosas, y las dos ANTES de la splash y de tocar ninguna base de datos:
-  //   1. si hay una ubicación propia configurada, dejar constancia durable de
-  //      ello (lo que impide que un arranque futuro sin location.json confunda
-  //      este equipo con una instalación nueva);
-  //   2. si NO hay configuración, pasar por la puerta antes de usar la carpeta
-  //      de datos local.
-  if (customUserDataDirTarget) {
-    registrarUbicacionPersonalizada(customUserDataDirTarget, customUserDataDirShared);
-  } else if (autorizarCarpetaLocal('sin-configuracion') === 'cerrar') {
-    app.quit();
-    return;
-  }
   showSplashWindow();
   if (customUserDataDirFailure) {
-    if ((await resolveUserDataDirFailureInteractively()) === 'cerrar') {
-      closeSplashWindow(() => app.quit());
-      return;
-    }
+    await resolveUserDataDirFailureInteractively();
   }
   startUserDataWatchdog();
   // v0.1.39: adelanta la primera lectura (y cacheado en memoria) de la
@@ -10659,10 +10161,7 @@ app.whenReady().then(async () => {
     /* no crítico: se reintentará solo en el primer uso real */
   }
   await waitForCloudSyncIdleAtStartup();
-  if ((await checkCustomLocationDatabaseSanity()) === 'cerrar') {
-    closeSplashWindow(() => app.quit());
-    return;
-  }
+  await checkCustomLocationDatabaseSanity();
   // v0.1.56: a estas alturas ya se sabe con certeza qué carpeta de datos se
   // usa de verdad esta sesión (checkCustomLocationDatabaseSanity ya pudo
   // haber hecho fallback a la de por defecto) — momento correcto para
@@ -11061,25 +10560,6 @@ app.whenReady().then(async () => {
         'proyectos más recientes. En cuanto esa carpeta vuelva a estar disponible, cierra la app y vuelve a abrirla.' +
         errorCodeSuffix('PS-1005'),
       { title: 'Usando datos locales temporalmente', danger: true }
-    );
-  }
-  // P22: si no se pudo dejar constancia de que este equipo usa una carpeta de
-  // datos propia, NO se sigue como si todo estuviera protegido: se dice. La
-  // barrera no desaparece —el registro de ubicaciones de A3.3 guarda la misma
-  // información por su cuenta, y mientras tanto la ausencia de constancia nunca
-  // cuenta como prueba de «instalación nueva»— pero queda degradada.
-  if (historialUbicacionDegradado) {
-    modalAlert(
-      launcherWin,
-      'Panorama del Servicio no ha podido guardar en la configuración local la constancia de que este equipo ' +
-        'usa una carpeta de datos propia.\n\n' +
-        `Detalle: ${historialUbicacionDegradado.motivo}\n\n` +
-        'Todo sigue funcionando con normalidad y tus datos no están en riesgo por esto. Lo que queda debilitado ' +
-        'es una defensa: esa constancia es la que impide que, más adelante y sin el archivo de configuración, un ' +
-        'arranque confunda este equipo con una instalación nueva. Revisa los permisos de la carpeta de ' +
-        'configuración de Windows.' +
-        errorCodeSuffix('PS-1024'),
-      { title: 'No se pudo dejar constancia de la ubicación de datos', danger: true }
     );
   }
 });

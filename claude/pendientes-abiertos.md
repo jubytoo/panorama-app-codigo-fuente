@@ -28,11 +28,11 @@ verificadas como reales.
 | P7 | **CERRADO** | Bloque 4: `ejecutarAccionDeArchivo`, journal de acción y marca por escritor |
 | P8 | **CERRADO** | Bloque 5 / D1+D2: cuarentena → un commit → purga, con NO-CLOBBER. Verificado en Electron real (E1, E2, E4, E7) |
 | P9 | **CERRADO** *(17 sept 2026)* · **ALTO / INTEGRIDAD** | Un `location.json` **presente pero ilegible o inválido ya nunca equivale a «no hay configuración»**. Un solo lector con estados explícitos (ausente / válido / ilegible / inválido): acepta UTF-8, UTF-8 con **un** BOM y UTF-16 con BOM; rechaza BOM duplicado o fuera de sitio, JSON roto, contrato incumplido y rutas no absolutas. Lo inutilizable **detiene el arranque** con PS-1020 (solo «Cerrar»): no se abre, crea ni registra ninguna BD, la protección de apagado no se toca y el rescate PS-1007 no restaura desde la carpeta por defecto. Solo `main.js`. `p9/` **282 OK/0** (exigente), Electron real **111 OK/0**, 7 reversiones. Ver §P9 — implementación |
-| P10 | **PENDIENTE** | Ver la nota de corrección de evidencia, más abajo |
+| P10 | **DIAGNÓSTICO CERRADO** *(17 sept 2026)* · **LIMPIEZA / ARCHIVO DIFERIDO** · no se autoriza limpieza | 634 archivos, 222 carpetas, **197,68 MB** (confirmado). No se usa como carpeta de datos desde el **28/08 08:09 UTC**. Sus datos de usuario —la BD pre-A3.3 con 9 proyectos, 102 backups cifrados, una preparación y el estado de 8 particiones— tienen equivalente **casi completo** en G:, pero **no idéntico**: 101 backups y la preparación no existen en G:, y los proyectos 2, 3, 4 y 7 ya no están en la BD viva. Unos 104 MB son caché recreable y 81 MB son `.asar` antiguos. Sigue siendo el destino de tres caminos legítimos (sin `location.json`, «datos locales» en PS-1005, «usar la carpeta por defecto» en PS-1009) y del rescate PS-1007. **No se ha borrado ni movido nada.** Ver §P10 — DIAGNÓSTICO |
 | P11 | **PENDIENTE** | UX, no urgente |
 | E1 | **CERRADO** (15 sept 2026) | Controles de Lista/Resumen **retirados** de la UI (opción A). Ver §«E1 — CERRADO», abajo |
 | P12 | **CERRADO** (15 sept 2026) | `rangoTemporalValido()`: sin escala demostrable no se infiere progreso. Batería **73 OK/0**, dashboard real **32 OK/0**, tres reversiones. Ver §P12, abajo |
-| D4 | **ABIERTO / DIFERIDO A CIERRE DE RELEASE** | `package.json` 2.0.55 vs código 2.0.56. **Sigue siendo bloqueador de la publicación final, pero no del trabajo técnico intermedio.** Decisión del usuario (15 sept 2026): la numeración, el `package.json` y la publicación pertenecen a la fase final de release, y cambiar ahora una versión que volverá a cambiar al terminar la auditoría no aporta nada |
+| D4 | **ABIERTO / DIFERIDO A CIERRE DE RELEASE** | `package.json` 2.0.55 vs código 2.0.56. **Sigue siendo bloqueador de la publicación final, pero no del trabajo técnico intermedio.** Decisión del usuario (15 sept 2026): la numeración, el `package.json` y la publicación pertenecen a la fase final de release, y cambiar ahora una versión que volverá a cambiar al terminar la auditoría no aporta nada. **Antes del release, verificar también P19** (codificación del `location.json` que escribe el instalador) |
 | B1 | **CERRADO** (15 sept 2026) | Contexto de pasada (4→1 y 2→1 lecturas), lectura pura, rastro sin spam y `computeStaffingRatio` fuera del listado. Batería **77 OK/0**, Electron real **24 OK/0**, cuatro reversiones. Ver §B1, abajo |
 | C1 | **ABIERTO**, partido en dos (16 sept 2026) | Diagnóstico: **117** backups sin fila, **39,67 MB** (no ~80), **7 particiones** de proyectos borrados (72 MB), CV no decidibles. **C1-A — CERRADO:** inventario de residuos al arrancar (solo lectura, una línea en `app.log`), CV de «Eliminar evaluación» e «Importar» retirados solo con `aplicado+verificado`, y mensajes que ya no prometen «se resuelve sola». Batería **165 OK/0**, Electron real **31 OK/0**, siete reversiones. **C1-B — ABIERTO / DIFERIDO:** retirada de lo histórico, hasta tener garantías multi-PC/Drive. Ver §C1 |
 | P16 | **ABIERTO** *(16 sept 2026)* | **Particiones de Chromium dentro de la carpeta sincronizada.** Las vivas suman ~755 MB, ~721 MB de caché; una sola lleva ~523 MB de Service Worker de un origen https externo. Ubicación, sincronización innecesaria, crecimiento y ciclo de vida. Relacionado con A3.3 Bloque 8 / ciclo de vida de Drive y con P14. **No es C1.** Ver §P16 |
@@ -46,7 +46,23 @@ verificadas como reales.
 | F1 | **CERRADO** *(16 sept 2026)* | **Interpretación de datos como HTML — corregida por contexto.** Ningún dato importado/persistido puede ya convertirse en markup, atributo, cierre de `<script>`, handler inline, selector roto ni URL activa. Batería **139 OK/0** (exigente), Electron real **47 OK/0** (4 arranques), **6 reversiones** por familias (**19 OK/0**). Cinco archivos tocados. Ver §F1. *(Diagnóstico previo, conservado abajo.)* |
 | F2 | **CERRADO** *(17 sept 2026)* | **CSP efectiva en las 10 ventanas**, por cabecera desde `main.js`, con cuatro perfiles mínimos; sin `unsafe-eval`; red, frames, objects, formularios y `<base>` cortados; lanzador y splash sin `unsafe-inline` en scripts; Worker de pdf.js arrancado por `blob:`. Dos archivos: `main.js` y la plantilla de Preparación. Ver §F2/F3 |
 | F3 | **CERRADO** *(17 sept 2026)* | Política única de apertura y navegación en las 10 ventanas. Ver §F2/F3 |
+| P18 | **PENDIENTE — INTEGRIDAD** *(registrado al cerrar P9, 17 sept 2026)* | **`Restaurar-backup.bat` puede elegir la carpeta por defecto** con ciertos formatos de `location.json` (JSON en una sola línea, UTF-16) y restaurar desde ahí una copia de `app.asar` de otra época. Solo el rescate **manual**. **No se corrige dentro de P9.** Ver §P18–P21 |
+| P19 | **PENDIENTE — verificar antes de release** (D4 / packaging) | **El instalador podría escribir `location.json` en ANSI** (razonado, no medido). Con P9 ya **no** cambia de BD en silencio: PS-1020, falla cerrado. Ver §P18–P21 |
+| P20 | **CERRADO dentro de P22** *(18 sept 2026)* | Era: «Abrir con datos locales» en PS-1005 desactivaba la protección de apagado. Ahora una **sesión local temporal** no la toca —ni la marca, ni `HKCU\…\Run`, ni la tarea— y la marca de ubicación propia sobrevive. Volver a la carpeta por defecto **a propósito** sí la sigue sincronizando: es una decisión permanente, no un camino de reserva. Ver §P22 — implementación |
+| P22 | **CERRADO** *(17-18 sept 2026)* · era **ALTO / INTEGRIDAD** | **La carpeta de datos local ya no se abre ni se crea sin decirlo.** Una sola puerta antes de tocar nada: la base local se reconoce en **cuatro** estados (ausente / existente / **inválida** / no comprobable), y las dos últimas **cierran** (PS-1023) sin abrir, sustituir ni pisar nada. Con base local existente hay **confirmación informada** (PS-1021, con fecha y tamaño); sin base local y con historia previa, crear una vacía exige pedirlo. **Esc y la X cierran**, nunca eligen lo local. La BD configurada ilegible ya **no** cae sola: pregunta (PS-1022). Marca durable `historial-ubicacion.json` (hash de la ruta, nunca la ruta), que ningún camino de reserva borra y cuyo fallo de escritura **no es silencioso** (PS-1024) ni vuelve a parecer una instalación nueva. Solo `main.js`. `p22/` **74 OK / 0**, Electron real **39 OK / 0** (14 arranques), 7 reversiones **29 OK / 0**. Ver §P22 — implementación |
+| P22 *(diagnóstico)* | — | Lo que se midió antes de implementar: cuatro caminos legítimos llegaban a la carpeta local y abrían o creaban sin avisar; uno de ellos **sin ningún diálogo**. Ver §P22 — diagnóstico | **La carpeta de datos local sigue siendo un destino operativo ambiguo.** Cuatro caminos legítimos llevan a ella —PS-1005 «datos locales», PS-1009 «usar la carpeta por defecto», arranque **sin** `location.json`, y la BD compartida ilegible, que cae ahí **sin ningún diálogo**— y en los cuatro la app **abre y modifica** la base de datos local que encuentre, o **crea una nueva**, sin decir de qué base se trata ni desde cuándo. La app **no tiene forma de saber** que el equipo ya tuvo una ubicación propia. Aparte: **PS-1007 elige la copia de `app.asar` por la fecha del nombre**, sin versión ni procedencia (en esta máquina, sin `location.json` o con G: sin montar, restauraría la **v0.1.28** sobre la 2.0.55). Ver §P22 |
+| P21 | **PENDIENTE — pasada E2E / Preparación** | **Preparación tras F2: cerrar → reabrir → leer otra acta.** Sin cobertura explícita. **F2 no se reabre.** Ver §P18–P21 |
 | F1 *(diagnóstico)* | — | Interpretación de datos como HTML. **Diagnóstico cerrado; sin implementar.** Patrón **global en el dashboard** (19 campos se interpretan y ejecutan al abrir, sin interacción); vía persistente más grave: **título importado horneado** en `projects/<id>/dashboard.html`, que ejecuta en el **arranque**. Propagación cruzada a Preparación y Directorio. Evaluación y Directorio casi todo escapado (residuos: peso/fecha/id de Evaluación, `data-dedic` del Directorio). **Barreras reales:** `contextIsolation:true` + `sandbox:true` + sin Node en las 4 ventanas → **no es RCE**; pero `psConfirm` sobrescribible, puente con 25 métodos, **sin CSP** (F2) y `window.open` sin handler (F3). Batería `f1/` (**100** descriptiva + **34** Electron real, 3 arranques, con marcadores inocuos). Ver §F1 |
+
+## Pendientes de ARNÉS (no de producto)
+
+Van aparte a propósito: no describen ningún defecto de Panorama, sino de la
+batería de pruebas.
+
+| # | Estado | Qué |
+|---|---|---|
+| ARN-1 | **PENDIENTE — antes del E2E / release final** *(registrado al cerrar P9, 17 sept 2026)* | **`nucleo-a33/test-nucleo.js` no es determinista: da 394 o 395 aserciones.** La rama «LOCAL, peor caso» (líneas ~561–590) solo se recorre si `fs.utimesSync` devuelve el `mtimeMs` **exactamente** igual (`===`). En NTFS unas veces ocurre y otras no. Si ocurre, se anotan **dos** OK (el atajo no lo detecta + la fila externa se pierde, límite conocido); si no, **uno** (el stat lo detecta). Medido el 17 sept: **7 × 394 y 1 × 395** en 8 tiradas. **No invalida la regresión:** la rama está identificada y las dos variantes pasan. Hay que hacerla determinista (p. ej. forzar o separar el peor caso) antes del E2E o del release final. **No se arregla ahora** |
+| ARN-2 | **OBSERVACIÓN NO RESUELTA** *(registrada al cerrar F2)* | La captura `6-directorio-ficha.png` de `f1/electron-f1-limpio.ps1` sale de 0 bytes. Ver §F2/F3 |
 
 ## Aplazadas explícitamente por el usuario
 
@@ -73,7 +89,7 @@ verificadas como reales.
 | P7 | **Archivos escritos antes que su fila** | `backup:save`, `meeting:savePrep` y `migrateLegacyInlineBackupsToFiles` escriben el archivo antes de insertar la fila; si la fila falla, el archivo queda huérfano. Es el mecanismo que produjo los ~80 MB de backups huérfanos medidos en la auditoría (punto C1) | **CERRADO — Bloque 4**. Los huérfanos **históricos** siguen siendo C1 |
 | P8 | **Borrados no atómicos disco↔BD** | `deleteProjectById` y `meeting:deletePrep` borran archivos antes de borrar la fila | **CERRADO — Bloque 5 / D1 y D2.** Protocolo RETIRAR → CONFIRMAR → PURGAR: nada se destruye antes del commit, y la purga solo ocurre después. Comprobado en Electron real (E1, E2, E4) y en la recuperación al arrancar (E7) |
 | P9 | **`location.json` con BOM se ignora en silencio** | Descubierto probando A3.1: si el archivo se guarda con BOM (p. ej. desde el Bloc de notas), `JSON.parse` falla, se traga la excepción y la app cae a la carpeta de datos local sin avisar | **PENDIENTE en producción.** Corregido solo en los arneses: `comun/guardia-rutas.js` es fail-closed y `GUARD-LOC-2` lo cubre. `main.js` sigue igual. **Diagnosticado el 17 sept 2026: riesgo de integridad, no UX — ver §P9** · **CERRADO el 17 sept 2026 (reclasificado ALTO / INTEGRIDAD) — ver §P9 — implementación** |
-| P10 | **~85 MB de residuos en `%APPDATA%\panorama-app`** | Carpeta de datos local de antes de mover los datos a Drive (agosto): `app.asar`, `app1.asar`, un `app.asar.bak-*` y una `panorama.sqlite3` del 28/08. No la usa nada | **PENDIENTE.** Confirmado el 15 sept: esa `panorama.sqlite3` es `F71F4140…`, 57 344 B — ver abajo |
+| P10 | **~85 MB de residuos en `%APPDATA%\panorama-app`** | Carpeta de datos local de antes de mover los datos a Drive (agosto): `app.asar`, `app1.asar`, un `app.asar.bak-*` y una `panorama.sqlite3` del 28/08. No la usa nada | **PENDIENTE.** Confirmado el 15 sept: esa `panorama.sqlite3` es `F71F4140…`, 57 344 B — ver abajo · **Diagnosticado el 17 sept 2026:** mide 197,68 MB, no ~85, y **no** es solo basura — ver §P10 — DIAGNÓSTICO |
 
 ## Bloque 5 de A3.3 — CERRADO (15 sept 2026)
 
@@ -1194,15 +1210,734 @@ prueban con dobles de `fs` en la batería Node; en la app real, con el archivo
 
 ### Pendientes SEPARADOS (no se tocan en P9)
 
-- **Instalador** (`installer.nsh`): `FileWrite` escribe ANSI (razonado, no
-  medido). Una ruta con tildes **ya no abre otra BD**: se detiene con PS-1020.
-  Arreglarlo es packaging.
-- **`Restaurar-backup.bat`**: con JSON compacto o UTF-16 elige la carpeta por
-  defecto. Solo afecta al rescate **manual**.
-- **PS-1005 «datos locales»** sigue desactivando la protección de apagado. Es
-  comportamiento anterior a P9, medido en `guard/no-montada`.
-- **Preparación: cierre/reapertura tras F2 + lectura posterior de un acta.** Va
-  en una pasada E2E/Preparación. **F2 no se reabre.**
+- **P19 — Instalador** (`installer.nsh`): `FileWrite` escribe ANSI (razonado,
+  no medido). Una ruta con tildes **ya no abre otra BD**: se detiene con
+  PS-1020. Arreglarlo es packaging.
+- **P18 — `Restaurar-backup.bat`**: con JSON compacto o UTF-16 elige la
+  carpeta por defecto. Solo afecta al rescate **manual**.
+- **P20 — PS-1005 «datos locales»** sigue desactivando la protección de
+  apagado. Es comportamiento anterior a P9, medido en `guard/no-montada`.
+- **P21 — Preparación: cierre/reapertura tras F2 + lectura posterior de un
+  acta.** Va en una pasada E2E/Preparación. **F2 no se reabre.**
+- **ARN-1 — `nucleo-a33`** da 394 o 395 según la tirada. Es de arnés, no de
+  producto: ver «Pendientes de ARNÉS».
+
+### Aceptación (17 sept 2026)
+
+**El usuario acepta la implementación y la evidencia: P9 → CERRADO.** También
+acepta la eliminación de «Datos locales (temporal)»: es preferible fallar
+cerrado a ofrecer una BD local histórica o ambigua. El tamaño del cambio
+(+205 / −26 en `main.js`) se da por bueno: es un único archivo productivo y
+toda la lógica pertenece a la resolución temprana de la ubicación.
+**No se refactoriza más P9 y no se reabre salvo regresión demostrada.**
+
+## P18–P21 — REGISTRADOS al cerrar P9 (17 sept 2026)
+
+Cuatro pendientes que P9 destapó o dejó fuera **a propósito**. **Ninguno se ha
+corregido.** Cada uno va a su bloque.
+
+### P18 — `Restaurar-backup.bat` puede elegir la carpeta por defecto — PENDIENTE, INTEGRIDAD
+
+- **Qué:** el rescate **manual** lee `location.json` con su propio algoritmo
+  (`findstr "userDataDir"` sobre la línea) y, si no encuentra la ruta, usa
+  `%APPDATA%\panorama-app`.
+- **Medido** (copia del `.bat` en sandbox, sin copias de `app.asar` que
+  restaurar; `p9/test-p9-location.js`, sección `P9-R`):
+
+  | Formato de `location.json` | Carpeta que elige el `.bat` |
+  |---|---|
+  | formato del instalador, con o sin BOM | la compartida |
+  | formato de la app (varias líneas) | la compartida *(medido en la batería de diagnóstico de P9, con el mismo `.bat`)* |
+  | JSON en **una sola línea** | la **por defecto** |
+  | **UTF-16** con BOM | la **por defecto** |
+  | sin archivo | la por defecto (legítimo) |
+
+- **Riesgo:** en esta máquina, la carpeta por defecto guarda un
+  `app.asar.bak` del **26/08**; los de G: son del 12/09. Con uno de esos
+  formatos, el rescate manual ofrecería la copia antigua. Hoy la app **sí** lee
+  UTF-16, así que la app y el `.bat` pueden discrepar sobre cuál es la carpeta.
+- **Por qué no se tocó en P9:** el `.bat` va en `extraResources`, y cambiarlo
+  toca el empaquetado.
+
+### P19 — el instalador podría escribir `location.json` en ANSI — PENDIENTE, verificar antes de release (D4 / packaging)
+
+- **Qué:** `build/installer.nsh` escribe el archivo con `FileWrite`, que según
+  la documentación de NSIS escribe **ANSI** incluso en un instalador Unicode.
+  **Razonado, no medido:** en toda la auditoría no se ha empaquetado nada.
+- **Efecto hoy, con P9:** una ruta con ñ o tildes queda en cp1252. El lector la
+  declara **ilegible** y el arranque se detiene con **PS-1020**. Medido con
+  bytes cp1252, en Node y en la app real. **Ya no cambia de BD en silencio.**
+- **Antes del release:** construir el instalador, elegir una carpeta
+  compartida con ñ o tildes y comprobar los **bytes** del `location.json`
+  escrito. Si sale ANSI, escribir UTF-8 (o UTF-16 con BOM) desde NSIS. Va con
+  **D4 / packaging**.
+
+### P20 — «Abrir con datos locales» (PS-1005) desactiva la protección de apagado — PENDIENTE, con el ciclo de vida de Drive
+
+- **Qué:** con JSON válido pero la unidad **no montada** o la carpeta
+  inaccesible, tras PS-1005 y «Abrir con datos locales (temporal)», la sesión
+  pasa a ser «local». `syncDriveSyncGuardWithLocation` borra entonces la marca
+  y pide `reg delete` y `schtasks /delete`.
+- **Medido:** caso `guard/no-montada` de `p9/electron-p9.ps1`, con los procesos
+  bloqueados por el arnés. Es **anterior a P9**; P9 no lo cambia.
+- **Duda de diseño:** una indisponibilidad **temporal** de Drive no debería
+  desmontar la protección de un equipo que sigue usando la carpeta compartida.
+  Se revisa con el ciclo de vida de Drive (A3.3 Bloque 8, P14, P16).
+
+### P21 — Preparación tras F2: cerrar → reabrir → leer otra acta — PENDIENTE, pasada E2E / Preparación
+
+- **Qué falta:** una prueba que cierre la ventana de Preparación, la vuelva a
+  abrir y lea **otra** acta real, con el Worker de pdf.js arrancado por
+  `blob:` (F2).
+- **Qué hay:** `f2/electron-f2.ps1` cubre el Worker real, el PDF real, la
+  vuelta sin Worker y la restauración (que cierra la ventana). **No** reabre
+  para leer otra acta.
+- **Alcance:** se añade en la pasada E2E / Preparación que corresponda. **F2 no
+  se reabre** por esto, y no se mezcla con P9.
+
+## P10 — DIAGNÓSTICO (17 sept 2026): `%APPDATA%\panorama-app` — inventario, clasificación y riesgo
+
+> **Estado (aceptado por el usuario el 17 sept 2026):** **P10-DIAGNÓSTICO →
+> CERRADO.** **P10-LIMPIEZA / ARCHIVO → DIFERIDO**, y **no se autoriza
+> limpieza**: la carpeta guarda datos históricos únicos y además sigue siendo
+> alcanzable por caminos legítimos de la aplicación. No se borra, mueve ni
+> archiva nada —tampoco las cachés de clase B— hasta resolver **P22**.
+
+**Solo diagnóstico. No se ha borrado, movido ni modificado nada.** Todo se hizo
+en solo lectura: las BD se leyeron a memoria y el `localStorage`, desde
+**copias** en un sandbox. El árbol de P10, la BD residual, la BD viva, las
+particiones de G: y `location.json` quedaron **idénticos** antes y después, en
+cada tirada.
+
+Herramientas (en `pruebas-a33/p10/`):
+
+- `inventario-p10.js`: metadatos, BD en memoria, cabeceras, hashes y versiones
+  de los `.asar`. Las funciones de escritura de `fs` están trucadas y lanzan.
+- `electron-p10-localstorage.ps1` + `real-run/p10-localstorage.js` +
+  `comparar-localstorage-p10.js`: el `localStorage` de cada partición, leído
+  con Electron desde copias y comparado **por hashes y estructura, sin ver
+  ningún valor**.
+
+Horas en **UTC** (local = UTC+2).
+
+### P10 original
+
+> «~85 MB de residuos en `%APPDATA%\panorama-app`. Carpeta de datos local de
+> antes de mover los datos a Drive (agosto)… No la usa nada.» — PENDIENTE; la
+> BD es `F71F4140…`, 57 344 B.
+
+C1 ya había corregido la cifra a **197,68 MB**. **Se confirma hoy: 634
+archivos, 222 carpetas, 207 284 784 B.** El último cambio es del 12/09 19:57
+(caché de Chromium).
+
+### Qué pasó, reconstruido con las fechas
+
+| Cuándo (UTC) | Hecho | Fuente |
+|---|---|---|
+| 25/08 12:04 | Se crea la BD en P10 (primera instalación) | fecha de creación del archivo |
+| 26/08 15:48 – 27/08 06:26 | 8 parches aplicados (0.1.28 → …); los `.asar` quedan en P10 | `patch-log.txt` |
+| 26/08, después de las 16:59 | Nace la carpeta de G: **a partir de P10**: mismos ids, mismas particiones, **misma sal y verificador**. El backup más antiguo de G: (26/08 16:59:25) es **idéntico** a uno de P10. G: ya está en uso hacia las 19:58 | BD, hashes, fechas de G: |
+| 26/08 hasta las 19:20 | P10 tiene escrituras posteriores (proyectos 2, 4, 7 y 9). **No se sabe** si fueron antes o después de la copia | backups y particiones |
+| **28/08 06:13–08:09** | **Sesión en P10 con v0.1.41**: es el incidente que motivó la v0.1.42, cuando la app cayó en silencio a la carpeta local. Se trabajan los proyectos 1, 2, 3, 5 y 6 | `app.log` de P10, backups y particiones |
+| 28/08 08:40 y 13:33 | Se crean en G: los proyectos **11** y **12**, cuyo contenido es la continuación de los residuales **2** y **3** (ver abajo) | BD viva y comparación de estado |
+| después | Desaparecen de la BD viva los ids 2, 3, 4, 7, 10 y 13; sus particiones de G: quedan **vacías** (se vaciaron al borrar). Se crean el 14 (01/09) y el 16 (10/09) con los nombres del 4 y del 7 | `sqlite_sequence` = 16, particiones de G: (**razonado**: el `app.log` vivo no registra borrados con esas versiones) |
+| 02/09 ×2 y 12/09 ×2 | Arranques con **PS-1005** que **se recuperaron a G:** (tras esperar o con «Reintentar»). La BD de P10 **no** se abrió; solo el perfil de Chromium de la sesión por defecto quedó en P10 | `app.log` de P10 y de G: |
+| desde 28/08 08:09 | **Nada** vuelve a escribir la BD, los backups ni las particiones de P10 | fechas de modificación |
+
+### Inventario por familias
+
+| Familia | Archivos | Tamaño | Fechas | Qué es | Clase |
+|---|---|---|---|---|---|
+| **BD local residual** | 1 | 57 KB | 25/08 → 28/08 | Ver abajo | **A — PRESERVAR** |
+| **Backups de proyecto** | 102 | 11,19 MB | 25/08 → 28/08 | **Todos cifrados.** 101 no existen en G: (1 idéntico). Versiones del 25 al 28/08 que G: ya no guarda (guarda 15 por proyecto, desde septiembre). Para los proyectos 2, 3, 4 y 7 son los **únicos** backups que existen | **A — PRESERVAR** |
+| **Preparación de reunión** | 1 | 0,03 MB | 26/08 | Cifrada, del proyecto 2. Sin copia idéntica en G: | **A — PRESERVAR** |
+| **`app.log`** | 1 | 786 B | 28/08 → 12/09 | 11 líneas, **sin rutas** (P15 no aplica). Es la **única constancia** del arranque del incidente del 28/08 y de los cuatro PS-1005 (P14: el registro quedó partido en dos carpetas) | **A — PRESERVAR** (evidencia) |
+| **Particiones — Local Storage** | 68 | 0,81 MB | 25/08 → 28/08 | Estado **en claro** de 8 proyectos y su historial de cambios. Casi todo tiene equivalente en G: (tabla más abajo) | **C — HISTÓRICO / REVISAR** (con un punto **D**) |
+| **Instalación / parches** | 5 | 81,09 MB | 26/08 → 28/08 | `app.asar` v0.1.29 y `app.asar.bak-…` v0.1.28, que **no están en ningún otro sitio**; `app1.asar` v0.1.43, idéntico al de G:; `apply-patch-helper.js` y `patch-log.txt` (8 líneas con rutas de instalaciones antiguas). Sin datos de usuario | **C — HISTÓRICO / REVISAR** |
+| Particiones — cachés | 270 | 95,06 MB | 25/08 → 28/08 | Cache, GPUCache, Dawn… | **B — PROBABLEMENTE LIMPIABLE** |
+| Particiones — cookies, Session Storage, perfil | 135 | 0,51 MB | 25/08 → 28/08 | Network (cookies, trust tokens), sessionStorage, Preferences, SharedStorage | **B** |
+| Dashboards horneados (`projects/<id>`) | 9 | 2,23 MB | 26/08 → 28/08 | Se regeneran al abrir. Cinco apuntan a la instalación actual y **cuatro a una instalación antigua** en Drive («Otros ordenadores») | **B** |
+| Chromium raíz — cachés | 23 | 6,67 MB | 25/08 → 12/09 | GPUCache, Dawn…, Code Cache, Shared Dictionary | **B** |
+| Chromium raíz — Local/Session Storage, Network, perfil | 19 | ~0,05 MB | 25/08 → 12/09 | El `localStorage` raíz tiene **0 claves**. Lo tocaron las sesiones PS-1005 del 12/09 | **B** |
+| **D — desconocido** | 0 | — | — | Todo archivo tiene familia | — |
+
+Totales por clase: **A** 105 archivos, ~11,3 MB · **C** 73 archivos, ~81,9
+MB · **B** 456 archivos, ~104,5 MB.
+
+**Los 20 más grandes:**
+
+- los tres `.asar` (27 MB cada uno);
+- 17 archivos `data_3` de caché (4 MB cada uno): uno de la raíz y 16 de las
+  particiones.
+
+### La BD residual
+
+- **Archivo:** `panorama.sqlite3`, 57 344 B, SHA-256
+  `F71F4140E7FD68504CBF65C1D930BC4A244554D7BFB013A70557A30CCF74F501`.
+- **Fechas:** creada el 25/08 12:04 y modificada por última vez el 28/08 08:09.
+- **Integridad:** `ok`.
+- **Tablas:** `app_meta` (4), `projects` (9), `backups` (102) y
+  `meeting_preps` (1); `candidate_evals` **no existe**.
+  `sqlite_sequence`: proyectos 9, backups 222, preparaciones 4.
+- **Anterior a A3.3:** sin `db_commit_id`, generación ni `installation_id`.
+- **Seguridad:** activa, con la **misma sal y el mismo verificador que la BD
+  viva**. Los backups del residuo se cifraron con la **misma contraseña** que
+  los de G:.
+- **`security_remembered` presente** (48 caracteres, no se imprime): una
+  contraseña recordada que la BD viva **ya no tiene**. Es un **artefacto de
+  credencial** que se queda en P10.
+
+| Residual | Pareja en la BD viva | Estado en su partición, frente a G: | Backups | Tipo de dato |
+|---|---|---|---|---|
+| 1 (Directorio) | **1** (partición, nombre y fecha) | 35 elementos: 2 idénticos, **32 personas = la misma entrada modificada después** (la viva tiene 46), **1 parte mensual SIN equivalente** | 15 (26–28/08), no están en G: | **C** + **D** (esa parte mensual) |
+| 2 | **Ninguna** en la BD. Por contenido: **viva 11** (creada el 28/08 a las 08:40) | 43 elementos: 17 idénticos, **26 modificados, 0 sin equivalente**; 6 de 313 valores no aparecen en G:; título y fin de servicio distintos | 15, **únicos** | **D — parcialmente solapado** |
+| 3 | **Ninguna.** Por contenido: **viva 12** (28/08 13:33) | 64 elementos: 18 idénticos, **46 modificados, 0 sin equivalente**; 4 de 452 valores no aparecen en G: | 15, **únicos** | **D** |
+| 4 | **Ninguna.** Mismo nombre: **viva 14** (01/09) | **32 de 32 idénticos en G:** (en la 14 o en la partición huérfana del antiguo 13) | 15, **únicos** | **B** en el estado; **C** en los backups |
+| 5 | **5** (partición; renombrado) | 81 idénticos y 1 modificado. La viva conserva la clave antigua **idéntica** | 15 | **B** (estado) / **C** |
+| 6 | **6** | Todos idénticos; 1 entrada de historial modificada | 8 | **C** |
+| 7 | **Ninguna.** Mismo nombre: **viva 16** (10/09) | 9 de 9 idénticos; **solo la fecha de fin** no aparece en G: | 11, **únicos** | **C** |
+| 8 | **8** | Estado **IDÉNTICO** en G: | 6 (1 idéntico en G:) | **B** |
+| 9 | **9** | Partición **vacía** | 2 | **C** (backups) |
+
+Cómo se mide lo de «modificado»: por cada elemento (un hito, un riesgo, una
+persona…) se guarda el hash de cada una de sus propiedades. Un elemento sin
+copia idéntica se empareja con la entrada viva que comparte más propiedades. Con
+al menos la mitad iguales cuenta como **la misma entrada, modificada**; sin
+ninguna en común, como **sin equivalente**.
+
+### ¿Hay datos únicos?
+
+- **A — únicos:** los **101 backups** y la **preparación**, como *versiones
+  históricas* del 25 al 28/08. No se comparan por contenido (están cifrados),
+  pero ninguno tiene copia en G:. También la **parte mensual del Directorio**
+  sin equivalente y el **`app.log`**, como evidencia.
+- **B — duplicados:** el estado de los proyectos 4, 5 y 8.
+- **C — desfasados:** el estado de 1, 6 y 7. Su contenido sigue en G:, en
+  versión posterior.
+- **D — parcialmente solapados:** 2 y 3, **continuados en otro proyecto**
+  (11 y 12). Casi todo está en G:, modificado; quedan unos pocos valores
+  antiguos sin copia.
+- **Dependencia con C1-B:** la única copia idéntica del estado del proyecto 4
+  puede ser la **partición huérfana** de G: del antiguo 13, que es territorio
+  de C1-B. Si C1-B la retirara, P10 pasaría a tener la única copia.
+- **Exportaciones:** en P10 no hay ninguna. La app no guarda dónde exporta, así
+  que compararlas exigiría recorrer carpetas del usuario, y **no se ha hecho**.
+
+**Conclusión:** la carpeta **no es basura**. La información de usuario está casi
+toda en G:, pero la versión exacta del 28/08 y todo el historial de 25–28/08
+**solo** está aquí. Encaja con el propio código («los datos se recuperaron a
+mano comparando ambas copias»): si esa recuperación dejó algo fuera, está aquí.
+
+### Tras P9, ¿sigue siendo peligrosa?
+
+- **Por `location.json` inválido, NO.** Medido en P9 con una **copia de esta
+  misma BD** (casos `residuoreal/*`): PS-1020, y el hash no cambia.
+- **Sigue siendo el destino de caminos legítimos**, y en todos se abriría esta BD
+  anterior a A3.3. A3.3 la registraría y al abrirla la **modificaría**, como ya
+  midió P9. La contraseña actual **sirve**, así que el usuario vería los
+  proyectos de agosto sin ningún aviso especial. Los caminos son:
+  1. sin `location.json`: «Volver a la carpeta por defecto» o el archivo
+     borrado;
+  2. «Abrir con datos locales» en **PS-1005** (P20);
+  3. «Usar la carpeta de datos por defecto» en **PS-1009**.
+- **Rescate PS-1007 sin `location.json`:** restauraría el `app.asar.bak-…`
+  **v0.1.28** sobre la 2.0.55 instalada. Es razonado, no provocado; va con P18.
+- **Sesiones PS-1005 que se recuperan:** el perfil de Chromium de la sesión por
+  defecto se queda en P10 aunque la BD esté en G:. Medido el 12/09; hoy ese
+  `localStorage` está vacío. Va con P20 y el ciclo de vida de Drive.
+
+### Qué NO debe tocarse
+
+La BD residual, los 102 backups, la preparación, el `app.log` y el
+`Local Storage` de las particiones. **Tampoco los `.asar` antiguos** mientras
+PS-1007 pueda buscarlos. Y **nada** de P10 mientras siga siendo el destino de
+los caminos anteriores: borrar la BD convertiría la carpeta en «primera
+ejecución» (crearía una vacía), y dejarla la mantiene abrible.
+
+**Datos sensibles** en P10:
+
+- el estado de 8 proyectos **en claro**;
+- el artefacto de contraseña recordada;
+- cookies de particiones.
+
+Cualquier archivado debe tratarlos como tales: ni a Drive ni compartidos.
+
+### Propuesta de siguiente paso (NO implementada)
+
+1. **Primero, el comportamiento, antes que los archivos (producto; cuando se
+   autorice).** Que la carpeta por defecto **no se pueda usar en silencio**
+   como carpeta de datos en un equipo que ya tuvo una ubicación personalizada:
+   pedir una confirmación explícita, con la fecha de la BD encontrada, antes de
+   abrirla desde los caminos 1–3. Además, que el rescate PS-1007 no tome
+   copias de `app.asar` **más antiguas que la versión instalada**. Toca P18 y
+   P20, y se decide con el ciclo de vida de Drive.
+2. **Después, una decisión del usuario sobre los datos**, sin borrar nada:
+   - confirmar que los proyectos 2, 3, 4 y 7 se retiraron a propósito y que
+     11, 12, 14 y 16 contienen lo que necesita;
+   - revisar él mismo la parte mensual del Directorio sin equivalente
+     (solo él puede juzgar el contenido).
+3. **Solo entonces, archivar**, no borrar:
+   - una copia fechada, de solo lectura, **fuera de Drive**, de las familias
+     A y C;
+   - con manifiesto de hashes y verificación antes y después;
+   - con el mismo protocolo NO-CLOBBER y de cuarentena que ya existe.
+4. **Las cachés (B, ~104,5 MB)** son recreables, pero quitarlas no reduce
+   ningún riesgo. Van al final, con la app cerrada y **sin mezclarlas con
+   P16**.
+
+**No se ha tocado:** P16, C1-B, P14/P15, Drive/multi-PC, packaging, ni ningún
+archivo de P10 ni de G:.
+
+## P22 — DIAGNÓSTICO (17 sept 2026): la carpeta local como destino, y el rescate PS-1007
+
+**Solo diagnóstico. Producción sin tocar.** Sale de P10: antes de decidir nada
+sobre esa carpeta hay que impedir que siga siendo un **destino operativo
+ambiguo**. Cubre cuatro caminos, ninguno de ellos un defecto de lectura de
+`location.json` (eso fue P9, cerrado):
+
+| | Camino |
+|---|---|
+| **A** | PS-1005 → «Abrir con datos locales (temporal)» |
+| **B** | PS-1009 → «Usar la carpeta de datos por defecto por ahora», y la BD compartida **ilegible**, que cae ahí **sin diálogo** |
+| **C** | Arranque **sin** `location.json` en un equipo que YA tuvo ubicación propia |
+| **D** | PS-1007: qué copia de `app.asar` elige el rescate |
+
+Baterías: `p22/test-p22-reserva.js` **33 OK / 0** (descriptiva: ejecuta las
+funciones reales contra un sandbox; en D **solo la selección**, nunca la
+copia), `p22/electron-p22.ps1` **14 OK / 0** (12 arranques reales, con
+una **copia** de la BD residual de P10) y `p22/rescate-esta-maquina.js` (solo
+lectura, sobre las rutas reales). BD viva, configuración real, residuo de P10,
+archivos productivos y entrada de HKCU\…\Run **idénticos** antes y después.
+
+### A — PS-1005 → «Abrir con datos locales (temporal)»
+
+1. Antes de `ready`, la carpeta configurada no responde durante 5 s →
+   `customUserDataDirFailure`.
+2. En `whenReady`, 20 s más de reintentos y el diálogo **PS-1005**
+   («Reintentar» / «Abrir con datos locales (temporal)»).
+3. **Cerrar el diálogo con Esc o con la X equivale a «datos locales»**
+   (`cancelId: 1`).
+4. El diálogo **no dice nada de la carpeta local**: ni si tiene base de datos,
+   ni de cuándo es, ni cuántos proyectos.
+5. A partir de ahí el arranque sigue con la carpeta por defecto: se
+   **desactiva** la protección de apagado, no hay candado multi-PC, la política
+   pasa a `local`, decide A3.3 y se abre `getDb`.
+6. El único aviso posterior, «Usando datos locales temporalmente», se pinta
+   **dentro del lanzador**, con la base de datos ya abierta.
+
+| Carpeta local | Medido en la app real |
+|---|---|
+| Con la **copia de la BD residual de P10** | La abre y **la modifica**; con la Seguridad activa, lo siguiente que ve el usuario es **la contraseña de siempre**: el lanzador (y su aviso) todavía no ha aparecido |
+| **Vacía** | **Crea una base de datos nueva** («primera ejecución») y la registra; después, el aviso en el lanzador |
+| Vacía pero **registrada** en A3.3 | Falla cerrado (**PS-1016**) |
+| Con la protección de apagado activa | La **desactiva** (esto es **P20**) |
+
+### B — PS-1009, y la BD compartida ilegible
+
+- **PS-1009** («Esperar más» / «Sí, empezar aquí desde cero» / «Usar la carpeta
+  de datos por defecto por ahora») sale cuando la carpeta configurada está
+  accesible pero **no tiene** `panorama.sqlite3`. La tercera opción cambia a la
+  carpeta por defecto **sin mirar qué hay dentro**. Medido: con la copia del
+  residuo, la abre y **la modifica**; con la carpeta vacía, **crea una nueva**.
+- **Sin diálogo:** si el `panorama.sqlite3` de la carpeta configurada existe
+  pero **no se puede comprobar** (EACCES, EPERM, EBUSY, EIO…) durante 20 s, la
+  app se pasa a la carpeta por defecto **en silencio**. Medido con el archivo
+  **bloqueado de verdad** por otro proceso (EBUSY): abre la BD local, **la
+  modifica**, no sale **ningún** diálogo y lo siguiente es la contraseña. Solo
+  queda una línea en el `app.log` de la carpeta local.
+
+### C — Sin `location.json`
+
+- `ausente` significa exactamente «nunca se configuró nada»: no se mira ninguna
+  otra señal.
+- Medido: con la copia del residuo, **la abre y la modifica sin ningún aviso**;
+  con la carpeta vacía, **crea una base de datos nueva**. Da igual que el
+  registro de A3.3 recuerde una ubicación compartida. Y si la protección de
+  apagado estaba activa, **se desactiva sin avisar**.
+- **Primera ejecución real y regreso histórico son indistinguibles**: los dos
+  terminan en «carpeta por defecto sin registro local y con la base de datos
+  demostrablemente ausente (primera ejecución)», sin un solo aviso.
+- Lo ÚNICO que hoy lo frena es que la **propia carpeta por defecto** conste como
+  inicializada en el registro de A3.3: entonces no crea (PS-1016).
+- Cómo puede desaparecer `location.json`: «Volver a la carpeta de datos por
+  defecto» (que confirma con un «NO borra ningún dato» **sin decir qué hay en la
+  carpeta por defecto**), un borrado a mano, o un perfil restaurado a medias. El
+  desinstalador **no** lo borra.
+
+### Qué señales persistentes hay hoy para saber que el equipo tuvo ubicación propia
+
+| Señal | Sirve | Problema |
+|---|---|---|
+| `location.json` | Es la única que se usa | Justo la que falta en el caso C |
+| Carpeta `%APPDATA%\panorama-app-config` | Débil | Con A3.3 existe en **todos** los equipos (registro e `installation-id`) |
+| Registro de A3.3 con claves de **otras** rutas | Fuerte | Solo en equipos que ya hayan corrido una versión con A3.3 y ubicación propia. **Esta máquina no lo tiene**: la instalada es anterior |
+| Protección de apagado (marca, HKCU\…\Run, tarea) | Fuerte para «compartida» | **Se borra sola** en estos mismos caminos: la señal se destruye al usarla |
+| `app.log` de la carpeta por defecto con PS-1005 | Indicio | Texto libre, y queda repartido entre dos carpetas (**P14**) |
+| Metadatos de la BD local | Para la **edad**, no para el origen | `mtime`; `MAX(projects.updated_at)`, `MAX(backups.created_at)`, nº de proyectos; con A3.3, `db_commit_id`, `db_generation` y `db_commit_history` (qué instalaciones la escribieron). **Su ausencia** ya dice «anterior a A3.3» |
+
+**Conclusión: hoy no hay ninguna señal fiable**, y la más fuerte se
+autodestruye.
+
+### D — PS-1007: qué copia de `app.asar` restauraría
+
+- Las copias `app.asar.bak-<fecha>` las crea **«Aplicar parche»** en la
+  **carpeta de datos** (si es compartida, ahí quedan **las de todos los
+  equipos**), sin anotar versión, equipo ni instalación. Se conservan **2**.
+- El rescate elige **la más reciente por el nombre**, dentro de la carpeta
+  configurada si existe y, si no, la de por defecto. **No lee la versión ni
+  comprueba de qué instalación viene**, y restaura sin comparar con la
+  instalada.
+
+Medido con copias sintéticas (solo la selección):
+
+| Situación | Elegiría |
+|---|---|
+| Sin `location.json`, con la copia de agosto en la carpeta por defecto | **v0.1.28** |
+| `location.json` válido, con las copias recientes en la compartida | v2.0.54 (la anterior de esta instalación) |
+| La copia más reciente la dejó **otro equipo** con una versión posterior | **v2.0.60**, más nueva que la instalada |
+| Nombre más reciente pero versión **más antigua** (otro equipo desactualizado) | **v2.0.30** |
+| `location.json` válido pero la carpeta configurada no existe | **v0.1.28** |
+
+**En esta máquina** (solo lectura, `rescate-esta-maquina.js`; instalada
+**v2.0.55**):
+
+- hoy, con G: montada → `app.asar.bak-2026-09-12T21-29…` = **v2.0.54**, que es
+  la anterior de esta instalación (el `patch-log.txt` de G: registra 106
+  parches, 96 sobre la instalación actual, el último a las 21:29 del 12/09);
+- **sin `location.json`** → `app.asar.bak-2026-08-26T19-19…` = **v0.1.28**;
+- **con G: sin montar** → la misma **v0.1.28**. Este es el caso realista: basta
+  un arranque con Drive aún sin montar y un parche que falle.
+
+**Ojo con el enunciado «no restaurar una versión inferior a la instalada»:**
+volver a la **anterior** es justo lo que un rescate legítimo hace tras un parche
+roto. El problema no es que sea inferior, sino que **nada demuestra que esa
+copia sea la predecesora de ESTA instalación**.
+
+## P22 — DISEÑO FINAL (17 sept 2026) · ACEPTADO, **sin implementar**
+
+**Regla primera, que NO depende de ninguna marca:** si la carpeta por defecto
+tiene un `panorama.sqlite3` **reconocible**, ningún camino de reserva la abre
+sin **confirmación explícita**. La marca persistente es una defensa **añadida**,
+porque un equipo antiguo puede llegar a la versión nueva sin `location.json`,
+sin marca y con BD local.
+
+### 1. Reconocer la BD local sin abrirla
+
+- `estadoDeArchivoEnRuta()` (ya existe) distingue **`visible`** / **`no-visible`**
+  (ENOENT demostrado) / **`no-accesible`**.
+- **Reconocible** = visible, tamaño > 0 y los 16 primeros bytes son
+  `SQLite format 3\0` (lectura compartida de 16 bytes; **comprobado** el 17 sept
+  sobre la residual y la viva).
+- Datos para el diálogo, **sin abrir la base**: fecha de última modificación,
+  tamaño y si existe el testigo `panorama.sqlite3.gen` de A3.3 *(hoy no existe
+  en ninguna de las dos: las escribió una versión anterior)*. **Nada de `sql.js`
+  en `main.js`**, así que **no** se muestra el número de proyectos.
+- **`no-accesible` → fail-closed:** ni abrir ni crear. Aviso **PS-1023** y
+  cierre.
+
+### 2. Marca durable «este equipo usó una ubicación propia»
+
+- Archivo **`historial-ubicacion.json`** en `%APPDATA%\panorama-app-config`,
+  junto a `location.json`, el registro de A3.3 y el `installation-id`. Escritura
+  atómica y verificada (tmp + fsync + rename + relectura), como el registro.
+- Contenido: `{ v, personalizada: { clave_sha256, compartida, primera_vez,
+  ultima_vez }, decisiones: [ { que: 'volver-a-por-defecto', at } ] }` — el
+  **hash** de la ruta, nunca la ruta.
+- Se escribe cuando la app **usa con éxito** una ubicación configurada (tras
+  `setPath`) y al guardar una nueva en «Cambiar ubicación…».
+- **No la borra nadie:** ni PS-1005, ni PS-1009, ni un fallo de Drive, ni una
+  sesión local temporal. «Volver a la carpeta por defecto» **añade** la decisión
+  con su fecha.
+- **Equipos que ya existen** (se evalúa al arrancar, sin escribir hasta
+  detectar): `location.json` válido · o una clave del registro de A3.3 que **no**
+  es la carpeta por defecto · o la marca de la protección de apagado
+  (`enabled.flag`). *(En esta máquina, hoy: `location.json` válido y
+  `enabled.flag` presente.)*
+- **Hueco que queda, y por eso no basta:** equipo sin `location.json`, sin
+  registro de A3.3 y sin marca de protección. Ahí manda la regla 1.
+
+### 3. Una sola puerta antes de tocar nada local
+
+`autorizarCarpetaLocal(motivo)` en `main.js`, **antes** de la splash, de la
+protección de apagado, del candado multi-PC, de la decisión de A3.3, del
+registro y de `getDb`:
+
+| Situación | Qué hace |
+|---|---|
+| BD local **reconocible** | Diálogo informado **PS-1021**: `Cerrar` y `Usar estos datos locales` |
+| **Sin** BD local y **con** marca o señal | PS-1021 en su variante «no hay datos locales»: `Cerrar` y `Crear una base de datos local vacía` |
+| **Sin** BD local y **sin** marca ni señales | Primera ejecución legítima: **sin diálogo**, como hoy |
+| BD local **no-accesible** | **PS-1023**, fail-closed |
+
+El resultado queda en `sesionLocalTemporal`, solo en memoria.
+
+### 4. Los tres caminos
+
+- **A — PS-1005.** El estado de la BD local se calcula **antes** de mostrar el
+  diálogo y su información va dentro. Botones: `Reintentar` (predeterminado) ·
+  `Usar estos datos locales` **o** `Crear una base de datos local vacía` ·
+  `Cerrar` (`cancelId`). Elegir la opción local **es** la aceptación explícita.
+- **B — PS-1009.** Igual: `Esperar más (reintentar)` (predeterminado) · `Sí,
+  empezar aquí desde cero` (sigue siendo sobre la carpeta **configurada**) ·
+  `Usar estos datos locales` / `Crear…` · `Cerrar`.
+- **B-bis — BD configurada existente pero ilegible.** **Desaparece el cambio
+  silencioso**: **PS-1022** con `Reintentar` · `Usar estos datos locales` /
+  `Crear…` · `Cerrar`. **No se abre nada** antes de la decisión.
+- **C — sin `location.json`.** La puerta se ejecuta lo primero en `whenReady`,
+  justo después de la parada de P9.
+
+### 5. Punto exacto en el que puede abrirse la BD
+
+`dbmod.getDb(...)` —y antes `marcarUbicacionDetectadaExistente()` o
+`marcarUbicacionInicializando()`— solo se alcanzan si: **(a)** la sesión usa la
+carpeta **configurada**; **(b)** la puerta devolvió **aceptación explícita en
+este arranque**; o **(c)** es una primera ejecución legítima. Ningún camino de
+reserva llega a `getDb` sin pasar por la puerta.
+
+### 6. Esc / X
+
+En PS-1005, PS-1009, PS-1021, PS-1022 y PS-1023, `cancelId` es **`Cerrar`**:
+cierra sin abrir ni crear. **Nunca** equivale a «datos locales». En PS-1005 y
+PS-1009 el **predeterminado** sigue siendo `Reintentar`/`Esperar más`, que
+tampoco tocan nada; en PS-1021 y PS-1023, que no tienen reintento, el
+predeterminado es `Cerrar`. *(Si se prefiere `Cerrar` también como
+predeterminado en los dos primeros, es un cambio de una línea.)*
+
+### 7. P20 dentro de P22
+
+Con `sesionLocalTemporal`, `syncDriveSyncGuardWithLocation()` **no hace nada**
+—misma guarda que P9 ya aplica con la configuración ilegible—, ni al arrancar ni
+en el vigilante de 45 s: no se borra `enabled.flag`, no se piden `reg delete` ni
+`schtasks /delete`, y la marca persistente no se toca. **P20 se cierra dentro de
+P22** si las pruebas demuestran: valor de HKCU\…\Run igual antes y después,
+`enabled.flag` igual, y ninguna señal de ubicación compartida borrada.
+«Volver a la carpeta por defecto», que es una decisión explícita y no un camino
+de reserva, **sí** sigue desactivando la protección.
+
+### 8. Cero escrituras antes de aceptar
+
+Antes de la aceptación no hay `.gen`, ni registro de A3.3, ni commits, ni
+migraciones, ni backups, ni escrituras de Seguridad, ni `getDb`. **Límite
+honesto:** Chromium ya ha creado sus archivos de perfil (`Local State`, cerrojo
+de instancia única…) en esa carpeta **antes** de que `main.js` pueda decidir
+nada. Por eso lo que se mide es el **hash de `panorama.sqlite3`**, la ausencia de
+`.gen` y que el registro de ubicaciones no gane entradas — no «la carpeta
+intacta». La puerta va **antes de la splash** para no añadir más.
+
+### 9. Rescate de `app.asar`: fuera de P22
+
+No se toca la selección. El riesgo queda **abierto y documentado** aquí y en
+**P18**: la copia se elige por la fecha del nombre, sin procedencia, en una
+carpeta que puede ser compartida. Su diseño (manifiesto con instalación,
+versiones, hashes y relación predecesora; copias en carpeta local; misma regla
+para `Restaurar-backup.bat`) va con **P18 / PS-1007**.
+
+### 10. Archivos
+
+**`main.js`, solo.** No se tocan `db.js`, `Restaurar-backup.bat`, el instalador,
+los preloads, P10 ni Drive/multi-PC. Tres códigos nuevos: **PS-1021**,
+**PS-1022**, **PS-1023** (habrá que actualizar, con su nota, el anclaje de orden
+de `bloque3/test-error-codes.js`, como ya pasó con PS-1020). Si apareciera la
+necesidad de otro archivo productivo: **PARAR y justificar**.
+
+### 11. Pruebas
+
+`p22/` pasa a **EXIGENTE**:
+
+| # | Qué exige | Dónde se mide |
+|---|---|---|
+| P22-1 | PS-1005 + **Esc** → cierra y **no** abre la BD local | Node (contrato del diálogo) + Electron |
+| P22-2 | PS-1005 + **X** → igual | Electron |
+| P22-3 | PS-1005 + aceptación explícita + BD local → **solo entonces** abre | Electron |
+| P22-4 | PS-1009 + BD local → confirmación **antes** de abrir | Electron |
+| P22-5 | BD compartida ilegible → **cero** fallback silencioso | Electron (bloqueo real, EBUSY) |
+| P22-6 | Sin `location.json` + BD local → confirmación | Electron |
+| P22-7 | Sin `location.json` + carpeta vacía + marca → **no** crea | Electron + Node |
+| P22-8 | Primera instalación real (sin BD, sin marca, sin señales) → inicializa como hoy | Electron + Node |
+| P22-9 | Cancelar cualquier confirmación → **hash de la BD local idéntico**, sin `.gen` ni entradas nuevas en el registro | Electron |
+| P22-10 | Sesión local temporal → protección de apagado **intacta** (HKCU\…\Run y marca) | Electron |
+| P22-11 | La marca histórica **sobrevive** a la sesión local temporal | Electron |
+| P22-12 | Sin BD local: **nunca** se inventa una confirmación de una BD que no existe | Node + Electron |
+
+**Reversiones separadas**, cada una rompe solo su garantía: **A** Esc vuelve a
+elegir local · **B** la BD ilegible vuelve al fallback silencioso · **C** la BD
+local existente vuelve a abrirse sin confirmar · **D** la marca deja de impedir
+la creación · **E** la sesión temporal vuelve a desactivar la protección.
+
+Y regresión completa **con A2 y A3.3 en verde**, porque se toca el arranque más
+temprano.
+
+### 12. Relación con otros pendientes
+
+**P20** se cierra dentro de P22 (punto 7). **P18** se queda con el rescate y la
+procedencia de las copias (punto 9), junto con el `.bat`. **P19** se comprueba
+antes del release. **P14** explica por qué el rastro de estas sesiones queda
+repartido entre dos carpetas. **P10** no se toca hasta cerrar esto.
+
+## P22 — IMPLEMENTACIÓN Y CIERRE (17-18 sept 2026)
+
+**CERRADO.** La carpeta de datos local dejó de ser un destino operativo ambiguo:
+ya no se abre ni se crea nada en ella sin que el usuario lo elija, y un archivo
+que está pero no sirve **cierra** en vez de tratarse como ausencia.
+
+**Único archivo productivo tocado: `main.js`** (`2D05E00B…` →
+**`C4C00809F45C565F4DA9ABFAD3B36117FD2A5CA2C809ACBD20F8E5080DA30A8E`**; +559 / −39 líneas). Instantánea previa:
+`claude/main.js.ANTES-P22-2026-09-17`. `db.js`, `security.js`, los preloads, el
+instalador y `Restaurar-backup.bat` siguen idénticos.
+
+### Qué cambia
+
+| Pieza | Antes | Ahora |
+|---|---|---|
+| Reconocer la BD local | `fs.existsSync` / visible-o-no | **Cuatro estados**: `ausente` (ENOENT demostrado), `existente` (cabecera `SQLite format 3`), **`invalida`** (0 bytes, cabecera que no es de SQLite, o no es un archivo) y `no-comprobable`. Solo `stat` y **16 bytes**: la base nunca se abre |
+| Archivo presente pero inservible | Contaba como «no hay base de datos» → se creaba otra encima | **PS-1023 y cierre**: no se abre, no se sustituye, no se vacía y no se crea otra |
+| PS-1005 «datos locales» | Botón sin información, y **Esc/X lo elegían** (`cancelId: 1`) | Diálogo con **fecha y tamaño** de la base local; botones `Reintentar` · `Usar estos datos locales` / `Crear una base de datos local vacía` · **`Cerrar`**, que es lo que hacen Esc y la X |
+| PS-1009 «usar la carpeta por defecto» | Cambiaba de carpeta sin mirar qué había | Pasa por la **confirmación informada** (PS-1021) y gana `Cerrar` |
+| BD configurada **ilegible** | **Fallback local SILENCIOSO** | **PS-1022**: se para y pregunta. **Cero aperturas locales** antes de la decisión |
+| Arranque sin `location.json` | Abría o creaba en silencio | Puerta `autorizarCarpetaLocal()` **antes de la splash**, de la protección, del candado, de A3.3 y de `getDb` |
+| «Este equipo tuvo ubicación propia» | No existía | **`historial-ubicacion.json`** en `%APPDATA%\panorama-app-config`: hash de la ruta (**nunca la ruta**), si era compartida y las fechas. Escritura atómica y **verificada releyendo** |
+| Si esa marca no se puede escribir | — | **No es silencioso**: `ERROR PS-1024`, aviso en el lanzador, sesión marcada como degradada, y la ausencia de marca **deja de contar** como «instalación nueva» |
+| Crear BD local | «Carpeta por defecto vacía» ⇒ primera ejecución | Con marca (o señal equivalente), **no se crea** sin autorización expresa. Sin marca ni señales, la primera ejecución sigue igual |
+| Protección de apagado | La sesión de reserva la desactivaba (**P20**) | **Sesión local temporal: no se toca**. Volver a la carpeta por defecto *a propósito* sí la sincroniza |
+| «Volver a la carpeta por defecto» | Borraba `location.json` sin dejar rastro | **Anota la decisión** con su fecha y conserva la marca |
+| `ERROR_CODES` | — | **PS-1021**, **PS-1022**, **PS-1023**, **PS-1024** |
+
+### Decisiones tomadas
+
+- **La regla no depende de la marca.** Si hay una base local reconocible y se
+  llega por un camino de reserva, se pregunta **siempre**, haya marca o no.
+- **Al equipo puramente local no se le pregunta en cada arranque.** Se le
+  reconoce porque **su propia carpeta ya consta** en el registro de A3.3. Un
+  equipo que viene de una versión anterior (registro vacío) recibe la pregunta
+  **una vez** y queda registrado. *(Es la única desviación de la lectura literal
+  del encargo, y se toma para no convertir el arranque normal en un
+  interrogatorio.)*
+- **Señales equivalentes a la marca**, para equipos que ya existen: una clave de
+  **otra** ruta en el registro de A3.3, o la marca de la protección de apagado.
+  Y ante la duda —marca ilegible, o esta sesión no pudo escribirla— se responde
+  **que sí hubo ubicación propia**: no poder demostrarlo nunca vale como prueba
+  de lo contrario.
+- **La marca guarda un hash**, no la ruta.
+- **Límite documentado:** Chromium ya ha creado sus archivos de perfil en esa
+  carpeta antes de que `main.js` pueda decidir. Lo que se garantiza y se mide es
+  la **base de datos**: hash idéntico, sin `.gen`, sin entradas nuevas en el
+  registro de A3.3 y sin ninguna escritura.
+- **El rescate de `app.asar` no se toca:** sigue eligiendo por la fecha del
+  nombre, sin procedencia. Es **P18**, y su riesgo sigue abierto.
+
+### Evidencia
+
+- `p22/test-p22-reserva.js` — **74 OK / 0 FALLOS**, EXIGENTE (nació descriptiva con 33).
+- `p22/electron-p22.ps1` + `real-run/p22-reserva.js` — **39 OK / 0 FALLOS**, 14
+  arranques reales de Electron con una **copia** de la BD residual de P10.
+- `p22/comprobar-reversiones-p22.js` — **29 OK / 0 FALLOS**: siete familias (A–E
+  las pedidas, más F «un archivo inválido vuelve a contar como ausente» y G «el
+  fallo de la marca vuelve a ser silencioso»). Cada una pone la batería roja,
+  tumba **cada** grupo que anuncia y **ninguno** más.
+- Barrido Electron completo — la **tabla entera** del MANIFIESTO, 21 arneses,
+  cada uno en su propio proceso: `a2` **66**, `bloque5` **71** + CV **12**,
+  `e1` **21**, `p12` **32**, `e2` **42**, `b1` **24**, `b3` **36**, `b4` **17**,
+  `b5` **24**, `c1` **31**, `f1` **47** + limpio **52**, `p17` **16**,
+  `f2f3` **36** + reversión de F3 **4**, `f2-lab` **41**, `f2` **212** +
+  reversiones **7**, `p9` **111** y sus reversiones **14**. Todos a
+  **0 fallos**, con la BD viva idéntica en cada uno. Y `p22` **39**.
+- Regresión Node completa — **3550 OK / 0 FALLOS** (27 baterías, con el node del
+  sistema; `comun/` aparte, **43 OK / 0**). `p22/` aporta 74 y `nucleo-a33` salió
+  en su valor bajo (394: es **ARN-1**, no una regresión). **Cuadra exacto** con
+  el cierre de P9: 3475 − 1 (`nucleo-a33` 395 → 394) + 2 (`bloque3`, dos códigos
+  nuevos) + 74 (`p22`) = **3550**. `c1` sigue en 165: cambió *cuál* es la
+  aserción, no cuántas.
+  Los sueltos de la raíz (`test-a1*`, `test-a2`, `test-b2`,
+  `test-setmeta`) siguen fuera del criterio —material anterior a A3.3, roto desde
+  entonces— y se comprobó que **ninguno lee `main.js`**, así que P22 no los toca.
+- BD viva, configuración real, residuo de P10, archivos productivos y valor de
+  `HKCU\…\Run`: **idénticos** antes y después en cada tirada.
+
+### Los 16 casos del encargo
+
+| # | Qué exige | Resultado |
+|---|---|---|
+| P22-1 / P22-2 | PS-1005 + Esc / X → cierra, no abre la BD local | ✓ |
+| P22-3 | PS-1005 + aceptación explícita + BD local → solo entonces abre | ✓ |
+| P22-4 | PS-1009 + BD local → confirmación antes de abrir | ✓ |
+| P22-5 | BD compartida ilegible → cero fallback silencioso | ✓ |
+| P22-6 | Sin `location.json` + BD local → confirmación | ✓ |
+| P22-7 | Sin `location.json` + carpeta vacía + marca → no crea | ✓ |
+| P22-8 | Primera instalación real → inicializa como siempre | ✓ |
+| P22-9 | Cancelar → hash de la BD local idéntico, sin `.gen` ni registro nuevo | ✓ |
+| P22-10 | Sesión local temporal → protección intacta | ✓ |
+| P22-11 | La marca sobrevive a esa sesión | ✓ |
+| P22-12 | Sin BD local nunca se inventa una confirmación sobre una base que no existe | ✓ |
+| P22-13 | `panorama.sqlite3` de 0 bytes → cierra, sin reemplazo | ✓ |
+| P22-14 | Contenido que no es SQLite → cierra, bytes idénticos | ✓ |
+| P22-15 | Falla la lectura de la cabecera → cierra | ✓ |
+| P22-16 | Falla escribir la marca → no queda estado falso de primera instalación, y no es silencioso | ✓ |
+
+### Arneses ajustados (defecto de arnés, no de producto)
+
+- `bloque2/test-wiring.js` y `p9/test-p9-location.js`: `decidirCrearSiAusente`
+  consulta ahora `usuarioAutorizaCrearLocal` y `huboUbicacionPersonalizada()`.
+  En `bloque2` se declaran en su forma neutra; en `p9` se traen las funciones
+  **reales**.
+- `p9/test-p9-location.js`, además: su ámbito necesitaba `defaultUserDataDir`
+  (lo usa `huboUbicacionPersonalizada`) y `sesionLocalTemporal` (lo consulta
+  ahora la protección de apagado). Sigue en **282 OK / 0**, la misma cifra con
+  la que se cerró P9.
+- `e1/test-inventario-e1.js` (`E1-M4`): el hash de `main.js`.
+- `bloque3/test-error-codes.js`: sube de 45 a 47 aserciones solo, al aparecer
+  dos códigos nuevos usados con literal.
+- `c1/test-c1-residuos.js` (`C1-P1`): era **descriptiva** y decía «la app vuelve
+  a la carpeta por defecto si falla la configurada», comprobándolo por el botón
+  `'Abrir con datos locales (temporal)'` de PS-1005. Ese botón **ya no existe**:
+  es justo lo que P22 elimina. Reescrita para describir lo que hay ahora —la
+  carpeta por defecto sigue siendo la de P10, pero ya no se llega a ella sola—.
+  Verificado en los dos sentidos: con el `main.js` **anterior** a P22 la nueva
+  aserción **falla**, con el actual pasa. 165 OK / 0.
+- `p22/test-p22-reserva.js`: dos arreglos propios. (1) Leía
+  `o.buttons[o.cancelId]` sin protección, así que una reversión que **quita** el
+  diálogo hacía **reventar** la batería en vez de ponerla roja — y una batería
+  que revienta no dice qué grupos caen. (2) Las listas `tumba` de las familias
+  **A** y **C** anunciaban grupos que no caen (PS-1023 tiene un solo botón, así
+  que el escape sigue cayendo en «Cerrar») y omitían los que sí (C arrastra
+  P22-10 en cascada: sin puerta, la sesión nunca se marca temporal y vuelve a
+  desactivarse la protección de apagado). Corregidas contra lo medido.
+- `p9/electron-p9.ps1` (3 aserciones). Dos exigían `ndialogos = 0` en los casos
+  **sin `location.json`**: la app abría o creaba en la carpeta local **sin
+  preguntar**. Es justo lo que P22 elimina. Además —y esto había que
+  demostrarlo, no suponerlo— **la base de ese arnés se prepara arrancando la app
+  con una ubicación configurada**, así que desde P22 *todos* sus casos heredan
+  `historial-ubicacion.json`: ninguno es ya «una máquina sin historia», y con
+  marca lo correcto es preguntar. Se añadió el campo medido `marcaBase` para que
+  conste. La tercera era un `[REGISTRA]` del defecto **P20** (tras PS-1005 +
+  datos locales, la protección se borraba con `reg.exe delete`): ahora se exige
+  lo **contrario**, `marca SIGUE` y cero peticiones al sistema.
+- `p9/electron-p9-revertido.ps1` (2 aserciones) — **el hallazgo más interesante
+  de la ronda**: con la reversión **B** de P9 aplicada (config inválida vuelve a
+  contar como ausente), su defecto **sí reaparece** —no hay PS-1020—, pero **P22
+  frena el daño**: ya no se crea una base nueva en silencio (PS-1021 y
+  autorización expresa) y la protección de apagado **no** se desactiva. Es
+  defensa en profundidad, y ahora las aserciones lo **exigen** en vez de exigir
+  el daño.
+- `p22/electron-p22.ps1`: exigía la marca de ubicación **byte a byte idéntica**
+  tras cada arranque. Es incorrecto: con `location.json` válido la app la
+  **refresca** en cada arranque —ese es el mecanismo de durabilidad— conservando
+  `primera_vez`. Ahora se mide el **contenido**: la marca puede refrescarse, pero
+  no puede perderse ni perder su `primera_vez` (si se perdiera, el arranque
+  siguiente creería que es una instalación nueva). Y se añaden **P22-11b**
+  (sin `location.json` la marca **no se toca**) y **P22-11c** (con
+  `location.json` válido **sí** se registra, conservando la `primera_vez`
+  anterior). El producto no cambió por esto.
+
+### Lo que sigue abierto
+
+**P18** (rescate PS-1007 y `Restaurar-backup.bat`: procedencia de las copias),
+**P19** (instalador en ANSI, antes del release), **P21** (Preparación E2E),
+**P10** (limpieza/archivo, aún diferida), **ARN-1** (`nucleo-a33` determinista) y
+**ARN-2**, nuevo: `bloque1\arranque-real.ps1` y `bloque1\arranque-con-bd.ps1`
+llevan escrita a fuego la ruta del *scratchpad* de una sesión ya borrada, donde
+vivían sus ayudantes (`semilla-legada.js`, `ver-conbd.js`, el envoltorio
+`real-run`). **Hoy no se pueden ejecutar.** Es anterior a P22 y no están en la
+tabla de arneses del MANIFIESTO; hay que rehacerlos o retirarlos antes del E2E.
 
 ## B1 — CERRADO (15 sept 2026): el listado deja de repetirse, de escribir y de callarse
 

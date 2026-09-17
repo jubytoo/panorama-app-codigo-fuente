@@ -254,6 +254,12 @@ if (fs.existsSync(PRE_INDEX)) {
 //            de caer en silencio a la carpeta por defecto; guardas en
 //            `decidirCrearSiAusente`, `syncDriveSyncGuardWithLocation` y el
 //            rescate PS-1007. No toca el lanzador.
+//         -> C4C00809… (ronda P22, 18 sept 2026): la carpeta de datos LOCAL
+//            deja de usarse sin decirlo. Reconocimiento de la base local en
+//            cuatro estados, puerta `autorizarCarpetaLocal()` antes de nada,
+//            confirmación informada (PS-1021/1022/1023), marca durable
+//            `historial-ubicacion.json` (PS-1024) y sesión local temporal que
+//            no toca la protección de apagado (cierra P20). No toca el lanzador.
 //
 //   db.js    1B16381F… (intacto desde el Bloque 1 hasta B3)
 //         -> B03C81FF… (ronda B4, 16 sept 2026): **SOLO COMENTARIOS**. Dos
@@ -265,7 +271,7 @@ if (fs.existsSync(PRE_INDEX)) {
 // `dashboard/plantilla_dashboard.html` NO esta en esta tabla a proposito: E1 no
 // lo toca ni lo miraba, y lo han modificado P12 y E2 por su cuenta.
 const HASHES_TRAS_A2 = {
-  'main.js': '2D05E00B53B8C45E6823E8629579D303FB69E2B0A24E53DCBE7700897E5F30F9',
+  'main.js': 'C4C00809F45C565F4DA9ABFAD3B36117FD2A5CA2C809ACBD20F8E5080DA30A8E',
   'preload.js': 'AA77316F3FDB384D582F8270213A846EE1A1D2E067784EE17DF8D65CC1F6A27B',
   'preload-launcher.js': '01D38C31D5FB9B23E5AD9FC617DEB7E3960E88EBF5A0ACF89C9C8EDDAA21ECFD',
   'preload-backup-picker.js': '19D2D1BAD74F774797E5F129F99FFAF2A19BF77E370BF1727161447B326D3061',

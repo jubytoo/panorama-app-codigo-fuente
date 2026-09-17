@@ -2363,7 +2363,7 @@ const CSP_PERFILES = Object.freeze({
   // línea, así que tampoco reciben `'unsafe-inline'` para scripts.
   sinScriptEnLinea: [
     "default-src 'none'",
-    "script-src 'self' 'unsafe-eval'",
+    "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data:",
     "worker-src 'none'",
@@ -2373,7 +2373,7 @@ const CSP_PERFILES = Object.freeze({
   // selector de backups, Seguridad y la ventanita de contraseña.
   interfaz: [
     "default-src 'none'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    "script-src 'self' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data:",
     "font-src 'self'",
@@ -2383,7 +2383,7 @@ const CSP_PERFILES = Object.freeze({
   // Preparación de Reunión: lo mismo, más el Worker de pdf.js (por blob:).
   lectorDeActas: [
     "default-src 'none'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    "script-src 'self' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data:",
     "font-src 'self'",
@@ -9082,7 +9082,8 @@ function syncDriveSyncGuardWithLocation() {
   // y no se pierde la señal de que este equipo usa una carpeta compartida.
   // Volver a la carpeta por defecto A PROPÓSITO sí sigue sincronizándola: eso
   // es una decisión permanente, no un camino de reserva.
-  if (sesionLocalTemporal) return;
+  // REVERSIÓN P22-E: la sesión temporal vuelve a sincronizar la protección
+
   const shouldBeOn = isUsingSharedDataLocationNow();
   const isOn = isDriveSyncGuardEnabled();
   if (shouldBeOn && !isOn) {

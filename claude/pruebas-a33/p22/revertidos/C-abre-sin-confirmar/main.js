@@ -2363,7 +2363,7 @@ const CSP_PERFILES = Object.freeze({
   // línea, así que tampoco reciben `'unsafe-inline'` para scripts.
   sinScriptEnLinea: [
     "default-src 'none'",
-    "script-src 'self' 'unsafe-eval'",
+    "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data:",
     "worker-src 'none'",
@@ -2373,7 +2373,7 @@ const CSP_PERFILES = Object.freeze({
   // selector de backups, Seguridad y la ventanita de contraseña.
   interfaz: [
     "default-src 'none'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    "script-src 'self' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data:",
     "font-src 'self'",
@@ -2383,7 +2383,7 @@ const CSP_PERFILES = Object.freeze({
   // Preparación de Reunión: lo mismo, más el Worker de pdf.js (por blob:).
   lectorDeActas: [
     "default-src 'none'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    "script-src 'self' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data:",
     "font-src 'self'",
@@ -10558,6 +10558,7 @@ function autorizarCarpetaLocal(motivo) {
     return 'cerrar';
   }
   const hist = huboUbicacionPersonalizada();
+  if (bd.estado === 'existente') return 'seguir'; // REVERSIÓN P22-C: se abre lo que haya
   if (!carpetaLocalNecesitaConfirmacion(motivo, hist)) return 'seguir';
   if (bd.estado === 'ausente' && !hist.si) return 'seguir';   // primera ejecución legítima
   const accion = preguntarPorLaCarpetaLocal({

@@ -163,6 +163,11 @@ foreach ($c in $casos) {
   $hResAntes = if (Test-Path "$def\panorama.sqlite3") { (Get-FileHash "$def\panorama.sqlite3").Hash } else { '(no existe)' }
   $hGAntes = (Get-FileHash "$S\G\Compartida\BD-P9\panorama.sqlite3").Hash
   $hFlagAntes = if (Test-Path $flag) { (Get-FileHash $flag).Hash } else { '(no existe)' }
+  # P22: la base de este arnes se prepara ARRANCANDO la app con una ubicacion
+  # configurada, y desde P22 eso deja `historial-ubicacion.json`. Se mide para
+  # que quede demostrado que NINGUN caso de P9 es ya "una maquina sin historia".
+  $hist22 = "$S\Roaming\panorama-app-config\historial-ubicacion.json"
+  $marcaBase = Test-Path $hist22
   $itemsAntes = @(Get-ChildItem $S -Recurse -Force | ForEach-Object { $_.FullName })
   # Solo cuentan las lineas NUEVAS de cada app.log (la base trae las de su preparacion).
   $lineasAntes = @{}
@@ -207,6 +212,7 @@ foreach ($c in $casos) {
     nventanas = $vent.Count
     bloqueados = if ($resJson) { ($resJson.bloqueados -join ',') } else { '' }
     copiasBloqueadas = if ($resJson) { ($resJson.copiasBloqueadas -join ',') } else { '' }
+    marcaBase = if ($marcaBase) { 'la base YA trae marca de ubicacion propia (P22)' } else { 'sin marca' }
     residuo = if ($hResAntes -eq '(no existe)' -and $hResDespues -eq '(no existe)') { 'sigue sin existir' } elseif ($hResAntes -eq $hResDespues) { 'intacto' } elseif ($hResAntes -eq '(no existe)') { 'CREADO' } else { 'MODIFICADO' }
     compartida = if ($hGAntes -eq $hGDespues) { 'intacta' } else { 'MODIFICADA' }
     location = if ($hLocAntes -eq $hLocDespues) { 'intacto' } else { 'CAMBIADO' }
@@ -257,10 +263,18 @@ foreach ($id in @('relativa')) {
 }
 $an = $res['residuo/ansi-cp1252']
 Ok 'P9-9 residuo/ansi-cp1252: NO se crea la carpeta con el nombre mal decodificado (antes si)' ($an.nuevos -notmatch 'BD-P9\\A') $an.nuevos
+# 18 sept 2026 - ACTUALIZADAS POR P22. Antes exigian `ndialogos -eq 0`: sin
+# location.json la app abria o creaba en la carpeta por defecto SIN preguntar.
+# P22 lo cambia a proposito. Ademas, la base de este arnes se prepara arrancando
+# la app con una ubicacion configurada, asi que desde P22 TODOS sus casos
+# heredan `historial-ubicacion.json`: ninguno es ya "una maquina sin historia",
+# y por eso el camino correcto es preguntar (se comprueba con `marcaBase`).
+# Lo que P9 custodia -que se acabe en la BD de POR DEFECTO y con que contenido-
+# se sigue exigiendo igual.
 $xs = $res['residuo/sin-archivo']
-Ok 'P9-10 residuo/sin-archivo: abre la de por defecto (legitimo: no hay nada configurado) - sin cambios' ($xs.db -eq 'POR DEFECTO' -and $xs.proyectos -eq 'PROYECTO RESIDUAL' -and $xs.ndialogos -eq 0) ($xs | ConvertTo-Json -Compress)
+Ok 'P9-10 residuo/sin-archivo: sigue acabando en la de por defecto, pero desde P22 PREGUNTA antes (PS-1021)' ($xs.db -eq 'POR DEFECTO' -and $xs.proyectos -eq 'PROYECTO RESIDUAL' -and $xs.ndialogos -eq 1 -and $xs.ps -match 'PS-1021' -and $xs.marcaBase -match 'YA trae marca') ($xs | ConvertTo-Json -Compress)
 $ls = $res['limpia/sin-archivo']
-Ok 'P9-10 limpia/sin-archivo: primera ejecucion legitima, crea la BD en la carpeta por defecto - sin cambios' ($ls.db -eq 'POR DEFECTO' -and $ls.residuo -eq 'CREADO' -and $ls.autorizacion -match 'S.* \(carpeta por defecto sin registro' -and $ls.ndialogos -eq 0) ($ls | ConvertTo-Json -Compress)
+Ok 'P9-10 limpia/sin-archivo: crea la BD en la carpeta por defecto, pero desde P22 solo tras autorizarlo (PS-1021)' ($ls.db -eq 'POR DEFECTO' -and $ls.residuo -eq 'CREADO' -and $ls.autorizacion -match 'autoriz. expresamente' -and $ls.ndialogos -eq 1 -and $ls.ps -match 'PS-1021' -and $ls.marcaBase -match 'YA trae marca') ($ls | ConvertTo-Json -Compress)
 foreach ($id in @('bom-doble','truncado')) {
   $x = $res["residuoreal/$id"]
   Cerrado "residuoreal/$id" 'P9-11 [C]'
@@ -283,7 +297,11 @@ Ok 'P9-13 guard/valido: la proteccion sigue activa y no se pide nada al sistema 
 $gb = $res['guard/bom']
 Ok 'P9-13 guard/bom: con BOM (ya valido) abre la compartida y la proteccion SIGUE activa (antes: se desactivaba)' ($gb.db -eq 'COMPARTIDA' -and $gb.guardia -match '^marca SIGUE' -and $gb.bloqueados -notmatch 'reg\.exe|schtasks' -and $gb.ndialogos -eq 0) ($gb | ConvertTo-Json -Compress)
 $gm = $res['guard/no-montada']
-Ok 'P9-V [REGISTRA] guard/no-montada (JSON valido, unidad no montada): tras PS-1005 y datos locales la proteccion se sigue desactivando - previo a P9, fuera de alcance' ($gm.dialogos -match 'PS-1005' -and $gm.guardia -match '^marca BORRADA' -and $gm.bloqueados -match 'reg\.exe delete') ($gm | ConvertTo-Json -Compress)
+# 18 sept 2026 - ACTUALIZADA POR P22. Esta asercion [REGISTRA]ba el defecto P20:
+# tras PS-1005 y elegir los datos locales, la proteccion de apagado se
+# DESACTIVABA (marca borrada + `reg.exe delete`). P22 lo cierra: la sesion local
+# temporal no la toca. Ahora se exige justo lo contrario.
+Ok 'P9-V guard/no-montada (JSON valido, unidad no montada): tras PS-1005 y elegir los datos locales la proteccion YA NO se desactiva (P20, cerrado en P22)' ($gm.dialogos -match 'PS-1005' -and $gm.guardia -match '^marca SIGUE' -and $gm.bloqueados -notmatch 'reg\.exe delete|schtasks') ($gm | ConvertTo-Json -Compress)
 $ine = $res['residuo/inexistente']
 Ok 'P9-V [REGISTRA] residuo/inexistente (JSON valido): crea la carpeta y pregunta PS-1009 - sin cambios' ($ine.nuevos -match 'no-existe-aun' -and $ine.dialogos -match 'PS-1009' -and $ine.db -eq 'POR DEFECTO') ($ine | ConvertTo-Json -Compress)
 foreach ($id in @('no-montada','inaccesible')) {

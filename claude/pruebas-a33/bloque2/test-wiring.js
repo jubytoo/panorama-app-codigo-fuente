@@ -166,9 +166,17 @@ function construirMain(estado) {
   // no se autoriza crear). Aquí vale siempre null: esta batería no trata
   // location.json (eso es p9/). Sin la declaración, el ámbito revienta con
   // «configUbicacionNoResuelta is not defined» — defecto de arnés, no de producto.
+  // P22 (17 sept 2026): decidirCrearSiAusente consulta además
+  // `usuarioAutorizaCrearLocal` y `huboUbicacionPersonalizada()`. Aquí se
+  // declaran en su forma neutra —sin autorización y sin ubicación propia
+  // conocida—, que es el escenario que prueba esta batería (A3.3 en la carpeta
+  // en uso). El comportamiento nuevo se prueba en `p22/`. Sin estas dos
+  // declaraciones el ámbito revienta con «… is not defined»: defecto de arnés.
   const f = new Function('app', 'fs', 'path', 'crypto', 'dbmod', 'appLog',
     'let customUserDataDirTarget = null, customUserDataDirFailure = null, customUserDataDirShared = false;\n' +
     'let configUbicacionNoResuelta = null;\n' +
+    'let usuarioAutorizaCrearLocal = false;\n' +
+    'function huboUbicacionPersonalizada() { return { si: false }; }\n' +
     'let usuarioAutorizaEmpezarDesdeCero = false;\n' + cuerpo);
   return f(appDoble, fs, path, crypto, dbmod, (s) => { (estado.log = estado.log || []).push(s); });
 }

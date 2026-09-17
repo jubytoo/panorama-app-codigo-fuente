@@ -2363,7 +2363,7 @@ const CSP_PERFILES = Object.freeze({
   // línea, así que tampoco reciben `'unsafe-inline'` para scripts.
   sinScriptEnLinea: [
     "default-src 'none'",
-    "script-src 'self' 'unsafe-eval'",
+    "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data:",
     "worker-src 'none'",
@@ -2373,7 +2373,7 @@ const CSP_PERFILES = Object.freeze({
   // selector de backups, Seguridad y la ventanita de contraseña.
   interfaz: [
     "default-src 'none'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    "script-src 'self' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data:",
     "font-src 'self'",
@@ -2383,7 +2383,7 @@ const CSP_PERFILES = Object.freeze({
   // Preparación de Reunión: lo mismo, más el Worker de pdf.js (por blob:).
   lectorDeActas: [
     "default-src 'none'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    "script-src 'self' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data:",
     "font-src 'self'",
@@ -10515,6 +10515,7 @@ function preguntarPorLaCarpetaLocal({ codigo, titulo, mensaje, cuerpo, etiquetaR
   botones.push('Cerrar');
   acciones.push('cerrar');
   const idCerrar = acciones.indexOf('cerrar');
+  const idEscape = acciones.findIndex((a) => a === 'local' || a === 'crear'); // REVERSIÓN P22-A
   let elegido;
   try {
     elegido = dialog.showMessageBoxSync(undefined, {
@@ -10531,7 +10532,7 @@ function preguntarPorLaCarpetaLocal({ codigo, titulo, mensaje, cuerpo, etiquetaR
         errorCodeSuffix(codigo),
       buttons: botones,
       defaultId: etiquetaReintento ? 0 : idCerrar,
-      cancelId: idCerrar,
+      cancelId: idEscape >= 0 ? idEscape : idCerrar, // REVERSIÓN P22-A
       noLink: true,
     });
   } catch (e) {

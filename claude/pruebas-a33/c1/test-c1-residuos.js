@@ -1274,8 +1274,16 @@ const shaBuf = (b) => crypto.createHash('sha256').update(b).digest('hex');
   // =========================================================================
   seccion('C1-P. FUERA DE ALCANCE — para no ensanchar C1');
   // =========================================================================
-  ok('C1-P1 P10 es la carpeta de datos POR DEFECTO: la app vuelve a ella si falla la configurada (PS-1005)',
-    /'Abrir con datos locales \(temporal\)'/.test(SRC) && /const defaultUserDataDir = app\.getPath\('userData'\);/.test(SRC));
+  // 18 sept 2026 — actualizada por P22. Antes decía «la app vuelve a ella si
+  // falla la configurada» y lo comprobaba por el botón 'Abrir con datos locales
+  // (temporal)' de PS-1005. Ese botón YA NO EXISTE: P22 lo sustituyó por una
+  // puerta que pregunta y en la que Esc/X cierra. La carpeta por defecto sigue
+  // siendo la de P10 (eso es lo que C1 custodia: que no se ensancha aquí), pero
+  // ya no se llega a ella sola.
+  ok('C1-P1 P10 sigue siendo la carpeta de datos POR DEFECTO, pero desde P22 ya NO se cae en ella sola: se pregunta (PS-1005/PS-1021) y Esc/X cierra',
+    /const defaultUserDataDir = app\.getPath\('userData'\);/.test(SRC)
+    && !/'Abrir con datos locales \(temporal\)'/.test(SRC)
+    && /function preguntarPorLaCarpetaLocal\(/.test(SRC) && /PS-1021/.test(SRC));
   ok('C1-P2 C2 (.asar en la carpeta sincronizada) es otro hallazgo y sigue abierto',
     /\| \*\*C2\*\* \| \*\*PENDIENTE\*\*/.test(DOC('auditoria-2026-09-13.md')));
   // 16 sept 2026: F1 se implementó en su propia ronda (autorizada aparte), así

@@ -1346,12 +1346,7 @@ function registrarUbicacionPersonalizada(dir, compartida) {
     ultima_vez: ahora,
   };
   if (!Array.isArray(j.decisiones)) j.decisiones = [];
-  const g = guardarHistorialUbicacion(j);
-  if (!g.ok) {
-    historialUbicacionDegradado = { motivo: g.motivo };
-    appLog(`ERROR PS-1024 — no se pudo dejar constancia de la ubicación de datos propia: ${g.motivo}`);
-    return g;
-  }
+  const g = guardarHistorialUbicacion(j); // REVERSIÓN P22-G: si falla, no se dice nada
   historialUbicacionDegradado = null;
   return g;
 }
@@ -2363,7 +2358,7 @@ const CSP_PERFILES = Object.freeze({
   // línea, así que tampoco reciben `'unsafe-inline'` para scripts.
   sinScriptEnLinea: [
     "default-src 'none'",
-    "script-src 'self' 'unsafe-eval'",
+    "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data:",
     "worker-src 'none'",
@@ -2373,7 +2368,7 @@ const CSP_PERFILES = Object.freeze({
   // selector de backups, Seguridad y la ventanita de contraseña.
   interfaz: [
     "default-src 'none'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    "script-src 'self' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data:",
     "font-src 'self'",
@@ -2383,7 +2378,7 @@ const CSP_PERFILES = Object.freeze({
   // Preparación de Reunión: lo mismo, más el Worker de pdf.js (por blob:).
   lectorDeActas: [
     "default-src 'none'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    "script-src 'self' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data:",
     "font-src 'self'",

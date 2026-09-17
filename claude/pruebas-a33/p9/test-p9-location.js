@@ -164,6 +164,15 @@ const FUENTE_BASE = [
   'let configUbicacionNoResuelta = null;',
   'let usuarioAutorizaEmpezarDesdeCero = false;',
   'let startupRecoveryArmed = true;',
+  // P22: decidirCrearSiAusente consulta estas dos cosas. Se traen las funciones
+  // REALES (no dobles) para que la decisión siga siendo la del producto.
+  'let usuarioAutorizaCrearLocal = false;',
+  'let historialUbicacionDegradado = null;',
+  // P22: la protección de apagado consulta esto. Aquí siempre false = sesión
+  // normal, que es justo lo que medía P9; el caso temporal lo cubre `p22/`.
+  'let sesionLocalTemporal = false;',
+  ...['function rutaHistorialUbicacion()', 'function claveHashUbicacion(dir)', 'function leerHistorialUbicacion()',
+    'function huboUbicacionPersonalizada()'].map((f) => extraerDe(MAIN, f)),
   ...['function userDataConfigPath()', 'function leerConfigUbicacion()',
     'function probeWritableDir(dir)', 'function applyCustomUserDataDirIfConfigured()', 'function isUsingCustomDataLocationNow()',
     'function isUsingSharedDataLocationNow()', 'function rutaRegistroUbicaciones()', 'function claveUbicacion(dir)',
@@ -224,8 +233,11 @@ function construir({ appData, userData, fsImpl, recursos, guard }) {
   const fsUsado = fsEspia(fsImpl || fs, traza.escrituras);
   const ofsUsado = fsEspia(ofs, traza.escrituras);
   const f = new Function('app', 'fs', 'path', 'originalFs', 'dbmod', 'appLog', 'sleepSyncMs', 'Date', 'crypto',
-    'dialog', 'process', 'errorCodeSuffix', 'isDriveSyncGuardEnabled', 'isDriveSyncGuardActuallyAlive',
+    'dialog', 'process', 'errorCodeSuffix', 'isDriveSyncGuardEnabled', 'isDriveSyncGuardActuallyAlive', // ← también lo usa huboUbicacionPersonalizada (P22)
     'enableDriveSyncGuardSilently', 'disableDriveSyncGuardSilently',
+    // En main.js es `const defaultUserDataDir = app.getPath('userData')` ANTES de
+    // cualquier setPath: aquí, el userData inicial del caso (P22).
+    'defaultUserDataDir',
     FUENTE_BASE + '\nreturn { leerConfigUbicacion, applyCustomUserDataDirIfConfigured,'
     + ' resolveDataDirForStartupRecovery, clasificarPoliticaUbicacion, decidirCrearSiAusente, probeWritableDir,'
     + ' handleFatalStartupError, syncDriveSyncGuardWithLocation, detenerArranquePorConfigUbicacion,'
@@ -233,7 +245,8 @@ function construir({ appData, userData, fsImpl, recursos, guard }) {
   const api = f(app, fsUsado, path, ofsUsado, dbmod, (s) => traza.logs.push(String(s)), sleepSyncMs, FakeDate, crypto,
     dialog, fakeProcess, (c) => { traza.logs.push(`ERROR ${c} — (doble)`); return `\n\n(código ${c})`; },
     () => g.activa, () => g.viva,
-    (r) => traza.guard.push('enable: ' + r), (r) => traza.guard.push('disable: ' + r));
+    (r) => traza.guard.push('enable: ' + r), (r) => traza.guard.push('disable: ' + r),
+    userData);
   return Object.assign(api, { traza });
 }
 

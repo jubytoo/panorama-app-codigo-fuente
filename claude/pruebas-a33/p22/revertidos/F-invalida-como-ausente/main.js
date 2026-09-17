@@ -1427,7 +1427,7 @@ function estadoBaseDeDatosLocal(dir) {
     return { estado: 'no-comprobable', codigo: (e && e.code) || '?', motivo: 'no se pudo consultar el archivo' };
   }
   if (!st.isFile()) return { estado: 'invalida', motivo: 'en su sitio hay algo que no es un archivo', size: st.size, mtime: st.mtimeMs };
-  if (st.size === 0) return { estado: 'invalida', motivo: 'el archivo está vacío (0 bytes)', size: 0, mtime: st.mtimeMs };
+  if (st.size === 0) return { estado: 'ausente' }; // REVERSIÓN P22-F
   let cabecera = null;
   let fd = null;
   try {
@@ -1441,7 +1441,7 @@ function estadoBaseDeDatosLocal(dir) {
     if (fd !== null) { try { fs.closeSync(fd); } catch (e) {} }
   }
   if (!cabecera.equals(CABECERA_SQLITE)) {
-    return { estado: 'invalida', motivo: 'el archivo no empieza por la cabecera de una base de datos SQLite', size: st.size, mtime: st.mtimeMs };
+    return { estado: 'ausente' }; // REVERSIÓN P22-F
   }
   let gen = false;
   try { gen = fs.existsSync(ruta + '.gen'); } catch (e) { /* no crítico */ }
@@ -2363,7 +2363,7 @@ const CSP_PERFILES = Object.freeze({
   // línea, así que tampoco reciben `'unsafe-inline'` para scripts.
   sinScriptEnLinea: [
     "default-src 'none'",
-    "script-src 'self' 'unsafe-eval'",
+    "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data:",
     "worker-src 'none'",
@@ -2373,7 +2373,7 @@ const CSP_PERFILES = Object.freeze({
   // selector de backups, Seguridad y la ventanita de contraseña.
   interfaz: [
     "default-src 'none'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    "script-src 'self' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data:",
     "font-src 'self'",
@@ -2383,7 +2383,7 @@ const CSP_PERFILES = Object.freeze({
   // Preparación de Reunión: lo mismo, más el Worker de pdf.js (por blob:).
   lectorDeActas: [
     "default-src 'none'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    "script-src 'self' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data:",
     "font-src 'self'",
