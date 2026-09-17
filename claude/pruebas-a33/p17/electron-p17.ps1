@@ -1,68 +1,50 @@
 # ---------------------------------------------------------------------------
-# F1 - interpretacion de datos como HTML en la app REAL, en un sandbox.
-#   modo a  proyecto importado con marcadores inocuos; dashboard (varias pasadas
-#           de UI), historial, window.open, barreras, Preparacion, Evaluacion
-#           (dos fases: ids limpios / id de tarea con comillas), lanzador
-#   modo b  reinicio: lo guardado vuelve a interpretarse?
-#   modo c  titulo importado horneado en projects/<id>/dashboard.html;
-#           lanzador; Directorio (data-dedic)
-#   modo d  proyecto horneado ANTES de F1: tiene que seguir abriendo
-#
-# EXIGENTE desde la implementacion de F1: exige cero interpretacion. La bateria
-# NO invoca ninguna API sensible desde el contenido inyectado; la exposicion del
-# puente solo se documenta. Sin red. NO toca la BD viva ni G:.
+# P17 - los assets del horneado, en la app REAL, dentro de un sandbox.
+# Abre el dashboard horneado y el Directorio horneado y exige cero recursos
+# rotos, cero rutas relativas y los DOS iconos resueltos.
+# NO toca la BD viva ni G:.
 # Sin caracteres acentuados: PowerShell 5.1 lee este archivo como ANSI.
 # OJO: NO poner $ErrorActionPreference='Stop'.
 # ---------------------------------------------------------------------------
 $ErrorActionPreference = 'Continue'
 $P    = 'C:\Codigo Fuente PS\panorama-app-codigo-fuente_1'
-$B    = "$P\claude\pruebas-a33"
-$wrap = "$B\real-run\f1-inyeccion.js"
+$wrap = "$P\claude\pruebas-a33\real-run\p17-assets.js"
 $ep   = "$P\node_modules\electron\dist\electron.exe"
 $BDVIVA = 'G:\Mi unidad\BD-PanoramaServicio\panorama.sqlite3'
 
 $bdAntes = (Get-FileHash $BDVIVA -Algorithm SHA256).Hash
 $gAntes  = (Get-ChildItem 'G:\Mi unidad\BD-PanoramaServicio' -Force | Measure-Object).Count
-$prodFiles = @('main.js','db.js','security.js','preload.js','preload-launcher.js','launcher\renderer.js','security-window\renderer.js','vendor\modal.js','dashboard\plantilla_dashboard.html','directorio\plantilla_directorio.html','preparacion-reunion\plantilla_preparacion_reunion.html','evaluacion-candidatos\plantilla_evaluacion_candidatos.html')
+$prodFiles = @('main.js','db.js','dashboard\plantilla_dashboard.html','directorio\plantilla_directorio.html')
 $prodAntes = @{}
 foreach ($f in $prodFiles) { $prodAntes[$f] = (Get-FileHash (Join-Path $P $f) -Algorithm SHA256).Hash }
 Write-Output "BD VIVA antes: $($bdAntes.Substring(0,16))    archivos en la carpeta: $gAntes"
 Write-Output ""
 
-$S = Join-Path $env:TEMP '_a33-f1-real'
-if ($S -notlike '*_a33-f1-real*') { throw "sandbox inesperado: $S" }
+$S = Join-Path $env:TEMP '_a33-p17-real'
+if ($S -notlike '*_a33-p17*') { throw "sandbox inesperado: $S" }
 if ($S -match ' ') { throw "el sandbox no puede tener espacios: $S" }
-if ($S -like '*BD-PanoramaServicio*') { throw "sandbox dentro de la BD viva: $S" }
-
 if (Test-Path $S) { Remove-Item -LiteralPath $S -Recurse -Force -ErrorAction SilentlyContinue }
 New-Item -ItemType Directory -Force -Path "$S\Roaming","$S\Local" | Out-Null
+
+$CAP = Join-Path $env:TEMP '_a33-p17-capturas'
+if (Test-Path $CAP) { Remove-Item -LiteralPath $CAP -Recurse -Force -ErrorAction SilentlyContinue }
+New-Item -ItemType Directory -Force -Path $CAP | Out-Null
 
 [Environment]::SetEnvironmentVariable('LOCALAPPDATA', "$S\Local", 'Process')
 [Environment]::SetEnvironmentVariable('APPDATA', "$S\Roaming", 'Process')
 [Environment]::SetEnvironmentVariable('ELECTRON_RUN_AS_NODE', $null, 'Process')
+[Environment]::SetEnvironmentVariable('P17_CAPTURAS', $CAP, 'Process')
 
-foreach ($modo in @('a','b','c','d')) {
-  Write-Output "==================== APP REAL (modo $modo) ===================="
-  $argv = @("`"$wrap`"", "`"--sandbox=$S`"", "--modo=$modo")
-  # $proc, NO $p: PowerShell no distingue mayusculas y $p pisaria $P.
-  $proc = Start-Process -FilePath $ep -ArgumentList $argv -PassThru -WindowStyle Minimized
-  $t0 = Get-Date
-  while (-not $proc.HasExited -and ((Get-Date) - $t0).TotalSeconds -lt 240) { Start-Sleep -Milliseconds 500 }
-  if (-not $proc.HasExited) { $proc.Kill(); Start-Sleep -Milliseconds 800; Write-Output "  TIMEOUT" }
-  else { Write-Output "  exit: $($proc.ExitCode)" }
-  Start-Sleep -Milliseconds 1500
-}
+$argv = @("`"$wrap`"", "`"--sandbox=$S`"")
+$proc = Start-Process -FilePath $ep -ArgumentList $argv -PassThru -WindowStyle Minimized
+$t0 = Get-Date
+while (-not $proc.HasExited -and ((Get-Date) - $t0).TotalSeconds -lt 240) { Start-Sleep -Milliseconds 500 }
+if (-not $proc.HasExited) { $proc.Kill(); Start-Sleep -Milliseconds 800; Write-Output "  TIMEOUT" }
+else { Write-Output "  exit: $($proc.ExitCode)" }
 
 $l = "$S\test.log"
 if (Test-Path $l) { Get-Content $l | ForEach-Object { $_ -replace '^\[[^\]]+\] ', '  ' } }
 else { Write-Output "  (sin test.log)" }
-
-# Copia de los JSON de resultados fuera del sandbox (para el informe).
-$out = Join-Path $env:TEMP '_a33-f1-resultados'
-if (Test-Path $out) { Remove-Item -LiteralPath $out -Recurse -Force -ErrorAction SilentlyContinue }
-New-Item -ItemType Directory -Force -Path $out | Out-Null
-Get-ChildItem $S -Filter 'f1-*.json' -ErrorAction SilentlyContinue | Copy-Item -Destination $out
-Copy-Item $l -Destination $out -ErrorAction SilentlyContinue
 
 $totOK = 0; $totFALLO = 0
 if (Test-Path $l) {
@@ -72,7 +54,7 @@ if (Test-Path $l) {
 }
 Write-Output ""
 Write-Output "======================================================================"
-Write-Output "  F1 ELECTRON REAL (inyeccion HTML, payloads inocuos): $totOK OK / $totFALLO FALLOS"
+Write-Output "  P17 ELECTRON REAL (assets del horneado): $totOK OK / $totFALLO FALLOS"
 Write-Output "======================================================================"
 
 if (Test-Path $S) { Remove-Item -LiteralPath $S -Recurse -Force -ErrorAction SilentlyContinue }
@@ -88,4 +70,4 @@ foreach ($f in $prodFiles) {
 }
 Write-Output "Archivos productivos intactos durante las pruebas: $prodOk"
 Write-Output "sandbox borrado: $(-not (Test-Path $S))"
-Write-Output "resultados copiados en: $out"
+Write-Output "capturas en: $CAP"

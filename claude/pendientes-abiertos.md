@@ -1292,7 +1292,23 @@ controles respondiendo. **No hay doble escape.** El guion exportado a `.txt`
 sale con el texto exacto. Logos: el válido se ve, el inexistente no pinta nada,
 el inválido se ignora sin dejar `<img>` roto.
 
-### P17 — icono roto en la barra de título del dashboard horneado *(incidental, ANTERIOR a F1)*
+### Nota práctica — la ventana vacía titulada «Electron»
+
+Medida y explicada: es la hija de `window.open('about:blank')` que abría el
+**arnés** de F1 (modo `a`) para comprobar si heredaba el puente. Pertenece a
+**F3** (`window.open` sin `setWindowOpenHandler`), no a F1. En uso normal no
+aparece: comprobado con las cuatro ventanas productivas abiertas, cero ventanas
+genéricas.
+
+> El usuario cree haberla visto alguna vez **al entrar en Evaluación de
+> Candidatos**. No se abre bloque por eso mientras solo ocurra con arneses
+> Electron en ejecución. **Si vuelve a salir en USO MANUAL NORMAL, sin ninguna
+> prueba activa:** anotar la acción exacta que la abre, y capturar
+> `webContents.id`, la URL y la ventana padre (`BrowserWindow.getParentWindow()`
+> / `webContents.hostWebContents`) **antes** de dar por hecho que es F3. Solo
+> entonces se diagnostica. No se toca producto por esta observación.
+
+### P17 — icono roto en la barra de título del dashboard horneado — **CERRADO** *(17 sept 2026)*
 
 **No es de F1 y no se ha tocado.** `dashboard/plantilla_dashboard.html` tiene
 **dos** `<img src="../assets/icon-256.png">` (`:453`, pantalla de carga; `:458`,
@@ -1303,4 +1319,59 @@ iconito de la barra de título sale roto en **todo** dashboard horneado.
 Medido: 3 ocurrencias en la plantilla, **idénticas antes y después de F1**, y la
 única imagen rota de la página en los tres casos de logo. Es la misma familia de
 defecto que F1 corrigió en el seed (`String.replace` mal usado), pero en otra
-función y fuera del alcance autorizado. **Pendiente, sin corregir.**
+función y fuera del alcance autorizado.
+
+**DIAGNOSTICADO el 17 sept 2026 (sin implementar).** Batería `p17/` — **61 OK/0**,
+descriptiva, ejecutando `fixVendorScriptPaths` REAL contra las dos plantillas:
+
+- **Afecta a las dos plantillas horneadas**, no solo al dashboard: el Directorio
+  de Talento usa la misma función y también tiene 2 iconos.
+- **Solo afecta al icono.** De los 9 patrones que reescribe la función, 8
+  aparecen 0 o 1 vez (para ellos, sustituir solo la primera da igual); el icono
+  aparece **2**. Tras hornear queda **exactamente 1** ruta relativa por
+  plantilla, y ningún otro asset sin resolver. No hay assets fuera de la lista.
+- **Corrección mínima**: las tres candidatas (`replaceAll`, regex global, o
+  `split/join`) dejan 0 restos, resuelven los 2 iconos y **no tocan ninguna otra
+  parte del archivo**. Los 8 assets restantes y el `factory-seed` quedan igual.
+- **Hallazgo añadido, misma familia y misma función:** los 9 reemplazos pasan la
+  URL como **cadena**, donde `$&`, `` $` `` y `$'` tienen semántica. Medido con
+  una ruta de instalación que los contenga: con `$&` quedan **10** assets sin
+  resolver en vez de 1; con `$'` el archivo horneado pasa de 373 KB a **189 MB**
+  y quedan **2210** sin resolver. Es **latente** (la ruta actual no tiene `$`),
+  pero se cierra gratis usando una **función** de reemplazo, que además resuelve
+  lo anterior. Recomendación: regex global + función de reemplazo en los 9.
+
+### P17 — CERRADO (17 sept 2026)
+
+Corregido en **`main.js` y solo en `main.js`** (las plantillas no se tocan: la
+causa está en la función común). Los nueve reemplazos pasan a **un solo patrón
+compartido**: expresión regular **global** + **función** de reemplazo.
+
+```js
+const sustituirTodo = (texto, busca, pone) =>
+  texto.replace(new RegExp(busca.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), () => pone);
+const ASSETS = [ …los nueve… ];
+let salida = html;
+for (const [busca, pone] of ASSETS) salida = sustituirTodo(salida, busca, pone);
+```
+
+Cierra **los dos** defectos de la misma familia de una vez: el global resuelve
+**todas** las ocurrencias (los dos `icon-256.png`), y la función hace que la
+ruta se inserte **literal**, sin semántica de `$`.
+
+**Resultados:** batería `p17/test-p17-assets.js` **70 OK/0** (ahora EXIGENTE),
+`p17/electron-p17.ps1` **16 OK/0** en la app real (dashboard horneado **y**
+Directorio horneado: cero imágenes rotas, cero hojas sin cargar, cero rutas
+relativas, vendor cargado), reversión `p17/revertir-p17.js` +
+`comprobar-reversiones-p17.js` **6 OK/0** — al volver a `String.replace(cadena,
+cadena)` reaparecen **los dos** defectos.
+
+Probado con rutas de instalación que contienen `$&`, `$'`, `` $` `` y `$1`: HTML
+de tamaño razonable, cero duplicación, cero coincidencias inesperadas, ruta
+literal y todos los assets resueltos. Y se conserva la prueba de **equivalencia
+byte a byte**: deshaciendo solo las nueve sustituciones se recupera la plantilla
+original, así que no hay cambios laterales en seed, markup, estilos ni scripts.
+
+`main.js`: `0BC92A46…` → `434BB294…`. Dos anclajes saltaron y se actualizaron
+con su nota: `E1-M4` (hash) y `E2-A5` (custodiaba la forma antigua del
+`.replace`; su intención no cambia).

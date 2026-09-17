@@ -2568,16 +2568,38 @@ function fixVendorScriptPaths(html) {
   // sin ningún error visible, que es exactamente el modo de fallo que ya
   // tuvieron xlsx/pptx, theme.js y modal.js antes de entrar en esta lista.
   const vendorServiceStatus = pathToFileURL(path.join(__dirname, 'vendor', 'service-status.js')).href;
-  return html
-    .replace('<script src="../vendor/service-status.js"></script>', `<script src="${vendorServiceStatus}"></script>`)
-    .replace('<script src="../vendor/xlsx.full.min.js"></script>', `<script src="${vendorXlsx}"></script>`)
-    .replace('<script src="../vendor/pptxgen.bundle.js"></script>', `<script src="${vendorPptx}"></script>`)
-    .replace('src="../assets/icon-256.png"', `src="${iconPath}"`)
-    .replace('<link rel="stylesheet" href="../vendor/fonts/fonts.css">', `<link rel="stylesheet" href="${vendorFonts}">`)
-    .replace('<script src="../vendor/theme.js"></script>', `<script src="${vendorTheme}"></script>`)
-    .replace('<link rel="stylesheet" href="../vendor/motion.css">', `<link rel="stylesheet" href="${vendorMotion}">`)
-    .replace('<script src="../vendor/modal.js"></script>', `<script src="${vendorModal}"></script>`)
-    .replace('<link rel="stylesheet" href="../vendor/window-chrome.css">', `<link rel="stylesheet" href="${vendorWindowChrome}">`);
+  // P17 (17 sept 2026) — los nueve reemplazos se hacían con
+  // `String.replace(cadena, cadena)`, que arrastraba DOS defectos de la misma
+  // familia:
+  //   1. con patrón de CADENA solo se sustituye la PRIMERA coincidencia. Ocho
+  //      de los nueve assets aparecen una sola vez y por eso nunca se notó,
+  //      pero `src="../assets/icon-256.png"` aparece DOS veces —pantalla de
+  //      carga y barra de título— en el dashboard Y en el Directorio: la
+  //      segunda se quedaba con la ruta relativa, que desde
+  //      userData/projects/<id>/ no resuelve, y el icono salía roto.
+  //   2. la URL se pasaba como CADENA DE REEMPLAZO, donde `$&`, '$`' y `$'`
+  //      tienen significado. Una carpeta de instalación que los contuviera
+  //      corrompía el horneado: medido, con `$'` el archivo pasaba de 373 KB a
+  //      189 MB y quedaban 2210 rutas sin resolver.
+  // Se sustituye por UN SOLO patrón para los nueve: expresión regular GLOBAL
+  // (resuelve todas las ocurrencias) y FUNCIÓN de reemplazo (la ruta se
+  // inserta literal, sin semántica de `$`).
+  const sustituirTodo = (texto, busca, pone) =>
+    texto.replace(new RegExp(busca.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), () => pone);
+  const ASSETS = [
+    ['<script src="../vendor/service-status.js"></script>', `<script src="${vendorServiceStatus}"></script>`],
+    ['<script src="../vendor/xlsx.full.min.js"></script>', `<script src="${vendorXlsx}"></script>`],
+    ['<script src="../vendor/pptxgen.bundle.js"></script>', `<script src="${vendorPptx}"></script>`],
+    ['src="../assets/icon-256.png"', `src="${iconPath}"`],
+    ['<link rel="stylesheet" href="../vendor/fonts/fonts.css">', `<link rel="stylesheet" href="${vendorFonts}">`],
+    ['<script src="../vendor/theme.js"></script>', `<script src="${vendorTheme}"></script>`],
+    ['<link rel="stylesheet" href="../vendor/motion.css">', `<link rel="stylesheet" href="${vendorMotion}">`],
+    ['<script src="../vendor/modal.js"></script>', `<script src="${vendorModal}"></script>`],
+    ['<link rel="stylesheet" href="../vendor/window-chrome.css">', `<link rel="stylesheet" href="${vendorWindowChrome}">`],
+  ];
+  let salida = html;
+  for (const [busca, pone] of ASSETS) salida = sustituirTodo(salida, busca, pone);
+  return salida;
 }
 
 // Lee el factory-seed que YA hay horneado en el archivo actual de un proyecto

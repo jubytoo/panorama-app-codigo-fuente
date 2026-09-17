@@ -89,9 +89,13 @@ ok('E2-A3 main.js lo carga con require y YA NO calcula por su cuenta',
 ok('E2-A4 el dashboard lo carga con <script> y YA NO calcula por su cuenta',
   /<script src="\.\.\/vendor\/service-status\.js"><\/script>/.test(SRC_D) &&
   /return PanoramaServiceStatus\.serviceStatus\(state, today\);/.test(SRC_D));
+// 17 sept 2026 (P17): `fixVendorScriptPaths` dejó de encadenar nueve
+// `.replace(cadena, cadena)` y pasó a recorrer una lista con UN solo patrón
+// (regex global + funcion de reemplazo). La intencion de esta asercion no
+// cambia —que esa ruta se reescriba al hornear—, solo donde se comprueba.
 ok('E2-A5 fixVendorScriptPaths reescribe tambien esa ruta al hornear el dashboard',
   /const vendorServiceStatus = pathToFileURL\(path\.join\(__dirname, 'vendor', 'service-status\.js'\)\)\.href;/.test(SRC_M) &&
-  /\.replace\('<script src="\.\.\/vendor\/service-status\.js"><\/script>'/.test(SRC_M));
+  /\['<script src="\.\.\/vendor\/service-status\.js"><\/script>', `<script src="\$\{vendorServiceStatus\}"><\/script>`\]/.test(SRC_M));
 // Ya no queda logica de fin de servicio fuera del helper.
 ok('E2-A6 el texto "Servicio finaliza en" solo se GENERA en el helper',
   (COD_H.match(/Servicio finaliza en/g) || []).length === 1 &&
