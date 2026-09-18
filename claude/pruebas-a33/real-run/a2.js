@@ -66,6 +66,24 @@ ipcMain.handle = function (canal, fn) {
 // Se envuelve ANTES de cargar main.js. NO cambia lo que hace: llama al real y
 // anota el estado del LevelDB en disco justo antes y justo despues, que es la
 // unica forma de afirmar algo sobre la barrera durable dentro del flujo real.
+//
+// ARN-4: flushStorageData() no tiene callback ni promesa -- el volcado real
+// a los archivos de LevelDB lo hace el hilo de I/O de Chromium de forma
+// asincrona respecto al retorno de esta llamada. Un unico stat "justo
+// despues" es una carrera de verdad (incidente registrado: 65/1, y 5/5 al
+// repetir de inmediato), no temporizacion del arnes. Por eso el "despues" se
+// toma con un sondeo acotado en vez de una sola lectura instantanea: se seguy
+// exigiendo crecimiento fisico ESTRICTO (>), solo se le da a Chromium el
+// margen real que necesita antes de darlo por no ocurrido. El tope (500 ms)
+// se apoya en la unica medicion ya hecha en este proyecto sobre esta misma
+// escritura perezosa (electron-flush-diff.ps1: ~103 ms sin la barrera), con
+// margen amplio; no es un numero arbitrario ni una tolerancia de mtime.
+function sleepSyncMs(ms) {
+  const sab = new SharedArrayBuffer(4);
+  Atomics.wait(new Int32Array(sab), 0, 0, ms);
+}
+const SONDEO_PASO_MS = 25;
+const SONDEO_TOPE_MS = 500;
 const flushes = [];
 let matarTrasConfirmar = false;
 // Datos que RA-5 necesita tener a mano en el instante del corte duro.
@@ -78,9 +96,16 @@ session.fromPartition = function (p) {
     s.flushStorageData = function () {
       const antes = huellaLevelDb(p);
       const r = orig();
-      const desp = huellaLevelDb(p);
-      flushes.push({ part: p, antes, desp, devuelve: r === undefined ? 'undefined' : typeof r });
-      tlog('      FLUSH ' + p + '  antes=' + JSON.stringify(antes) + '  despues=' + JSON.stringify(desp));
+      const creceFrenteA = (foto) => Object.keys(foto).some((k) => (foto[k] || 0) > (antes[k] || 0));
+      let desp = huellaLevelDb(p);
+      let esperado = 0;
+      while (!creceFrenteA(desp) && esperado < SONDEO_TOPE_MS) {
+        sleepSyncMs(SONDEO_PASO_MS);
+        esperado += SONDEO_PASO_MS;
+        desp = huellaLevelDb(p);
+      }
+      flushes.push({ part: p, antes, desp, devuelve: r === undefined ? 'undefined' : typeof r, esperoMs: esperado });
+      tlog('      FLUSH ' + p + '  antes=' + JSON.stringify(antes) + '  despues=' + JSON.stringify(desp) + '  espero=' + esperado + 'ms');
       return r;
     };
     try { Object.defineProperty(s, '__envuelto', { value: true }); } catch (e) {}

@@ -579,6 +579,14 @@ const C = (s) => s.padEnd(32, '0');   // commit_id legible en las pruebas
 
     let errL = null;
     try { kL.run('INSERT INTO projects(name) VALUES (?)', ['siguiente']); } catch (e) { errL = e; }
+    // ARN-1: el número de ok() de este bloque NO puede depender de si
+    // fs.utimesSync reprodujo el mtime EXACTO (accidente de redondeo de
+    // punto flotante en la conversión ms -> s -> ns, ajeno a esta prueba),
+    // o el total fluctuaba entre 394 y 395 sin que hubiera ningún FALLO real.
+    // Las dos ramas hacen dos comprobaciones reales y simétricas: qué pasó
+    // con la escritura y qué quedó en disco. La exigencia del peor caso
+    // (mismo tamaño Y mismo mtime -> el atajo NO lo ve -> se pierde la fila
+    // externa) no se toca ni se relaja.
     if (peorCaso) {
       // Es el límite que el diseño documenta: en LOCAL el atajo no lo ve.
       ok('LOCAL, peor caso (mismo tamaño y mismo mtime): el atajo NO lo detecta', errL === null, String(errL));
@@ -586,7 +594,12 @@ const C = (s) => s.padEnd(32, '0');   // commit_id legible en las pruebas
       const c = dd.exec("SELECT COUNT(*) FROM projects WHERE name='externa'")[0].values[0][0]; dd.close();
       ok('    ...y la fila externa SE PIERDE sin dejar evidencia — LÍMITE CONOCIDO', c === 0, 'c=' + c);
     } else {
+      // Fuera del peor caso (mtime no reproducido con precisión exacta): el
+      // atajo SÍ ve la diferencia y fuerza lectura de bytes -> caso 8 real.
       ok('LOCAL: no se pudo reproducir el peor caso; el stat lo detecta', errL !== null, String(errL));
+      const d = kL._leerDisco(); const dd = new SQL.Database(d.bytes);
+      const c = dd.exec("SELECT COUNT(*) FROM projects WHERE name='externa'")[0].values[0][0]; dd.close();
+      ok('    ...y la fila externa NO se pierde: fuera del peor caso SÍ está protegida', c === 1, 'c=' + c);
     }
   }
 

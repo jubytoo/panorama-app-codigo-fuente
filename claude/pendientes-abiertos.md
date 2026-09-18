@@ -64,10 +64,43 @@ batería de pruebas.
 
 | # | Estado | Qué |
 |---|---|---|
-| ARN-1 | **PENDIENTE — antes del E2E / release final** *(registrado al cerrar P9, 17 sept 2026)* | **`nucleo-a33/test-nucleo.js` no es determinista: da 394 o 395 aserciones.** La rama «LOCAL, peor caso» (líneas ~561–590) solo se recorre si `fs.utimesSync` devuelve el `mtimeMs` **exactamente** igual (`===`). En NTFS unas veces ocurre y otras no. Si ocurre, se anotan **dos** OK (el atajo no lo detecta + la fila externa se pierde, límite conocido); si no, **uno** (el stat lo detecta). Medido el 17 sept: **7 × 394 y 1 × 395** en 8 tiradas. **No invalida la regresión:** la rama está identificada y las dos variantes pasan. Hay que hacerla determinista (p. ej. forzar o separar el peor caso) antes del E2E o del release final. **No se arregla ahora** |
-| ARN-2 | **OBSERVACIÓN NO RESUELTA** *(registrada al cerrar F2)* | La captura `6-directorio-ficha.png` de `f1/electron-f1-limpio.ps1` sale de 0 bytes. Ver §F2/F3. *(Ojo: §P22 usó también «ARN-2» para otro pendiente: `bloque1\arranque-real.ps1` y `bloque1\arranque-con-bd.ps1` llevan a fuego la ruta de un scratchpad borrado y hoy no se pueden ejecutar. Son dos pendientes distintos con el mismo número; siguen abiertos los dos y ninguno invalida los arneses oficiales.)* |
-| ARN-4 | **PENDIENTE DE ARNÉS** *(registrado al cerrar P18 Fase 1, 18 sept 2026)* | **`a2/electron-real.ps1` · `RA-1 «el LevelDB CRECE al llamar al flush»` depende de la temporización.** Si Chromium ya volcó el dato por su cuenta antes del `flushStorageData()` explícito (~103 ms medidos en A2), no hay crecimiento aunque la barrera funcione. Medido: 1 fallo en 7 tiradas de `ra1` el 18 sept; la propiedad de fondo («la marca está en disco al confirmar») pasó en todas. Hacerla determinista antes del E2E/release, como ARN-1 |
-| ARN-5 | **EFECTO DE ARNÉS REGISTRADO** *(18 sept 2026)* | **La batería Node de P9, bajo su reversión C (sin validar ruta absoluta), crea `datos\relativa` vacía en el directorio de trabajo del proceso** (la raíz del proyecto si se lanza desde ahí). Existe desde el 17 sept; está fuera de `build.files` (lista blanca) y git no la registra. No se ha borrado. Conviene fijar el `cwd` de esa reversión dentro del sandbox |
+| ARN-1 | **CERRADO** *(saneado 18 sept 2026)* | **`nucleo-a33/test-nucleo.js` no era determinista: daba 394 o 395 aserciones.** La rama «LOCAL, peor caso» (líneas ~561–599) solo alcanzaba el peor caso si `fs.utimesSync` devolvía el `mtimeMs` **exactamente** igual (`===`); en NTFS unas veces ocurría y otras no, y antes solo esa rama anotaba una segunda `ok()`. Se igualó el número de aserciones en las dos ramas (la rama que NO reproduce el peor caso ahora comprueba, en simetría, que la fila externa **no** se pierde): la exigencia `===` y el límite conocido de LOCAL no se tocaron. Verificado con **8/8 tiradas en 395 OK / 0 FALLOS**, con el peor caso alcanzándose en unas y no en otras sin mover el total. No se tocó `nucleo.js` |
+| ARN-2 | **CERRADO** *(reparado y ejecutado el 18 sept 2026)* | `bloque1\arranque-real.ps1` y `bloque1\arranque-con-bd.ps1` llevaban a fuego la ruta de un *scratchpad* de sesión ya borrado (con el envoltorio `real-run` que solo vivía ahí) y no se podían ejecutar. Reparados con el mismo patrón que los arneses oficiales (`a2/electron-real.ps1`): `real-run\main.js` persistente + sandbox corto en `%TEMP%` sin espacios; `semilla-legada.js`/`ver-conbd.js` repuntados a `bloque1\` (nunca se movieron de ahí). **Barrera ARN-3 superada primero**, con una sonda dedicada (`bloque1\sonda-aislamiento.js`) que demostró, antes de tocar el producto, que `app.getPath('appData')`/`('userData')` caen dentro del sandbox. Ejecutados los dos después: `arranque-real.ps1` completa limpio (BD nueva creada, producción intacta); `arranque-con-bd.ps1` arranca aislado y con producción intacta, pero revela un hallazgo NUEVO y separado — ver nota debajo |
+| ARN-6 | **CERRADO — no reproduce, retirado del criterio** *(diagnosticado 18 sept 2026)* | La captura `6-directorio-ficha.png` de `f1/electron-f1-limpio.ps1` supuestamente salía de 0 bytes (observación histórica, registrada al cerrar F2, sin fecha ni tirada concretas). El `.ps1` no tiene ninguna aserción `Ok`/`ok()` sobre las capturas: son un listado puramente informativo al final (`Get-ChildItem $CAP -Filter *.png`). Ejecutado **2 veces hoy**: `6-directorio-ficha.png` salió **212 KB en las dos**, y el resto de capturas (11 en total) con tamaños normales; **52 OK / 0 FALLOS** en las dos tiradas, BD viva y producto intactos. No afecta ni afectó nunca ninguna propiedad funcional de F1. Se cierra como defecto de observabilidad puntual, no reproducible hoy; se retira del criterio de pendientes (nada que mantener) |
+| ARN-7 | **CERRADO — categoría A, comportamiento correcto** *(clasificado y saneado 18 sept 2026; antes «hallazgo sin ID» de ARN-2)* | `bloque1\ver-conbd.js` esperaba el contrato PRE-P22 (adopción silenciosa). Adaptado con `bloque1\arranque-con-bd-wrapper.js` (contesta PS-1021 en sandbox, técnica de `real-run\p22-reserva.js`). **Duda de `parent_commit_id` clasificada — ver detalle debajo.** No redundante con `p22/electron-p22.ps1` (39/0, cubre la puerta PS-1021, no la migración interna). `ver-conbd.js` pasó de imprimir a exigir con `ok()`/fallo real las 5 propiedades pedidas. **8/8 OK en 2 tiradas**, producción intacta las dos veces |
+
+**Reconstrucción del contrato de `parent_commit_id` (db.js, sin tocarlo):**
+- **Bootstrap** (`aplicarYConfirmar`/bloque ADOPCIÓN, comentario textual "recibe un
+  commit RAÍZ (padre nulo)", `db.js:1146-1164`): el **primer** commit que
+  recibe una BD adoptada escribe `db_parent_commit_id = NULL` a fuego, sin
+  condición. El contrato para ESE commit es, sin ambigüedad, `parent = null`.
+- **Cualquier commit posterior** (`aplicarYConfirmar`, `db.js:1436-1443`):
+  `parent_commit_id` se fija a `cMem` (el commit que había en memoria antes de
+  esta escritura) — es decir, al commit **inmediatamente anterior real**, y
+  `db_commit_history` se construye como `[cNuevo].concat(hMem)`
+  (**más-reciente-primero**: `H[0]` es el commit actual, `H[1]` su padre).
+- En el arranque de `arranque-con-bd.ps1`, `vacuum()` (`db.js:1655-1662`,
+  "se llama una sola vez al arrancar") pasa por el **mismo** camino de
+  escritura que cualquier `run()`. El `app.log` lo confirma
+  (`Mantenimiento — VACUUM periódico ejecutado`) como paso posterior al
+  bootstrap. Eso produce un **segundo** (y a veces tercer) commit en el mismo
+  arranque, cuyo `parent_commit_id` es, por contrato, el commit anterior real
+  — nunca `null` salvo que sea literalmente el primero.
+- **Clasificación: A — comportamiento correcto.** El valor observado
+  (`497301ce04ec0b20…` / en las tiradas de hoy, encadenado con `H[1]`) es
+  exactamente el commit anterior real de `db_commit_history`, no un valor
+  arbitrario. La expectativa `null` del comentario original de `ver-conbd.js`
+  era correcta **solo para el bootstrap**; quedó desactualizada por el VACUUM
+  de mantenimiento en el arranque (una función posterior a cuando se escribió
+  ese comentario), no por P22. No hay contradicción documentación/código ni
+  violación de ningún invariante: es B descartado y C descartado.
+- **Prueba (ya no es solo impresión):** `ver-conbd.js` exige ahora, con
+  `ok()`/fallo real: si `db_commit_history.length===1` → `parent===null`
+  (raíz); si hay más de un commit → `parent === H[1]` exactamente (el
+  penúltimo commit **real**, no un valor arbitrario). Verificado con una
+  **mutación de control** (UD fabricado con `parent_commit_id` que no
+  pertenece al historial): la aserción cae sola (7 OK / 1 FALLOS), confirmando
+  que discrimina de verdad y no siempre da verde.
 
 ## Aplazadas explícitamente por el usuario
 
@@ -1937,12 +1970,13 @@ instalador y `Restaurar-backup.bat` siguen idénticos.
 
 **P18** (rescate PS-1007 y `Restaurar-backup.bat`: procedencia de las copias),
 **P19** (instalador en ANSI, antes del release), **P21** (Preparación E2E),
-**P10** (limpieza/archivo, aún diferida), **ARN-1** (`nucleo-a33` determinista),
-**ARN-3** —ver abajo— y **ARN-2**: `bloque1\arranque-real.ps1` y `bloque1\arranque-con-bd.ps1`
-llevan escrita a fuego la ruta del *scratchpad* de una sesión ya borrada, donde
-vivían sus ayudantes (`semilla-legada.js`, `ver-conbd.js`, el envoltorio
-`real-run`). **Hoy no se pueden ejecutar.** Es anterior a P22 y no están en la
-tabla de arneses del MANIFIESTO; hay que rehacerlos o retirarlos antes del E2E.
+**P10** (limpieza/archivo, aún diferida) y **ARN-3** —ver abajo—.
+
+**ARN-1, ARN-2, ARN-4 y ARN-5** se sanearon el 18 sept 2026 (ver «Pendientes
+de ARNÉS» arriba); **ARN-6** (antes parte de ARN-2: la captura de
+`f1-limpio` a 0 bytes) sigue sin diagnosticar. El hallazgo nuevo de
+`bloque1\arranque-con-bd.ps1` sobre PS-1021/P22 (ver arriba) tampoco tiene
+ID ni diagnóstico todavía.
 
 ## P18 — DIAGNÓSTICO (18 sept 2026): el rescate PS-1007 y la procedencia de las copias de `app.asar`
 

@@ -473,7 +473,10 @@ no solo lo de B3. Todas las cifras coinciden con las registradas:
 > - `a2/electron-flush-diff.ps1`: es un diferencial, no una regresión.
 > - `f1/electron-f1-diag.ps1` y `p10/electron-p10-localstorage.ps1`: son
 >   diagnósticos; el segundo lee copias de datos reales.
-> - `bloque1\arranque-*.ps1`: rutas de un scratchpad borrado (el ARN-2 de §P22).
+> - `bloque1\arranque-*.ps1`: reparados el 18 sept 2026 (ARN-2, cerrado) y ya
+>   ejecutables/aislados, pero siguen fuera del barrido oficial — son
+>   observación libre (arranque real sin aserciones `ok()`), no una batería
+>   con contrato de cifras a mantener como las de este barrido.
 
 > **Tras P22 se reejecutó la tabla ENTERA**: P22 toca el arranque **antes** que
 > P9 (la puerta va delante de la splash, de la protección, del candado, de A3.3 y

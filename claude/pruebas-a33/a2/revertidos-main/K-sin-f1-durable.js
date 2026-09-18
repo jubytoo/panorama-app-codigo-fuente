@@ -1,7 +1,7 @@
 const { app, BrowserWindow, ipcMain, shell, Menu, dialog, nativeTheme, session, safeStorage, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { pathToFileURL } = require('url');
+const { pathToFileURL, fileURLToPath } = require('url');
 const crypto = require('crypto');
 const { spawn, execFile } = require('child_process');
 const os = require('os');
@@ -88,11 +88,11 @@ app.on('second-instance', () => {
 // Se registra un manejador de 'uncaughtException' ANTES de los dos
 // requires más frágiles del arranque (los que dependen de que el propio
 // código del parche esté completo: './db' y './security'). Si cualquiera
-// de los dos revienta, el manejador hace EXACTAMENTE lo mismo que
-// Restaurar-backup.bat: localizar el `app.asar.bak-*` más reciente
-// (mirando primero si hay una carpeta de datos personalizada configurada)
-// y restaurarlo sobre el `app.asar` real, dejando un mensaje claro y
-// pidiendo reabrir — sin reabrirse sola (mismo criterio que "Aplicar
+// de los dos revienta, el manejador intenta volver a la versión anterior
+// de app.asar — pero, desde P18 (18 sept 2026), SOLO a una cuya procedencia
+// se pueda demostrar (ver el bloque P18 más abajo): ya no elige «el
+// `app.asar.bak-*` más reciente» de la carpeta de datos. Deja un mensaje
+// claro y pide reabrir, sin reabrirse sola (mismo criterio que "Aplicar
 // parche": nunca reabrir automáticamente, para no arriesgar un bucle).
 //
 // Deliberadamente limitado a la ventana de arranque: en cuanto
@@ -123,17 +123,268 @@ function findLatestAsarBackupForRecovery(dir) {
   }
 }
 
+// P9 (17 sept 2026): lee location.json con el MISMO lector que el arranque
+// (leerConfigUbicacion, más abajo; es una declaración de función, así que ya
+// existe aunque este manejador salte antes de que se evalúe el resto del
+// archivo). Si el archivo existe pero no se puede usar, devuelve null: no hay
+// carpeta de datos resuelta, y por tanto tampoco de dónde restaurar. Antes se
+// buscaba en la carpeta por defecto, donde puede haber copias de app.asar mucho
+// más antiguas que las de la carpeta de datos de verdad.
+// Con JSON válido, lo de siempre: la configurada si existe, y si no, la de por
+// defecto.
 function resolveDataDirForStartupRecovery() {
   try {
-    const configFile = path.join(app.getPath('appData'), 'panorama-app-config', 'location.json');
-    if (fs.existsSync(configFile)) {
-      const raw = JSON.parse(fs.readFileSync(configFile, 'utf8'));
-      if (raw && raw.userDataDir && fs.existsSync(raw.userDataDir)) return raw.userDataDir;
-    }
+    const cfg = leerConfigUbicacion();
+    if (cfg.estado === 'ausente') return app.getPath('userData');
+    if (cfg.estado !== 'valido') return null;
+    if (fs.existsSync(cfg.userDataDir)) return cfg.userDataDir;
+    return app.getPath('userData');
   } catch (e) {
-    /* config dañada o inaccesible: se usa la carpeta de datos por defecto */
+    return null;
   }
-  return app.getPath('userData');
+}
+
+// ------------------------------------------------------------------
+// P18 (18 sept 2026) — PROCEDENCIA DE LA COPIA DE app.asar QUE SE RESTAURA.
+//
+// Antes, el rescate restauraba «el app.asar.bak-* de nombre más alto» de la
+// carpeta de DATOS, sin saber de qué equipo, de qué instalación ni de qué
+// parche venía: en esta máquina, SEIS instalaciones distintas habían dejado
+// copias en la carpeta compartida, y con Drive sin montar habría puesto la
+// v0.1.28 sobre la 2.0.55. Ahora solo se restaura AUTOMÁTICAMENTE una copia
+// cuya procedencia se demuestra en el momento:
+//   · vive en la carpeta de recuperación LOCAL (%LOCALAPPDATA%, que ni Drive
+//     ni un perfil móvil sincronizan), con nombre `app.asar.pred-<op>` — que
+//     la retención heredada (`app.asar.bak-*`, 2 por mtime) no ve nunca;
+//   · la nombra una operación VERIFICADA del manifiesto local
+//     (asar-procedencia.json), escrita por ESTE equipo (installation-id de
+//     A3.3, que aquí solo se LEE);
+//   · su hash sigue siendo el que se guardó, y el app.asar instalado es
+//     EXACTAMENTE el que dejó esa operación;
+//   · y es la ÚNICA que cumple todo eso.
+// Si el app.asar instalado no se puede leer o no coincide, NO se restaura
+// sola: se pregunta (Cerrar por defecto; Esc/X = Cerrar). Las copias
+// `app.asar.bak-*` heredadas no son candidatas NUNCA: no hay forma de
+// demostrar de dónde salen. Se siguen creando (camino manual transitorio,
+// hasta D4) y el registro dice cuántas hay, pero ya no deciden nada.
+//
+// LÍMITE, dicho sin adornos: todo esto vive en main.js, DENTRO de app.asar.
+// Solo existe si Electron consigue montar el asar y cargar main.js. Con el
+// asar truncado, con la cabecera rota, sin main.js dentro o sin archivo, no
+// se ejecuta NI UNA línea de Panorama (medido el 18 sept 2026 con el build
+// empaquetado). Ese rescate es de la Fase 2 / D4 (mecanismo externo).
+//
+// Autocontenidas A PROPÓSITO, como leerConfigUbicacion(): el rescate las
+// llama antes de que existan las constantes de módulo, y justo cuando
+// require('./db') puede ser lo que ha fallado.
+// ------------------------------------------------------------------
+function rutaInstallationIdParaRescate() {
+  // La MISMA ubicación que cargarInstallationId() de db.js. Aquí solo se lee:
+  // crear el id es, y sigue siendo, cosa de db.js.
+  return path.join(app.getPath('appData'), 'panorama-app-config', 'installation-id');
+}
+
+function leerInstallationIdParaRescate() {
+  let v;
+  try {
+    v = fs.readFileSync(rutaInstallationIdParaRescate(), 'utf8');
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return { estado: 'ausente' };
+    return { estado: 'ilegible', motivo: String((e && e.code) || 'error de lectura') };
+  }
+  v = String(v).trim();
+  // Un id de sesión es el que db.js improvisa cuando NO pudo persistir el
+  // suyo: allí ya no vale como prueba de identidad, y aquí tampoco.
+  if (/^sesion-/.test(v)) return { estado: 'de-sesion' };
+  if (!/^[0-9a-f]{32}$/.test(v)) return { estado: 'ilegible', motivo: 'formato inesperado' };
+  return { estado: 'valido', id: v };
+}
+
+function carpetaRecuperacionAsar() {
+  // LOCAL de verdad: %LOCALAPPDATA% no lo sincroniza Drive ni viaja en un
+  // perfil móvil (%APPDATA% sí puede). Sin él no hay dónde guardar una copia
+  // fiable: null, y entonces no hay recuperación automática.
+  const base = process.platform === 'win32' ? process.env.LOCALAPPDATA : null;
+  return base ? path.join(base, 'panorama-app-recovery') : null;
+}
+
+function rutaManifiestoProcedencia() {
+  return path.join(app.getPath('appData'), 'panorama-app-config', 'asar-procedencia.json');
+}
+
+function leerManifiestoProcedencia() {
+  let txt;
+  try {
+    txt = fs.readFileSync(rutaManifiestoProcedencia(), 'utf8');
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return { estado: 'ausente' };
+    return { estado: 'ilegible', motivo: String((e && e.code) || 'error de lectura') };
+  }
+  let j;
+  try {
+    j = JSON.parse(txt);
+  } catch (e) {
+    return { estado: 'ilegible', motivo: 'JSON roto o truncado' };
+  }
+  if (!j || typeof j !== 'object' || j.v !== 1 || !Array.isArray(j.operaciones)) {
+    return { estado: 'ilegible', motivo: 'estructura inesperada' };
+  }
+  return { estado: 'valido', manifiesto: j };
+}
+
+// originalFs: la ruta puede terminar en «.asar», y el fs parcheado de Electron
+// la trataría como un archivo DE DENTRO de ese asar.
+// Nombre propio a propósito: el hash del rekey (sha256DeArchivo, más abajo)
+// devuelve un objeto, y otra declaración de módulo con este nombre la sustituiría.
+function sha256HexArchivoP18(ruta) {
+  return crypto.createHash('sha256').update(originalFs.readFileSync(ruta)).digest('hex');
+}
+
+// Versión leída de la CABECERA del asar (su package.json), sin ejecutar ni
+// extraer nada. null si no es un asar legible.
+function versionDeAsar(ruta) {
+  let fd;
+  try {
+    fd = originalFs.openSync(ruta, 'r');
+    const h = Buffer.alloc(16);
+    if (originalFs.readSync(fd, h, 0, 16, 0) !== 16) return null;
+    const S = h.readUInt32LE(4);
+    const L = h.readUInt32LE(12);
+    if (!S || !L || L > 64 * 1024 * 1024) return null;
+    const hb = Buffer.alloc(L);
+    if (originalFs.readSync(fd, hb, 0, L, 16) !== L) return null;
+    const pj = JSON.parse(hb.toString('utf8')).files['package.json'];
+    if (!pj || !(pj.size > 0) || pj.size > 1024 * 1024) return null;
+    const pb = Buffer.alloc(pj.size);
+    if (originalFs.readSync(fd, pb, 0, pj.size, 8 + S + Number(pj.offset)) !== pj.size) return null;
+    const v = JSON.parse(pb.toString('utf8')).version;
+    return typeof v === 'string' && /^\d+\.\d+\.\d+/.test(v) ? v : null;
+  } catch (e) {
+    return null;
+  } finally {
+    if (fd !== undefined) {
+      try {
+        originalFs.closeSync(fd);
+      } catch (e) {
+        /* da igual */
+      }
+    }
+  }
+}
+
+// Qué se puede hacer para recuperar. NO escribe nada.
+//   'auto'      → exactamente UNA predecesora demostrada, y el app.asar
+//                  instalado es EXACTAMENTE el que dejó su operación.
+//   'confirmar' → exactamente UNA predecesora demostrada, pero el app.asar
+//                  instalado no se puede leer o no coincide con lo verificado:
+//                  puede ser corrupción, un instalador, otro proceso o un
+//                  estado que el manifiesto ya no representa. No se distingue
+//                  sola: decide una persona.
+//   'no'        → no hay recuperación verificable (sin identidad, sin
+//                  manifiesto, manifiesto ilegible, sin copia, hash de la copia
+//                  que no cuadra, o AMBIGÜEDAD: más de una candidata).
+function analizarRecuperacionAsar(asarInstalado) {
+  const r = { decision: 'no', motivo: '', manifiesto: null, operacion: null, rutaCopia: null };
+  const ident = leerInstallationIdParaRescate();
+  if (ident.estado !== 'valido') {
+    r.motivo = `la identidad de este equipo (installation-id) está ${ident.estado}`;
+    return r;
+  }
+  const dir = carpetaRecuperacionAsar();
+  if (!dir) {
+    r.motivo = 'no hay carpeta de recuperación local';
+    return r;
+  }
+  const man = leerManifiestoProcedencia();
+  r.manifiesto = man.estado;
+  if (man.estado === 'ausente') {
+    r.motivo = 'no hay ninguna operación de parcheo registrada en este equipo';
+    return r;
+  }
+  if (man.estado !== 'valido') {
+    r.motivo = `el registro de procedencia no se puede leer (${man.motivo})`;
+    return r;
+  }
+  const HEX64 = /^[0-9a-f]{64}$/;
+  const candidatas = [];
+  for (const op of man.manifiesto.operaciones) {
+    if (!op || typeof op !== 'object') continue;
+    if (op.estado !== 'verificada') continue; // ni 'preparada' ni 'fallida'
+    if (op.installation_id !== ident.id) continue; // de otro equipo
+    if (!HEX64.test(op.sha256_anterior) || !HEX64.test(op.sha256_nuevo_real) || !HEX64.test(op.sha256_copia_local)) continue;
+    if (op.sha256_anterior === op.sha256_nuevo_real) continue; // reaplicar lo mismo: no aporta rescate
+    if (op.sha256_copia_local !== op.sha256_anterior) continue;
+    if (typeof op.nombre_copia !== 'string' || !/^app\.asar\.pred-[0-9a-f]{16}$/.test(op.nombre_copia)) continue;
+    const rutaCopia = path.join(dir, op.nombre_copia);
+    let shaCopia;
+    try {
+      shaCopia = sha256HexArchivoP18(rutaCopia);
+    } catch (e) {
+      continue; // copia local ausente o ilegible
+    }
+    if (shaCopia !== op.sha256_anterior) continue; // truncada o alterada
+    candidatas.push({ op, rutaCopia });
+  }
+  if (!candidatas.length) {
+    r.motivo = 'ninguna operación verificada de este equipo tiene su copia local intacta';
+    return r;
+  }
+  let shaInstalado = null;
+  try {
+    shaInstalado = sha256HexArchivoP18(asarInstalado);
+  } catch (e) {
+    shaInstalado = null;
+  }
+  const exactas = shaInstalado ? candidatas.filter((c) => c.op.sha256_nuevo_real === shaInstalado) : [];
+  if (exactas.length > 1) {
+    r.motivo = `hay ${exactas.length} operaciones que corresponden al app.asar instalado: ambigüedad`;
+    return r;
+  }
+  if (exactas.length === 1) {
+    Object.assign(r, { decision: 'auto', operacion: exactas[0].op, rutaCopia: exactas[0].rutaCopia });
+    r.motivo = 'predecesora verificada del app.asar instalado';
+    return r;
+  }
+  if (candidatas.length > 1) {
+    r.motivo = `hay ${candidatas.length} predecesoras verificadas y ninguna corresponde al app.asar instalado: ambigüedad`;
+    return r;
+  }
+  Object.assign(r, { decision: 'confirmar', operacion: candidatas[0].op, rutaCopia: candidatas[0].rutaCopia });
+  r.motivo = shaInstalado
+    ? 'el app.asar instalado no coincide con la instalación verificada'
+    : 'el app.asar instalado no se puede leer';
+  return r;
+}
+
+// Guarda el asar actual (como antes) y pone encima la predecesora, y RELEE el
+// resultado: si lo restaurado no tiene el hash de la copia, se dice, no se da
+// por bueno. Se usa copyFileSync sobre el archivo real a propósito: es lo que
+// ya estaba probado con la app en marcha (renombrar encima de un asar montado
+// puede no estar permitido en Windows).
+function restaurarPredecesoraVerificada(a, asarInstalado) {
+  if (originalFs.existsSync(asarInstalado)) {
+    originalFs.copyFileSync(
+      asarInstalado,
+      path.join(process.resourcesPath, 'app.asar.broken-' + new Date().toISOString().replace(/[:.]/g, '-'))
+    );
+  }
+  originalFs.copyFileSync(a.rutaCopia, asarInstalado);
+  if (sha256HexArchivoP18(asarInstalado) !== a.operacion.sha256_anterior) {
+    throw new Error('el app.asar restaurado no tiene el hash de la copia verificada');
+  }
+}
+
+// Solo para SOPORTE: qué copias heredadas hay. No decide nada.
+function describirCopiasHeredadasParaSoporte() {
+  try {
+    const dir = resolveDataDirForStartupRecovery();
+    if (!dir) return 'copias heredadas: carpeta de datos no resuelta';
+    const n = originalFs.readdirSync(dir).filter((f) => f.startsWith('app.asar.bak-')).length;
+    const mayor = findLatestAsarBackupForRecovery(dir);
+    return `copias heredadas app.asar.bak-*: ${n}${mayor ? ` (la de nombre más alto es ${mayor})` : ''} — NO se usan: no tienen procedencia verificable`;
+  } catch (e) {
+    return 'copias heredadas: no se pudieron contar';
+  }
 }
 
 let startupRecoveryArmed = true;
@@ -150,40 +401,96 @@ function handleFatalStartupError(err) {
   } catch (e) {
     /* si ni el log se puede escribir, se sigue igualmente con la recuperación */
   }
+  // P18: qué se puede hacer, y por qué. Nada de esto escribe.
+  const realAsar = path.join(process.resourcesPath, 'app.asar');
+  const logRescate = (linea) => {
+    try {
+      fs.appendFileSync(path.join(app.getPath('userData'), 'app.log'), `[${new Date().toISOString()}] ${linea}\n`, 'utf8');
+    } catch (e) {
+      /* no crítico */
+    }
+  };
+  let analisis;
   try {
-    const dataDir = resolveDataDirForStartupRecovery();
-    const backupName = findLatestAsarBackupForRecovery(dataDir);
-    const realAsar = path.join(process.resourcesPath, 'app.asar');
-    if (!backupName) {
-      dialog.showErrorBox(
-        'Panorama del Servicio no pudo iniciar',
-        'Ha ocurrido un error al arrancar y no se ha encontrado ninguna copia de seguridad de ' +
-          'app.asar para restaurarla automáticamente.\n\nDetalle técnico:\n' +
-          detail +
-          '\n\nSi tienes "Restaurar-backup.bat" (junto a app.asar, en la carpeta "resources"), ' +
-          'ejecútalo. Si no, pide un parche o instalador nuevo.\n\n(código PS-1007)'
-      );
-      app.exit(1);
-      return;
-    }
-    const backupPath = path.join(dataDir, backupName);
-    if (originalFs.existsSync(realAsar)) {
-      const brokenCopy = path.join(
-        process.resourcesPath,
-        'app.asar.broken-' + new Date().toISOString().replace(/[:.]/g, '-')
-      );
-      originalFs.copyFileSync(realAsar, brokenCopy);
-    }
-    originalFs.copyFileSync(backupPath, realAsar);
+    analisis = analizarRecuperacionAsar(realAsar);
+  } catch (e) {
+    analisis = { decision: 'no', motivo: `no se pudo analizar la recuperación: ${String((e && e.message) || e)}`, manifiesto: null };
+  }
+  logRescate(`PS-1007 — recuperación: ${analisis.decision} (${analisis.motivo}). ${describirCopiasHeredadasParaSoporte()}.`);
+  const queSeRestaura = (op) =>
+    `la versión ${op.version_anterior || 'anterior'} que había en este equipo antes del parche del ` +
+    `${String(op.verificada_at || op.creada_at || '').slice(0, 10) || '(fecha desconocida)'}`;
+  // Sin procedencia verificable: se informa y se cierra. NO se ofrece
+  // Restaurar-backup.bat: P18 demostró que tampoco sabe de dónde sale la copia.
+  const sinRecuperacion = (codigo) => {
     dialog.showErrorBox(
-      'Panorama del Servicio no pudo iniciar — restaurado automáticamente',
+      'Panorama del Servicio no pudo iniciar',
       'Ha ocurrido un error al arrancar.\n\nDetalle técnico:\n' +
         detail +
-        '\n\nSe ha restaurado automáticamente la última copia de seguridad que sí funcionaba (' +
-        backupName +
-        ').\n\nCierra este mensaje y vuelve a abrir "Panorama del Servicio" tú mismo — no se reabre ' +
-        'sola.\n\n(código PS-1007)'
+        '\n\nNo hay ninguna copia de app.asar cuya procedencia se pueda verificar en este equipo, así que NO ' +
+        'se ha restaurado nada automáticamente (motivo: ' +
+        analisis.motivo +
+        ').\n\nReinstala Panorama del Servicio con su instalador, o aplica un parche soportado. Tus datos no ' +
+        'se han tocado.\n\n(código ' +
+        codigo +
+        ')'
     );
+  };
+  try {
+    if (analisis.decision === 'auto') {
+      restaurarPredecesoraVerificada(analisis, realAsar);
+      logRescate(`PS-1007 — restaurada automáticamente la predecesora verificada de la operación ${analisis.operacion.operation_id}.`);
+      dialog.showErrorBox(
+        'Panorama del Servicio no pudo iniciar — restaurado automáticamente',
+        'Ha ocurrido un error al arrancar.\n\nDetalle técnico:\n' +
+          detail +
+          '\n\nSe ha restaurado automáticamente ' +
+          queSeRestaura(analisis.operacion) +
+          '. Es la copia verificada que guardó este mismo equipo al aplicar ese parche.\n\nCierra este ' +
+          'mensaje y vuelve a abrir "Panorama del Servicio" tú mismo — no se reabre sola.\n\n(código PS-1007)'
+      );
+    } else if (analisis.decision === 'confirmar') {
+      let eleccion = 0;
+      try {
+        eleccion = dialog.showMessageBoxSync({
+          type: 'warning',
+          title: 'Panorama del Servicio no pudo iniciar',
+          message: 'El archivo actual no coincide con la instalación verificada.',
+          detail:
+            'Ha ocurrido un error al arrancar, y el app.asar instalado ' +
+            (analisis.motivo === 'el app.asar instalado no se puede leer' ? 'no se puede leer' : 'no es el que dejó el último parche verificado') +
+            '. Puede ser una corrupción, un instalador, otro programa, o un estado que este equipo ya no tiene ' +
+            'registrado — no se puede distinguir solo, así que no se restaura nada sin preguntar.\n\n' +
+            'Sí hay una copia verificada: ' +
+            queSeRestaura(analisis.operacion) +
+            '.\n\nDetalle técnico:\n' +
+            detail +
+            '\n\n(código PS-1027)',
+          buttons: ['Cerrar', 'Restaurar la versión anterior verificada'],
+          defaultId: 0,
+          cancelId: 0,
+          noLink: true,
+        });
+      } catch (e) {
+        // Si no se puede preguntar, no se restaura: preguntar es la condición.
+        eleccion = 0;
+        logRescate(`PS-1027 — no se pudo mostrar la confirmación (${String((e && e.message) || e)}); no se restaura nada.`);
+      }
+      if (eleccion === 1) {
+        restaurarPredecesoraVerificada(analisis, realAsar);
+        logRescate(`PS-1027 — restaurada POR CONFIRMACIÓN EXPLÍCITA la predecesora de la operación ${analisis.operacion.operation_id}.`);
+        dialog.showErrorBox(
+          'Panorama del Servicio — versión anterior restaurada',
+          'Se ha restaurado ' +
+            queSeRestaura(analisis.operacion) +
+            '.\n\nVuelve a abrir "Panorama del Servicio" tú mismo — no se reabre sola.\n\n(código PS-1027)'
+        );
+      } else {
+        logRescate('PS-1027 — cerrado sin restaurar (elegido «Cerrar», o Esc/X).');
+      }
+    } else {
+      sinRecuperacion(analisis.manifiesto === 'ilegible' ? 'PS-1026' : 'PS-1025');
+    }
   } catch (recoveryError) {
     const recoveryDetail = String((recoveryError && recoveryError.message) || recoveryError);
     try {
@@ -195,14 +502,17 @@ function handleFatalStartupError(err) {
     } catch (e) {
       /* no crítico */
     }
+    // P18: no se recomienda Restaurar-backup.bat — tampoco verifica la
+    // procedencia de la copia que restaura. Hasta D4, la salida soportada es
+    // reinstalar o aplicar un parche.
     dialog.showErrorBox(
       'Panorama del Servicio no pudo iniciar, y la recuperación automática también falló',
       'Error original:\n' +
         detail +
         '\n\nError al intentar recuperar:\n' +
         recoveryDetail +
-        '\n\nSi tienes "Restaurar-backup.bat" (junto a app.asar, en la carpeta "resources"), ' +
-        'ejecútalo. Si no, pide un parche o instalador nuevo.\n\n(código PS-1008)'
+        '\n\nReinstala Panorama del Servicio con su instalador, o aplica un parche soportado. Tus datos no se ' +
+        'han tocado.\n\n(código PS-1008)'
     );
   }
   app.exit(1);
@@ -212,6 +522,12 @@ process.on('uncaughtException', handleFatalStartupError);
 
 const dbmod = require('./db');
 const securitymod = require('./security');
+// E2 (15 sept 2026) — fuente ÚNICA del estado temporal del servicio, compartida
+// con el dashboard de cada proyecto (que la carga con <script>, ver
+// `fixVendorScriptPaths`). Vive en `vendor/` porque es JS puro: ni DOM, ni
+// Electron. Antes esta lógica estaba duplicada aquí y en la plantilla del
+// dashboard, y las dos copias ya habían divergido.
+const serviceStatusMod = require('./vendor/service-status.js');
 
 // v2.0.40: "cifrar si toca" -- las 4 rutas de guardado que persisten contenido
 // del usuario en disco (backup:save, meeting:savePrep, meeting:updatePrep,
@@ -282,7 +598,12 @@ function encryptIfNeeded(payload, isEncrypted) {
 // candidateEval:openCv, sigue igual -- ahí el error SÍ se muestra en la UI.)
 function openPathLogged(targetPath) {
   return shell.openPath(targetPath).then((err) => {
-    if (err) console.warn(`No se pudo abrir "${targetPath}" con shell.openPath:`, err);
+    // B3: además del warn (útil en desarrollo), rastro persistente. Sin la
+    // ruta completa: basta el nombre del último tramo para situarlo.
+    if (err) {
+      appLog(`No se pudo abrir en el explorador "${path.basename(String(targetPath))}": ${motivoSinRutas(err)}`);
+      console.warn(`No se pudo abrir "${targetPath}" con shell.openPath:`, err);
+    }
     return err;
   });
 }
@@ -389,17 +710,19 @@ const ERROR_CODES = {
     titulo: 'Fallo no capturado durante el arranque — recuperado automáticamente',
     explicacion:
       'Algo rompió el arranque muy pronto (por ejemplo, un parche mal empaquetado) y la app lo ' +
-      'detectó antes de mostrar el diálogo genérico de Electron. Se restauró sola la última copia ' +
-      'de seguridad de app.asar que sí funcionaba — hay que volver a abrir la app a mano, no se ' +
-      'reabre sola.',
+      'detectó antes de mostrar el diálogo genérico de Electron. Se restauró sola la versión anterior ' +
+      'VERIFICADA: la copia que guardó este mismo equipo al aplicar el último parche, y solo porque el ' +
+      'app.asar instalado era exactamente el que dejó ese parche. Hay que volver a abrir la app a mano, no ' +
+      'se reabre sola. OJO: esto solo puede ocurrir si Electron consigue cargar el app.asar; si el archivo ' +
+      'está truncado, sin cabecera o no existe, la app no llega a ejecutarse y no hay recuperación posible ' +
+      'desde dentro.',
   },
   'PS-1008': {
     titulo: 'Fallo no capturado durante el arranque — la recuperación automática también falló',
     explicacion:
-      'Además de fallar el arranque, no se pudo restaurar ningún backup de app.asar automáticamente ' +
-      '(sin copias de seguridad disponibles, o sin permisos para escribir en la carpeta de ' +
-      'instalación). Usa "Restaurar-backup.bat" (junto a app.asar, en la carpeta "resources") si lo ' +
-      'tienes, o pide un parche/instalador nuevo.',
+      'Había una copia verificada que restaurar, pero la restauración falló (por ejemplo, sin permisos ' +
+      'para escribir en la carpeta de instalación, o el resultado no tenía el hash esperado). Reinstala la ' +
+      'app con su instalador, o aplica un parche soportado. Tus datos no se tocan.',
   },
   'PS-1009': {
     titulo: 'No se encontró la base de datos en la carpeta de datos personalizada',
@@ -498,6 +821,79 @@ const ERROR_CODES = {
       'Se para aquí a propósito: sin esa marca previa, si más adelante el archivo no apareciera (unidad ' +
       'de red caída, sincronización a medias), la app podría interpretar esa carpeta como "nunca usada" ' +
       'y crear una vacía. Revisa los permisos de la carpeta de configuración y vuelve a abrir.',
+  },
+  'PS-1020': {
+    titulo: 'No se puede leer la configuración de ubicación de datos',
+    explicacion:
+      'El archivo location.json (en %APPDATA%\\panorama-app-config) existe, pero no se puede usar: no se ' +
+      'puede leer, no está en UTF-8 (ni en UTF-16 con BOM), no es JSON válido, o no indica una ruta absoluta. ' +
+      'Antes la app lo trataba igual que si no existiera y abría sin avisar la carpeta de datos por defecto, ' +
+      'con otra base de datos o creando una vacía. Ahora se cierra sin abrir, crear ni modificar ninguna base ' +
+      'de datos y sin tocar la protección de apagado. Hay que corregir ese archivo. No lo borres: sin él, la ' +
+      'app usaría la carpeta de datos por defecto.',
+  },
+  'PS-1021': {
+    titulo: 'Se iba a usar la carpeta de datos LOCAL de este equipo',
+    explicacion:
+      'La app llegó a la carpeta de datos por defecto por un camino de reserva: la carpeta configurada no ' +
+      'estaba disponible (PS-1005), no tenía base de datos (PS-1009), no se pudo comprobar (PS-1022), o ya ' +
+      'no hay ninguna configurada. Antes de abrir —o de crear— nada ahí, la app pregunta y enseña qué ' +
+      'encontró: fecha y tamaño de esa base de datos local, que puede ser mucho más antigua que la de ' +
+      'verdad. Cerrar es lo que se hace por defecto; usarla o crear una vacía exige elegirlo expresamente. ' +
+      'Mientras no se elige, no se abre, no se crea y no se toca nada.',
+  },
+  'PS-1022': {
+    titulo: 'La base de datos de la carpeta configurada no se puede comprobar',
+    explicacion:
+      'El archivo está donde debe, pero no se pudo leer ni verificar en el tiempo de espera (bloqueado por ' +
+      'otro programa, permisos, disco o red con problemas, sincronización a medias). Antes, la app se ' +
+      'pasaba a la carpeta de datos local en silencio; ahora se para y pregunta: reintentar, usar los datos ' +
+      'locales de este equipo a sabiendas, o cerrar. No se abre ninguna base de datos hasta que se elija.',
+  },
+  'PS-1023': {
+    titulo: 'La base de datos local no es utilizable',
+    explicacion:
+      'En la carpeta de datos por defecto hay un "panorama.sqlite3" que existe pero no es una base de datos ' +
+      'reconocible: está vacío (0 bytes), no empieza por la cabecera de SQLite, o no se puede comprobar. La ' +
+      'app se cierra sin tocarlo: NO lo abre, NO lo sustituye, NO lo vacía y NO crea otra base encima. Un ' +
+      'archivo así puede ser una copia a medias o un resto de un fallo anterior, y borrarlo o pisarlo sería ' +
+      'destruir la única pista de lo que pasó.',
+  },
+  'PS-1024': {
+    titulo: 'No se pudo dejar constancia de la ubicación de datos de este equipo',
+    explicacion:
+      'La app usa una carpeta de datos configurada, pero no pudo guardar (y releer) la constancia de ello en ' +
+      'la configuración local de Windows. Esa constancia es la que impide que, más adelante y sin ' +
+      'location.json, un arranque confunda este equipo con una instalación nueva. La app sigue funcionando ' +
+      'con normalidad, pero esa defensa queda degradada hasta que se pueda escribir: revisa los permisos de ' +
+      'la carpeta de configuración. El registro local de ubicaciones de A3.3 sigue guardando la misma ' +
+      'información por su cuenta.',
+  },
+  'PS-1025': {
+    titulo: 'Fallo al arrancar sin ninguna copia de app.asar verificable',
+    explicacion:
+      'El arranque falló y no hay ninguna copia de app.asar cuya procedencia se pueda demostrar en este ' +
+      'equipo, así que no se restaura nada. Solo cuenta una copia que este equipo guardó en su carpeta ' +
+      'LOCAL de recuperación al aplicar un parche y que quedó verificada. Las copias antiguas ' +
+      '(app.asar.bak-…) de la carpeta de datos no cuentan: pueden venir de otro equipo, de otra instalación ' +
+      'o de otra época. Es lo normal hasta que se aplique el primer parche con esta versión. Reinstala la ' +
+      'app con su instalador, o aplica un parche soportado.',
+  },
+  'PS-1026': {
+    titulo: 'El registro de procedencia de app.asar no se puede leer',
+    explicacion:
+      'El arranque falló, y el archivo local que registra de dónde sale cada copia de app.asar ' +
+      '(asar-procedencia.json) existe pero está dañado o incompleto. Sin él no se puede demostrar nada, así ' +
+      'que no se restaura ninguna copia. No lo borres: es la pista de lo que pasó. Reinstala la app con su ' +
+      'instalador, o aplica un parche soportado.',
+  },
+  'PS-1027': {
+    titulo: 'El app.asar instalado no coincide con la instalación verificada',
+    explicacion:
+      'El arranque falló y el app.asar instalado no es el que dejó el último parche verificado (o no se ' +
+      'puede leer). Puede ser una corrupción, un instalador, otro programa o un estado que este equipo ya no ' +
+      'tiene registrado, y eso no se puede distinguir solo. Por eso no se restaura nada sin preguntar: la app ' +
+      'ofrece volver a la versión anterior verificada, y "Cerrar" (o Esc) no toca nada.',
   },
   'PS-2001': {
     titulo: 'Datos del proyecto no encontrados al abrirlo',
@@ -734,29 +1130,105 @@ let customUserDataDirTarget = null; // ruta configurada (si hay alguna), para el
 // para no desactivar en silencio, para quien ya lo tenía configurado, las
 // protecciones que estaban usando de verdad.
 let customUserDataDirShared = true;
+// P9: { estado, motivo } cuando location.json EXISTE pero no se puede usar.
+// Mientras tenga valor, esta sesión no tiene ubicación de datos resuelta: el
+// arranque se detiene en app.whenReady (detenerArranquePorConfigUbicacion).
+let configUbicacionNoResuelta = null;
 
-function readConfiguredUserDataTarget() {
-  const configFile = userDataConfigPath();
+// ------------------------------------------------------------------
+// P9 (17 sept 2026) — UN SOLO LECTOR DE location.json, CON ESTADOS EXPLÍCITOS.
+//
+// Antes había tres lecturas (la ruta, "shared" y la del rescate PS-1007), y
+// las tres devolvían lo mismo para "no hay archivo" que para "hay un archivo
+// que no se entiende". Medido en la app real: con un location.json guardado
+// con BOM (Bloc de notas, PowerShell 5.1...), la app abría SIN AVISAR la base
+// de datos de la carpeta por defecto —en el PC del usuario, un residuo antiguo
+// que además se modificaba al abrirlo—, o creaba una vacía, y de paso
+// desactivaba la protección de apagado.
+//
+//   'ausente'   el archivo no existe (ENOENT). Es el ÚNICO estado que
+//               significa "no hay configuración de ubicación".
+//   'valido'    se entiende y cumple el contrato.
+//   'ilegible'  existe, pero no se puede leer o no está en una codificación
+//               admitida.
+//   'invalido'  se lee, pero no es JSON o no cumple el contrato.
+//
+// Codificaciones admitidas, y solo estas (nada se adivina por el contenido):
+// UTF-8 sin BOM, UTF-8 con UN BOM, y UTF-16 LE/BE con su BOM. Se quita
+// ÚNICAMENTE ese BOM inicial; cualquier otro U+FEFF (BOM duplicado o fuera de
+// sitio) deja el archivo 'invalido'. Un archivo ANSI con letras acentuadas no
+// es UTF-8 válido: 'ilegible'.
+//
+// Contrato: un objeto JSON con `userDataDir` de tipo cadena, sin espacios
+// alrededor, sin caracteres de control, U+FEFF ni U+FFFD, sin < > " | ? * ni
+// ":" fuera de la letra de unidad, y ABSOLUTA: con letra de unidad (X:\ o X:/)
+// o UNC (\\servidor\recurso, o con "/"). `shared`, si está, tiene que ser
+// booleano; si falta, vale true (location.json anterior a la 0.1.57).
+//
+// Autocontenida A PROPÓSITO (sin constantes de módulo): el rescate PS-1007 la
+// llama desde un manejador que puede dispararse antes de que se evalúe el
+// resto de este archivo. `motivo` nunca lleva la ruta: se puede registrar.
+// ------------------------------------------------------------------
+function leerConfigUbicacion() {
+  let bytes;
   try {
-    if (!fs.existsSync(configFile)) return null;
-    const cfg = JSON.parse(fs.readFileSync(configFile, 'utf8'));
-    const target = cfg && typeof cfg.userDataDir === 'string' ? cfg.userDataDir.trim() : '';
-    return target || null;
+    bytes = fs.readFileSync(userDataConfigPath());
   } catch (e) {
-    return null; // config ilegible/corrupta: se ignora, se sigue con la ubicación por defecto
+    if (e && e.code === 'ENOENT') return { estado: 'ausente' };
+    return { estado: 'ilegible', motivo: `el archivo no se puede leer (${(e && e.code) || 'error desconocido'})` };
   }
-}
-
-function readConfiguredUserDataShared() {
-  const configFile = userDataConfigPath();
+  let texto;
   try {
-    if (!fs.existsSync(configFile)) return true; // no debería llegar a llamarse sin config, pero por si acaso
-    const cfg = JSON.parse(fs.readFileSync(configFile, 'utf8'));
-    if (cfg && typeof cfg.shared === 'boolean') return cfg.shared;
-    return true; // sin este campo (location.json de antes de la 0.1.57): comportamiento de siempre, tratar como compartida
+    let codificacion = 'utf-8';
+    let desde = 0;
+    if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
+      desde = 3;
+    } else if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) {
+      codificacion = 'utf-16le';
+      desde = 2;
+    } else if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+      codificacion = 'utf-16be';
+      desde = 2;
+    }
+    // ignoreBOM: el decodificador no quita nada por su cuenta. El único BOM
+    // retirado es el que se acaba de reconocer por sus bytes.
+    texto = new TextDecoder(codificacion, { fatal: true, ignoreBOM: true }).decode(bytes.subarray(desde));
   } catch (e) {
-    return true;
+    return { estado: 'ilegible', motivo: 'el archivo no está en una codificación admitida (UTF-8, o UTF-16 con BOM)' };
   }
+  if (texto.includes('\uFEFF')) {
+    return { estado: 'invalido', motivo: 'el archivo tiene una marca BOM duplicada o fuera de sitio' };
+  }
+  let cfg;
+  try {
+    cfg = JSON.parse(texto);
+  } catch (e) {
+    return { estado: 'invalido', motivo: 'el archivo no es JSON válido' };
+  }
+  if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) {
+    return { estado: 'invalido', motivo: 'el contenido no es un objeto JSON' };
+  }
+  if (!Object.prototype.hasOwnProperty.call(cfg, 'userDataDir')) {
+    return { estado: 'invalido', motivo: 'falta el campo "userDataDir"' };
+  }
+  const ruta = cfg.userDataDir;
+  if (typeof ruta !== 'string') return { estado: 'invalido', motivo: '"userDataDir" no es una cadena' };
+  if (ruta.trim() === '') return { estado: 'invalido', motivo: '"userDataDir" está vacío' };
+  if (ruta !== ruta.trim()) {
+    return { estado: 'invalido', motivo: '"userDataDir" tiene espacios al principio o al final' };
+  }
+  const conUnidad = /^[A-Za-z]:[\\/]/.test(ruta);
+  const unc = /^[\\/]{2}(?![.?][\\/])[^\\/]+[\\/]+[^\\/]/.test(ruta);
+  if (!conUnidad && !unc) {
+    return { estado: 'invalido', motivo: '"userDataDir" no es una ruta absoluta con letra de unidad o de red' };
+  }
+  if (/[\u0000-\u001f\u007f\uFEFF\uFFFD<>"|?*]/.test(ruta) || /:/.test(conUnidad ? ruta.slice(2) : ruta)) {
+    return { estado: 'invalido', motivo: '"userDataDir" contiene caracteres que no son válidos en una ruta' };
+  }
+  if (Object.prototype.hasOwnProperty.call(cfg, 'shared') && typeof cfg.shared !== 'boolean') {
+    return { estado: 'invalido', motivo: '"shared" no es true ni false' };
+  }
+  return { estado: 'valido', userDataDir: ruta, shared: typeof cfg.shared === 'boolean' ? cfg.shared : true };
 }
 
 // Prueba de escritura real, no solo de existencia: mkdirSync con
@@ -810,10 +1282,18 @@ function sleepSyncMs(ms) {
 }
 
 function applyCustomUserDataDirIfConfigured() {
-  const target = readConfiguredUserDataTarget();
-  if (!target) return;
+  const cfg = leerConfigUbicacion();
+  if (cfg.estado === 'ausente') return;
+  if (cfg.estado !== 'valido') {
+    // P9: presente pero inutilizable NO es "sin configuración". No se prueba
+    // ni se crea ninguna carpeta, no se llama a setPath y no se sigue con la
+    // de por defecto como si nada: el arranque se detiene en whenReady.
+    configUbicacionNoResuelta = { estado: cfg.estado, motivo: cfg.motivo };
+    return;
+  }
+  const target = cfg.userDataDir;
   customUserDataDirTarget = target;
-  customUserDataDirShared = readConfiguredUserDataShared();
+  customUserDataDirShared = cfg.shared;
 
   const deadline = Date.now() + USERDATA_PRE_READY_RETRY_MS;
   let lastError = null;
@@ -1072,6 +1552,233 @@ function marcarUbicacionInicializada(dir, commitId) {
 }
 
 // ------------------------------------------------------------------
+// P22 (17 sept 2026) — «ESTE EQUIPO YA USÓ UNA UBICACIÓN DE DATOS PROPIA»
+//
+// Sin esta constancia, un arranque sin `location.json` no puede distinguir una
+// instalación nueva de verdad de un equipo que se quedó sin su configuración:
+// los dos ven la carpeta por defecto vacía o con restos, y hoy los dos
+// terminaban creando o abriendo una base de datos local sin preguntar.
+//
+// Vive en la carpeta de configuración LOCAL (la misma que location.json, el
+// registro de A3.3 y el installation-id) porque su función es recordar algo que
+// la carpeta de datos ya no puede demostrar por sí sola.
+//
+//   { "v":1,
+//     "personalizada": { "clave_sha256": "<sha256 de la ruta normalizada>",
+//                        "compartida": true|false,
+//                        "primera_vez": "<ISO>", "ultima_vez": "<ISO>" },
+//     "decisiones": [ { "que": "volver-a-por-defecto", "at": "<ISO>" } ] }
+//
+// La RUTA NO se guarda: solo su hash. Con eso basta para responder «¿hubo
+// alguna vez una ubicación propia?» y para saber si la de ahora es la misma,
+// sin dejar escrita una ruta que puede identificar a una persona o un cliente.
+//
+// NADIE la borra: ni PS-1005, ni PS-1009, ni un fallo de Drive, ni una sesión
+// local temporal. «Volver a la carpeta por defecto» AÑADE su decisión, con
+// fecha, en vez de borrar la historia.
+// ------------------------------------------------------------------
+function rutaHistorialUbicacion() {
+  return path.join(app.getPath('appData'), 'panorama-app-config', 'historial-ubicacion.json');
+}
+function claveHashUbicacion(dir) {
+  return crypto.createHash('sha256').update(claveUbicacion(dir), 'utf8').digest('hex');
+}
+
+// Estados explícitos, igual que el registro de ubicaciones: un archivo que
+// existe y no se entiende NO es «no hay historial».
+function leerHistorialUbicacion() {
+  let txt;
+  try {
+    txt = fs.readFileSync(rutaHistorialUbicacion(), 'utf8');
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return { ok: true, historial: null };
+    return { ok: false, motivo: `no se pudo leer el historial de ubicación (${(e && e.code) || e})` };
+  }
+  try {
+    const j = JSON.parse(txt.replace(/^﻿/, ''));
+    if (!j || j.v !== 1 || typeof j !== 'object') return { ok: false, motivo: 'el historial de ubicación tiene un formato no reconocido' };
+    return { ok: true, historial: j };
+  } catch (e) {
+    return { ok: false, motivo: 'el historial de ubicación no es JSON válido' };
+  }
+}
+
+// Escritura atómica (tmp + fsync + rename) y VERIFICADA releyendo, igual que el
+// registro de ubicaciones: esto es evidencia de integridad, no una preferencia.
+// Devuelve { ok } o { ok:false, motivo } — nunca falla en silencio.
+function guardarHistorialUbicacion(j) {
+  const ruta = rutaHistorialUbicacion();
+  const tmp = `${ruta}.tmp-${process.pid}-${Date.now()}`;
+  const FSYNC_NO_SOPORTADO = new Set(['EINVAL', 'ENOSYS', 'ENOTSUP', 'EOPNOTSUPP']);
+  try {
+    fs.mkdirSync(path.dirname(ruta), { recursive: true });
+    const fd = fs.openSync(tmp, 'w');
+    try {
+      const buf = Buffer.from(JSON.stringify(j), 'utf8');
+      let escritos = 0;
+      while (escritos < buf.length) {
+        const n = fs.writeSync(fd, buf, escritos, buf.length - escritos, escritos);
+        if (!(n > 0)) throw new Error('writeSync sin progreso');
+        escritos += n;
+      }
+      try {
+        fs.fsyncSync(fd);
+      } catch (e) {
+        if (!FSYNC_NO_SOPORTADO.has(e && e.code)) throw new Error(`fsync falló (${(e && e.code) || '?'}): ${e && e.message}`);
+      }
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(tmp, ruta);
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch (e2) {}
+    return { ok: false, motivo: String((e && e.message) || e) };
+  }
+  const r = leerHistorialUbicacion();
+  if (!r.ok || !r.historial) return { ok: false, motivo: `tras escribir no se pudo releer: ${r.motivo || 'quedó vacío'}` };
+  return { ok: true, historial: r.historial };
+}
+
+// P22: mientras esta sesión no haya podido dejar la constancia, la ausencia de
+// historial NO puede leerse como «instalación nueva» (ver huboUbicacionPersonalizada).
+let historialUbicacionDegradado = null;   // { motivo } si no se pudo persistir
+
+function registrarUbicacionPersonalizada(dir, compartida) {
+  const ahora = new Date().toISOString();
+  const r = leerHistorialUbicacion();
+  if (!r.ok) {
+    historialUbicacionDegradado = { motivo: r.motivo };
+    appLog(`ERROR PS-1024 — ${r.motivo}; la constancia de ubicación propia queda degradada esta sesión.`);
+    return { ok: false, motivo: r.motivo };
+  }
+  const j = r.historial && typeof r.historial === 'object' ? r.historial : { v: 1 };
+  j.v = 1;
+  const clave = claveHashUbicacion(dir);
+  const antes = j.personalizada && j.personalizada.clave_sha256 === clave ? j.personalizada : null;
+  j.personalizada = {
+    clave_sha256: clave,
+    compartida: !!compartida,
+    primera_vez: (antes && antes.primera_vez) || (j.personalizada && j.personalizada.primera_vez) || ahora,
+    ultima_vez: ahora,
+  };
+  if (!Array.isArray(j.decisiones)) j.decisiones = [];
+  const g = guardarHistorialUbicacion(j);
+  if (!g.ok) {
+    historialUbicacionDegradado = { motivo: g.motivo };
+    appLog(`ERROR PS-1024 — no se pudo dejar constancia de la ubicación de datos propia: ${g.motivo}`);
+    return g;
+  }
+  historialUbicacionDegradado = null;
+  return g;
+}
+
+function registrarDecisionUbicacion(que) {
+  const r = leerHistorialUbicacion();
+  if (!r.ok) { appLog(`ERROR PS-1024 — no se pudo anotar la decisión «${que}»: ${r.motivo}`); return { ok: false, motivo: r.motivo }; }
+  const j = r.historial && typeof r.historial === 'object' ? r.historial : { v: 1 };
+  j.v = 1;
+  if (!Array.isArray(j.decisiones)) j.decisiones = [];
+  j.decisiones.push({ que, at: new Date().toISOString() });
+  const g = guardarHistorialUbicacion(j);
+  if (!g.ok) appLog(`ERROR PS-1024 — no se pudo anotar la decisión «${que}»: ${g.motivo}`);
+  return g;
+}
+
+// ¿Este equipo ha usado alguna vez una carpeta de datos propia?
+//
+// El historial es la señal principal, pero NO la única: un equipo que venga de
+// una versión anterior puede no tenerlo todavía. Se aceptan como equivalentes
+// dos señales que ya existían —el registro de ubicaciones de A3.3 con una clave
+// que NO es la carpeta por defecto, y la marca de la protección de apagado— y la
+// propia configuración válida de esta sesión. Y ante cualquier duda (historial
+// ilegible, o esta sesión no pudo escribirlo) se responde que SÍ: no poder
+// demostrar que hubo ubicación propia nunca puede valer como prueba de que no
+// la hubo.
+function huboUbicacionPersonalizada() {
+  if (customUserDataDirTarget) return { si: true, fuente: 'location.json de esta sesión' };
+  const r = leerHistorialUbicacion();
+  if (!r.ok) return { si: true, fuente: 'historial de ubicación ilegible (se supone que sí)', degradado: true };
+  if (r.historial && r.historial.personalizada && r.historial.personalizada.clave_sha256) {
+    return { si: true, fuente: 'historial de ubicación', desde: r.historial.personalizada.primera_vez, compartida: !!r.historial.personalizada.compartida };
+  }
+  if (historialUbicacionDegradado) return { si: true, fuente: 'no se pudo dejar constancia en esta sesión (se supone que sí)', degradado: true };
+  const reg = leerRegistroUbicaciones();
+  if (!reg.ok) return { si: true, fuente: 'registro de ubicaciones ilegible (se supone que sí)', degradado: true };
+  const claveDefecto = claveUbicacion(defaultUserDataDir);
+  const otras = Object.keys(reg.ubicaciones).filter((k) => k !== claveDefecto);
+  if (otras.length) return { si: true, fuente: 'registro de ubicaciones de A3.3' };
+  try {
+    if (isDriveSyncGuardEnabled()) return { si: true, fuente: 'protección de apagado activa' };
+  } catch (e) { /* si no se puede mirar, no aporta */ }
+  return { si: false };
+}
+
+// ------------------------------------------------------------------
+// P22 — ¿QUÉ HAY EN LA CARPETA DE DATOS LOCAL? CUATRO ESTADOS, NO DOS.
+//
+//   'ausente'         ENOENT DEMOSTRADO: de verdad no hay base de datos.
+//   'existente'       hay un archivo con la cabecera de SQLite.
+//   'invalida'        el archivo ESTÁ, pero no es utilizable: 0 bytes, o no
+//                     empieza por "SQLite format 3\0", o no es un archivo.
+//   'no-comprobable'  existe o no, pero no se puede determinar (EACCES, EBUSY,
+//                     EIO, unidad a medio montar...).
+//
+// 'invalida' NO es «no hay base de datos»: un archivo así puede ser una copia a
+// medias o el resto de un fallo, y tratarlo como ausencia llevaría a crear una
+// base nueva ENCIMA. Los dos últimos estados se cierran en falso (PS-1023).
+//
+// Solo se leen 16 bytes y el `stat`: NUNCA se abre la base de datos.
+// ------------------------------------------------------------------
+const CABECERA_SQLITE = Buffer.from('SQLite format 3\0', 'latin1');
+
+function estadoBaseDeDatosLocal(dir) {
+  const ruta = path.join(dir, 'panorama.sqlite3');
+  const visible = estadoDeArchivoEnRuta(ruta);
+  if (visible.estado === 'no-visible') return { estado: 'ausente' };
+  if (visible.estado === 'no-accesible') return { estado: 'no-comprobable', codigo: visible.codigo, motivo: 'no se puede comprobar si hay una base de datos' };
+  let st;
+  try {
+    st = fs.statSync(ruta);
+  } catch (e) {
+    return { estado: 'no-comprobable', codigo: (e && e.code) || '?', motivo: 'no se pudo consultar el archivo' };
+  }
+  if (!st.isFile()) return { estado: 'invalida', motivo: 'en su sitio hay algo que no es un archivo', size: st.size, mtime: st.mtimeMs };
+  if (st.size === 0) return { estado: 'invalida', motivo: 'el archivo está vacío (0 bytes)', size: 0, mtime: st.mtimeMs };
+  let cabecera = null;
+  let fd = null;
+  try {
+    fd = fs.openSync(ruta, 'r');
+    const buf = Buffer.alloc(CABECERA_SQLITE.length);
+    const n = fs.readSync(fd, buf, 0, buf.length, 0);
+    cabecera = buf.slice(0, n);
+  } catch (e) {
+    return { estado: 'no-comprobable', codigo: (e && e.code) || '?', motivo: 'no se pudo leer la cabecera del archivo', size: st.size, mtime: st.mtimeMs };
+  } finally {
+    if (fd !== null) { try { fs.closeSync(fd); } catch (e) {} }
+  }
+  if (!cabecera.equals(CABECERA_SQLITE)) {
+    return { estado: 'invalida', motivo: 'el archivo no empieza por la cabecera de una base de datos SQLite', size: st.size, mtime: st.mtimeMs };
+  }
+  let gen = false;
+  try { gen = fs.existsSync(ruta + '.gen'); } catch (e) { /* no crítico */ }
+  return { estado: 'existente', size: st.size, mtime: st.mtimeMs, gen };
+}
+
+// Texto para los diálogos: fecha, tamaño y si lleva el testigo de A3.3. Nunca
+// la ruta, y nunca nada que obligue a abrir la base de datos.
+function descripcionBaseDeDatosLocal(bd) {
+  if (bd.estado === 'ausente') return 'En este equipo no hay ninguna base de datos local.';
+  if (bd.estado === 'no-comprobable') return `Hay algo en su sitio, pero no se puede comprobar (${bd.codigo}).`;
+  if (bd.estado === 'invalida') return `Hay un archivo de base de datos local, pero no es utilizable: ${bd.motivo}.`;
+  const fecha = new Date(bd.mtime);
+  const dias = Math.floor((Date.now() - bd.mtime) / 86400000);
+  return 'En este equipo HAY datos locales:\n' +
+    `  · última modificación: ${fecha.toLocaleString()}${Number.isFinite(dias) && dias >= 1 ? ` (hace ${dias} día${dias === 1 ? '' : 's'})` : ''}\n` +
+    `  · tamaño: ${(bd.size / 1024).toFixed(0)} KB\n` +
+    `  · ${bd.gen ? 'con el testigo de integridad de A3.3' : 'sin el testigo de integridad de A3.3 (la escribió una versión anterior)'}`;
+}
+
+// ------------------------------------------------------------------
 // A3.3 BLOQUE 2 — POLÍTICA DE UBICACIÓN
 //
 // Regla de fondo: una carpeta PERSONALIZADA nunca se clasifica como 'local'.
@@ -1145,6 +1852,17 @@ function restosEnCarpetaDeDatos(dir) {
 }
 
 function decidirCrearSiAusente() {
+  // P9: location.json existe pero no se puede usar, así que esta sesión no
+  // tiene ubicación de datos resuelta. La parada de app.whenReady ya impide
+  // llegar aquí; esta es la segunda capa, para que ningún camino futuro
+  // convierta un archivo ilegible en permiso para crear.
+  if (configUbicacionNoResuelta) {
+    return {
+      crear: false,
+      configNoResuelta: true,
+      motivo: 'location.json existe pero no se puede usar: sin ubicación resuelta no se autoriza crear nada',
+    };
+  }
   const dir = app.getPath('userData');
   const est = estadoUbicacion(dir);
 
@@ -1265,6 +1983,22 @@ function decidirCrearSiAusente() {
   // (sin registro) Primera vez de verdad: no consta la ubicación Y se ha
   // comprobado que la base de datos no está.
   if (!isUsingCustomDataLocationNow()) {
+    // P22: «carpeta por defecto vacía» solo es una primera ejecución si este
+    // equipo NO ha usado nunca una ubicación de datos propia. Si la ha usado
+    // —o si no se puede demostrar que no—, crear aquí una base vacía es
+    // justamente el error: hace falta que el usuario lo pida expresamente.
+    if (usuarioAutorizaCrearLocal) {
+      return { crear: true, motivo: 'el usuario autorizó expresamente crear una base de datos local vacía (PS-1021)' };
+    }
+    const hist = huboUbicacionPersonalizada();
+    if (hist.si) {
+      return {
+        crear: false,
+        historicaConocida: true,
+        motivo: `este equipo ya ha usado una carpeta de datos propia (${hist.fuente}): no se crea una base de ` +
+          'datos local vacía sin autorización expresa',
+      };
+    }
     return {
       crear: true,
       motivo: 'carpeta por defecto sin registro local y con la base de datos demostrablemente ausente ' +
@@ -1789,6 +2523,247 @@ async function parseAndDecryptImportedProjectJson(text, parentWin) {
   return { state: candidate, history };
 }
 
+// ------------------------------------------------------------------
+// F3 (17 sept 2026) — POLÍTICA DE APERTURA Y NAVEGACIÓN DE VENTANAS.
+//
+// Hasta aquí ninguna ventana interceptaba `window.open` ni las navegaciones.
+// Medido en Electron real antes de tocar nada: `window.open('about:blank')`
+// creaba una BrowserWindow de verdad —la «ventana negra» titulada «Electron»
+// que se veía en los arneses—, un `file://` local también abría ventana, y un
+// `<a target="_blank">` abría el destino DENTRO de la aplicación en vez de en
+// el navegador del usuario.
+//
+// No era escalada de privilegios (la hija hereda contextIsolation+sandbox y no
+// recibe ni `panoramaBridge` ni Node), pero sí una superficie de navegación
+// innecesaria: contenido remoto dentro del marco de la app, sin barra de
+// direcciones. Y el enlace legítimo de un entregable se abría donde no debía.
+//
+// La política: el producto NO necesita ventanas emergentes propias —no llama a
+// `window.open` en ningún sitio—, así que se DENIEGA siempre la ventana hija.
+// Lo único que se hace aparte es mandar http/https al navegador del sistema.
+// ------------------------------------------------------------------
+
+// Solo http/https, y solo si la URL parsea de verdad. Nada de `startsWith` ni
+// de regex laxas: si `new URL` falla, se deniega y no se intenta "arreglarla".
+function urlExternaPermitida(url) {
+  try {
+    const u = new URL(String(url));
+    return (u.protocol === 'http:' || u.protocol === 'https:') ? u : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// Para el rastro: ni la URL entera (puede llevar identificadores o datos en la
+// query) ni nada que el usuario no deba ver en un log. Esquema y host bastan.
+function urlParaRastro(u) {
+  try {
+    return u.protocol + '//' + (u.host || '(sin host)');
+  } catch (e) {
+    return '(url no representable)';
+  }
+}
+
+// Abre en el navegador del sistema. `shell.openExternal` devuelve una promesa
+// que PUEDE rechazar (protocolo sin aplicación asociada, política del sistema):
+// se captura siempre, porque un rechazo sin manejar tumbaría el proceso con
+// B2. Si falla, queda rastro y NO se abre nada dentro de Electron.
+function abrirEnNavegador(u, origen) {
+  try {
+    Promise.resolve(shell.openExternal(u.href)).catch((e) => {
+      appLog(`No se pudo abrir un enlace externo (${origen}) en el navegador del sistema: `
+        + `${urlParaRastro(u)} — ${motivoSinRutas(e)}`);
+    });
+  } catch (e) {
+    appLog(`No se pudo abrir un enlace externo (${origen}) en el navegador del sistema: `
+      + `${urlParaRastro(u)} — ${motivoSinRutas(e)}`);
+  }
+}
+
+// ¿Es una navegación que el producto SÍ usa hoy? Se comprobó antes de poner la
+// guardia: lo único que navega de verdad es `location.reload()` del dashboard,
+// y las descargas, que van por `blob:` con <a download>. Todo lo demás (el
+// resto de ventanas se cargan con `loadFile` desde el proceso principal, que
+// no dispara `will-navigate`) es inesperado.
+function navegacionInternaLegitima(destino, actual) {
+  if (destino === actual) return true;              // recarga de la misma página
+  try {
+    const d = new URL(destino);
+    if (d.protocol === 'blob:') return true;        // descargas (exportar CSV/Excel/…)
+    const a = new URL(actual);
+    // Cambio de ancla dentro del MISMO documento.
+    return d.protocol === a.protocol && d.host === a.host && d.pathname === a.pathname;
+  } catch (e) {
+    return false;
+  }
+}
+
+function aplicarPoliticaDeNavegacion(wc, etiqueta) {
+  // Un `webContents` que no traiga estas APIs no puede llevar política. En
+  // producción SIEMPRE las trae; esto solo evita reventar con un doble de
+  // pruebas mínimo (los arneses de A2/Bloque 5 usan uno para las ventanas
+  // ocultas de partición).
+  if (!wc || typeof wc.setWindowOpenHandler !== 'function' || typeof wc.on !== 'function') return;
+  if (typeof wc.isDestroyed === 'function' && wc.isDestroyed()) return;
+  // 1) Ventanas nuevas: SIEMPRE denegadas. Si el destino es http/https, se
+  //    manda al navegador del sistema; el resto (about:, file:, data:,
+  //    javascript:, esquemas inventados, URLs rotas) se deniega sin más.
+  wc.setWindowOpenHandler(({ url }) => {
+    const u = urlExternaPermitida(url);
+    if (u) abrirEnNavegador(u, etiqueta);
+    else appLogUnaVezPorSesion(`f3-open-${etiqueta}`,
+      `Se ha bloqueado la apertura de una ventana no prevista desde ${etiqueta}.`);
+    return { action: 'deny' };
+  });
+  // 2) Navegaciones dentro de la propia ventana.
+  wc.on('will-navigate', (evt, url) => {
+    const actual = (() => { try { return wc.getURL(); } catch (e) { return ''; } })();
+    if (navegacionInternaLegitima(url, actual)) return;
+    evt.preventDefault();
+    const u = urlExternaPermitida(url);
+    if (u) abrirEnNavegador(u, etiqueta + ' (enlace)');
+    else appLogUnaVezPorSesion(`f3-nav-${etiqueta}`,
+      `Se ha bloqueado una navegación no prevista en ${etiqueta}.`);
+  });
+}
+
+// ------------------------------------------------------------------
+// F2 (17 sept 2026) — CONTENT-SECURITY-POLICY DE TODAS LAS VENTANAS.
+//
+// Hasta aquí ninguna ventana tenía CSP. Se entrega por CABECERA desde este
+// único punto, no con un <meta> en cada plantilla. Medido en el Chromium de
+// Electron 30.5.1 (batería claude/pruebas-a33/f2/) antes de decidir:
+//   - `webRequest.onHeadersReceived` SÍ ve los documentos file://, también
+//     dentro de un asar, y la cabecera SE APLICA;
+//   - `session-created` se emite para la sesión por defecto y para cada
+//     partición, así que un solo enganche cubre las 10 ventanas;
+//   - no depende de que la copia horneada de cada proyecto se haya
+//     regenerado: un proyecto viejo recibe la misma política;
+//   - un documento que no esté en la tabla recibe la política CERRADA.
+//
+// Lo que esta CSP NO hace, dicho claro: las ventanas con `'unsafe-inline'`
+// en script-src (todas menos lanzador y splash) siguen ejecutando un
+// <script> en línea inyectado. Su valor es otro: corta la salida a la red
+// (connect/img/font/media/estilos/scripts remotos), impide frames, objects y
+// envíos de formulario, fija la base de las URL, deja sin `eval` y limita los
+// Workers. Quitar `'unsafe-inline'` exigiría rehacer las plantillas.
+//
+// Sobre las fuentes (medido): en un documento file://, `'self'` equivale
+// EXACTAMENTE a `file:` —cualquier archivo local, sin poder acotar por
+// ruta—, así que no se repite `file:`. `data:` solo en img-src (logos y el
+// fantasma de arrastre del lanzador). `blob:` no hace falta para exportar:
+// una descarga no es una carga gobernada por la CSP. `'unsafe-eval'` NO:
+// mammoth y pdf.js funcionan sin él.
+//
+// Workers (medido): uno creado desde un file: NO recibe CSP ni por <meta> ni
+// por cabecera, y podría salir a la red; uno creado desde un blob: SÍ hereda
+// la de la ventana. Por eso `worker-src 'none'` en todas las ventanas y
+// `worker-src blob:` solo en Preparación, que arranca el Worker de pdf.js
+// envuelto en un blob: (ver extractPdf en su plantilla). Sin `worker-src`
+// explícito, los Workers caerían en script-src y se permitirían.
+// ------------------------------------------------------------------
+const CSP_SIN_RED_NI_INCRUSTADOS = [
+  "connect-src 'none'",
+  "frame-src 'none'",
+  "object-src 'none'",
+  "form-action 'none'",
+  "base-uri 'none'",
+];
+const CSP_PERFILES = Object.freeze({
+  // restore-helper.html (ventanas ocultas de volcado/lectura de particiones) y
+  // cualquier documento file:// que no esté en la tabla. main.js les habla
+  // con executeJavaScript, que la CSP no bloquea (medido).
+  cerrado: ["default-src 'none'", "form-action 'none'", "base-uri 'none'"].join('; '),
+  // Lanzador y splash: no tienen NINGÚN <script> en línea ni manejadores en
+  // línea, así que tampoco reciben `'unsafe-inline'` para scripts.
+  sinScriptEnLinea: [
+    "default-src 'none'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "worker-src 'none'",
+    ...CSP_SIN_RED_NI_INCRUSTADOS,
+  ].join('; '),
+  // Dashboard y Directorio (copias horneadas), Evaluación de Candidatos,
+  // selector de backups, Seguridad y la ventanita de contraseña.
+  interfaz: [
+    "default-src 'none'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "font-src 'self'",
+    "worker-src 'none'",
+    ...CSP_SIN_RED_NI_INCRUSTADOS,
+  ].join('; '),
+  // Preparación de Reunión: lo mismo, más el Worker de pdf.js (por blob:).
+  lectorDeActas: [
+    "default-src 'none'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "font-src 'self'",
+    'worker-src blob:',
+    ...CSP_SIN_RED_NI_INCRUSTADOS,
+  ].join('; '),
+});
+
+function perfilCspDeDocumento(url) {
+  let ruta;
+  try {
+    ruta = path.resolve(fileURLToPath(url)).toLowerCase();
+  } catch (e) {
+    return 'cerrado';
+  }
+  const deLaApp = (...partes) => path.resolve(__dirname, ...partes).toLowerCase();
+  switch (ruta) {
+    case deLaApp('launcher', 'index.html'):
+    case deLaApp('launcher', 'splash.html'):
+      return 'sinScriptEnLinea';
+    case deLaApp('preparacion-reunion', 'plantilla_preparacion_reunion.html'):
+      return 'lectorDeActas';
+    case deLaApp('dashboard', 'plantilla_dashboard.html'):
+    case deLaApp('evaluacion-candidatos', 'plantilla_evaluacion_candidatos.html'):
+    case deLaApp('backup-picker', 'index.html'):
+    case deLaApp('security-window', 'index.html'):
+    case deLaApp('launcher', 'password-prompt.html'):
+      return 'interfaz';
+    case deLaApp('dashboard', 'restore-helper.html'):
+      return 'cerrado';
+    default:
+      break;
+  }
+  // Copia horneada de un proyecto o del Directorio (projectDashboardFile).
+  const proyectos = path.resolve(app.getPath('userData'), 'projects').toLowerCase();
+  if (/^\d+[\\/]dashboard\.html$/.test(path.relative(proyectos, ruta))) return 'interfaz';
+  return 'cerrado';
+}
+
+function instalarCspEnSesion(ses) {
+  if (!ses || !ses.webRequest || typeof ses.webRequest.onHeadersReceived !== 'function') return;
+  ses.webRequest.onHeadersReceived((detalles, responder) => {
+    const url = String((detalles && detalles.url) || '');
+    // Solo archivos locales: el producto no carga nada más en sus ventanas, y
+    // una respuesta de red no se toca.
+    if (!/^file:/i.test(url)) {
+      responder({});
+      return;
+    }
+    let politica = CSP_PERFILES.cerrado;
+    try {
+      politica = CSP_PERFILES[perfilCspDeDocumento(url)] || CSP_PERFILES.cerrado;
+    } catch (e) {
+      /* ante la duda, cerrada */
+    }
+    // A un subrecurso (script, hoja, imagen, fuente) la cabecera no le hace
+    // nada; se pone en todas las respuestas file: para no depender de cómo
+    // clasifique Electron cada carga.
+    const cabeceras = Object.assign({}, detalles.responseHeaders);
+    cabeceras['Content-Security-Policy'] = [politica];
+    responder({ responseHeaders: cabeceras });
+  });
+}
+app.on('session-created', instalarCspEnSesion);
+
 function createLauncherWindow() {
   if (launcherWin && !launcherWin.isDestroyed()) {
     launcherWin.focus();
@@ -1854,6 +2829,7 @@ function createLauncherWindow() {
   launcherWin.on('unmaximize', () => {
     if (launcherWin && !launcherWin.isDestroyed()) launcherWin.setBounds(launcherNormalRect);
   });
+  aplicarPoliticaDeNavegacion(launcherWin.webContents, 'lanzador'); // F3
   launcherWin.loadFile(path.join(__dirname, 'launcher', 'index.html'));
   launcherWin.once('ready-to-show', () => {
     closeSplashWindow(() => {
@@ -1915,6 +2891,7 @@ function showSplashWindow() {
       nodeIntegration: false,
     },
   });
+  aplicarPoliticaDeNavegacion(splashWin.webContents, 'splash'); // F3
   splashWin.loadFile(path.join(__dirname, 'launcher', 'splash.html'));
   splashWin.on('closed', () => {
     splashWin = null;
@@ -2259,14 +3236,79 @@ function collectTeamProfilesFromProjects() {
 // hereda gratis el descifrado con la seguridad de la app si el backup está
 // cifrado (y el mismo error explicativo si la seguridad está bloqueada).
 // ------------------------------------------------------------------
-function getProjectStateForMeetingPrep(projectId) {
+// ------------------------------------------------------------------
+// B1 (15 sept 2026) — CONTEXTO DE UNA PASADA DE `listProjectRows()`.
+//
+// El problema que resuelve: `computeProjectRowExtras()` llamaba a cuatro
+// funciones que, cada una por su cuenta, volvían a leer y parsear el ÚLTIMO
+// BACKUP del mismo proyecto — cuatro `readFileSync` + ocho `JSON.parse` + ocho
+// consultas SQL por proyecto y por refresco, síncronos, en el proceso
+// principal, y con la carpeta de datos en `G:` (Google Drive). Más dos lecturas
+// del `estado.json` de Evaluación de Candidatos. Medido, no estimado.
+//
+// LA CACHÉ VIVE Y MUERE DENTRO DE UNA LLAMADA. No es una caché general ni un
+// estado global: se crea aquí, se pasa hacia abajo y se tira al terminar. Eso
+// es deliberado y es lo que impide que esta optimización empeore **P13** (la
+// frescura: el lanzador sirve del último backup persistido). Una pasada ve un
+// snapshot coherente; la siguiente vuelve a leer disco.
+//
+// `avisados` cumple el otro objetivo: que un backup roto deje rastro SIN
+// repetirlo una vez por cada métrica que dependía de él.
+function nuevoContextoListado() {
+  return {
+    filas: new Map(),          // projectId -> fila de `projects`
+    estados: new Map(),        // projectId -> resultado de getProjectStateForMeetingPrep
+    evaluaciones: new Map(),   // projectId -> resultado de readCandidateEvalPayloadForProject
+    avisados: new Set(),       // `${projectId}|${recurso}` ya registrado en app.log
+  };
+}
+
+// Un solo aviso por proyecto + recurso + pasada. Sin payload, sin rutas
+// completas, sin nada del contenido: id, recurso, clase y un motivo recortado.
+//
+// Esto NO cierra B3 (las 29 rutas que solo hacen console.warn): es el mínimo
+// para que B1 deje de degradarse EN SILENCIO ABSOLUTO. Hasta ahora, un backup
+// corrupto dejaba la tarjeta del proyecto sin semáforo y sin aviso, y no
+// quedaba ni una línea en ningún sitio — ni siquiera un console.warn, porque
+// las funciones no lanzan: devuelven null y el try/catch nunca se ejecuta.
+function avisarExtraDegradado(ctx, projectId, recurso, clase, motivo) {
+  if (!ctx) return;
+  const k = String(projectId) + '|' + recurso;
+  if (ctx.avisados.has(k)) return;
+  ctx.avisados.add(k);
+  const detalle = String(motivo || '').replace(/[\r\n]+/g, ' ').slice(0, 120);
+  appLog(`Listado de proyectos — proyecto ${projectId}: no se pudo leer ${recurso} (${clase}). ` +
+    `Sus indicadores salen vacíos en el lanzador.${detalle ? ' Detalle: ' + detalle : ''}`);
+}
+
+// La fila del proyecto también se memoiza: `computeCandidatePendingInterviews` y
+// `computeCandidateTeamCoverage` la volvían a pedir por su cuenta.
+function filaDeProyecto(projectId, ctx) {
+  if (ctx && ctx.filas.has(projectId)) return ctx.filas.get(projectId);
   const row = dbmod.get('SELECT * FROM projects WHERE id=?', [projectId]);
+  if (ctx) ctx.filas.set(projectId, row);
+  return row;
+}
+
+// `ctx` es OPCIONAL a propósito: sin él, esta función se comporta exactamente
+// como siempre (lee de disco, usa la ruta que materializa). Así los otros
+// llamadores — `meeting:getProjectData`, el helper de Preparación de Reunión —
+// no cambian de comportamiento. Solo el flujo de `projects:list` pasa contexto.
+function getProjectStateForMeetingPrep(projectId, ctx) {
+  if (ctx && ctx.estados.has(projectId)) return ctx.estados.get(projectId);
+  const r = leerProjectStateForMeetingPrep(projectId, ctx);
+  if (ctx) ctx.estados.set(projectId, r);
+  return r;
+}
+function leerProjectStateForMeetingPrep(projectId, ctx) {
+  const row = filaDeProyecto(projectId, ctx);
   if (!row) return { ok: false, error: 'Proyecto no encontrado.' };
   const bkRow = dbmod.get(
     'SELECT * FROM backups WHERE project_id=? ORDER BY created_at DESC LIMIT 1',
     [projectId]
   );
   if (!bkRow) {
+    avisarExtraDegradado(ctx, projectId, 'el último backup', 'sin-backup', '');
     return {
       ok: false,
       error:
@@ -2277,18 +3319,29 @@ function getProjectStateForMeetingPrep(projectId) {
   }
   let dump;
   try {
-    dump = JSON.parse(readBackupPayload(row, bkRow));
+    // B1: con contexto (o sea, desde `projects:list`) se usa la ruta PURA. Sin
+    // `{puro:true}`, `readBackupPayload` llama a `backupsDirForProject()`, que
+    // llama a `ensureProjectBackupDirSlug()` y hace `UPDATE projects SET
+    // backup_dir` + `mkdirSync` — una ESCRITURA lateral en un canal de solo
+    // lectura, justo el patrón que A2 sacó de los caminos del restore (R1).
+    // `rutaBackupsPura()` deriva el mismo slug sin materializar nada.
+    dump = JSON.parse(readBackupPayload(row, bkRow, ctx ? { puro: true } : undefined));
   } catch (e) {
-    return { ok: false, error: (e && e.message) || String(e) };
+    const msg = (e && e.message) || String(e);
+    avisarExtraDegradado(ctx, projectId, 'el último backup',
+      /cifrado|descifrar|seguridad/i.test(msg) ? 'cifrado-no-legible' : 'ilegible', msg);
+    return { ok: false, error: msg };
   }
   const fullKey = Object.keys(dump).find((k) => k.includes('panorama-servicio-full__'));
   if (!fullKey) {
+    avisarExtraDegradado(ctx, projectId, 'el último backup', 'formato-inesperado', 'sin clave panorama-servicio-full');
     return { ok: false, error: 'El backup de este proyecto no tiene el formato esperado.' };
   }
   let projectState;
   try {
     projectState = JSON.parse(dump[fullKey]);
   } catch (e) {
+    avisarExtraDegradado(ctx, projectId, 'el último backup', 'formato-inesperado', (e && e.message) || '');
     return { ok: false, error: 'Backup con formato inesperado.' };
   }
   return { ok: true, state: projectState, exportedAt: bkRow.created_at || null };
@@ -2341,8 +3394,8 @@ function riskCriticidadAlta(r) {
   // renderer, no en este proceso principal.
   return (Number(r.p) || 0) * (Number(r.i) || 0) > 6;
 }
-function computeProjectSemaforo(projectId) {
-  const result = getProjectStateForMeetingPrep(projectId);
+function computeProjectSemaforo(projectId, ctx) {
+  const result = getProjectStateForMeetingPrep(projectId, ctx);
   if (!result.ok) return null; // sin backup todavía, o error al leerlo: nada que mostrar
   const st = result.state || {};
   const today = new Date();
@@ -2385,63 +3438,24 @@ function computeProjectSemaforo(projectId) {
 // si su fecha se acerca o pasa sin haberse confirmado, avisa igual que el
 // fin de servicio real -- se queda con el aviso más grave de los dos.
 // ------------------------------------------------------------------
-function computeServiceEndWarning(projectId) {
-  const result = getProjectStateForMeetingPrep(projectId);
+// E2 (15 sept 2026) — ESTA FUNCIÓN YA NO CALCULA NADA. Toda la lógica vive en
+// `vendor/service-status.js`, que comparten este proceso y el dashboard de cada
+// proyecto. Aquí solo queda lo que es propio de main: de dónde sale el estado.
+//
+// Antes había DOS copias de la misma lógica y habían divergido — el fix de
+// v2.0.52 (`serviceStart` futuro tiene prioridad) entró aquí y nunca en el
+// dashboard, así que el mismo proyecto podía decir «Arranca en 3 días» en el
+// lanzador y «Servicio finaliza en 20 días» en su propio panel. Ver E2 en
+// `claude/pendientes-abiertos.md`.
+//
+// Devuelve el objeto COMPLETO del helper (`kind`/`level`/`days`/`message`), no
+// solo `{level, message}`: `computeProjectRowExtras` proyecta los campos
+// estructurados en la fila, y así `portfolio:summary` dejó de tener que sacar
+// los días con una regex sobre el texto.
+function computeServiceEndWarning(projectId, ctx) {
+  const result = getProjectStateForMeetingPrep(projectId, ctx);
   if (!result.ok) return null;
-  const st = result.state || {};
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  // v2.0.52: bug real reportado con datos reales (IMUS - INSTITUTO DE LAS
-  // MUJERES 2026: "Inicio servicio" 15/09/2026, hoy 12/09/2026, su propio
-  // dashboard marca "día 0 de ~731" -- el servicio no ha arrancado todavía)
-  // -- el lanzador mostraba "✓ Servicio activo" como si ya estuviera en
-  // marcha, porque esta función nunca miraba `serviceStart`, solo
-  // `serviceEnd`. Esto tiene prioridad absoluta sobre cualquier aviso de
-  // fin de servicio: antes de arrancar, "finaliza en X días" (o "activo" a
-  // secas) es confuso o directamente falso -- lo único relevante es cuánto
-  // falta para el inicio.
-  if (st.serviceStart) {
-    const start = new Date(st.serviceStart + 'T00:00:00');
-    const diffStart = Math.round((start - today) / 86400000);
-    if (diffStart > 0) {
-      return { level: 'proximo-inicio', message: `Arranca en ${diffStart} día${diffStart === 1 ? '' : 's'}` };
-    }
-  }
-
-  const RANK = { amarillo: 1, rojo: 2 };
-  let best = null;
-  function consider(level, message) {
-    if (!best || RANK[level] > RANK[best.level]) best = { level, message };
-  }
-  if (st.serviceEnd) {
-    const end = new Date(st.serviceEnd + 'T00:00:00');
-    const diffDays = Math.round((end - today) / 86400000);
-    if (diffDays < 0) {
-      // v2.0.53: pedido explícito -- "que no ponga 'finalizó hace 9 días',
-      // debe poner 'finalizó el 09/12/2026'". La fecha relativa obliga a
-      // hacer la cuenta cada vez que se lee la tarjeta; la fecha concreta
-      // se lee de un vistazo y no cambia de un día para otro solo por
-      // volver a abrir el lanzador. `st.serviceEnd` ya viene en aaaa-mm-dd
-      // (el propio input de fecha) -- se reordena a dd/mm/aaaa sin pasar
-      // por Date/toLocaleDateString, para no depender de la configuración
-      // regional de esta máquina.
-      const [y, m, d] = st.serviceEnd.split('-');
-      consider('rojo', `Finalizó el ${d}/${m}/${y}`);
-    } else if (diffDays <= 30) {
-      consider('amarillo', `Servicio finaliza en ${diffDays} día${diffDays === 1 ? '' : 's'}`);
-    }
-  }
-  if (st.prorrogaEstimada && st.prorrogaEstimada.fecha && !st.enProrroga) {
-    const estEnd = new Date(st.prorrogaEstimada.fecha + 'T00:00:00');
-    const diffEst = Math.round((estEnd - today) / 86400000);
-    if (diffEst < 0) {
-      consider('rojo', `Prórroga estimada sin confirmar (venció hace ${Math.abs(diffEst)} día${Math.abs(diffEst) === 1 ? '' : 's'})`);
-    } else if (diffEst <= 30) {
-      consider('amarillo', `Prórroga estimada sin confirmar — quedan ${diffEst} día${diffEst === 1 ? '' : 's'}`);
-    }
-  }
-  return best;
+  return serviceStatusMod.serviceStatus(result.state || {}, new Date());
 }
 
 function projectDashboardDir(projectId) {
@@ -2511,15 +3525,46 @@ function fixVendorScriptPaths(html) {
   // no se vio afectada porque esa ventana NO se hornea (se carga siempre
   // directamente desde la carpeta de la app).
   const vendorWindowChrome = pathToFileURL(path.join(__dirname, 'vendor', 'window-chrome.css')).href;
-  return html
-    .replace('<script src="../vendor/xlsx.full.min.js"></script>', `<script src="${vendorXlsx}"></script>`)
-    .replace('<script src="../vendor/pptxgen.bundle.js"></script>', `<script src="${vendorPptx}"></script>`)
-    .replace('src="../assets/icon-256.png"', `src="${iconPath}"`)
-    .replace('<link rel="stylesheet" href="../vendor/fonts/fonts.css">', `<link rel="stylesheet" href="${vendorFonts}">`)
-    .replace('<script src="../vendor/theme.js"></script>', `<script src="${vendorTheme}"></script>`)
-    .replace('<link rel="stylesheet" href="../vendor/motion.css">', `<link rel="stylesheet" href="${vendorMotion}">`)
-    .replace('<script src="../vendor/modal.js"></script>', `<script src="${vendorModal}"></script>`)
-    .replace('<link rel="stylesheet" href="../vendor/window-chrome.css">', `<link rel="stylesheet" href="${vendorWindowChrome}">`);
+  // E2 (15 sept 2026): mismo problema, mismo arreglo, para
+  // vendor/service-status.js -- la fuente única del estado temporal del
+  // servicio. Sin esto, la copia horneada de cada proyecto no encontraría
+  // `PanoramaServiceStatus` y `computeServiceEndWarningLocal()` devolvería
+  // siempre `null`: el aviso de fin de servicio desaparecería del dashboard
+  // sin ningún error visible, que es exactamente el modo de fallo que ya
+  // tuvieron xlsx/pptx, theme.js y modal.js antes de entrar en esta lista.
+  const vendorServiceStatus = pathToFileURL(path.join(__dirname, 'vendor', 'service-status.js')).href;
+  // P17 (17 sept 2026) — los nueve reemplazos se hacían con
+  // `String.replace(cadena, cadena)`, que arrastraba DOS defectos de la misma
+  // familia:
+  //   1. con patrón de CADENA solo se sustituye la PRIMERA coincidencia. Ocho
+  //      de los nueve assets aparecen una sola vez y por eso nunca se notó,
+  //      pero `src="../assets/icon-256.png"` aparece DOS veces —pantalla de
+  //      carga y barra de título— en el dashboard Y en el Directorio: la
+  //      segunda se quedaba con la ruta relativa, que desde
+  //      userData/projects/<id>/ no resuelve, y el icono salía roto.
+  //   2. la URL se pasaba como CADENA DE REEMPLAZO, donde `$&`, '$`' y `$'`
+  //      tienen significado. Una carpeta de instalación que los contuviera
+  //      corrompía el horneado: medido, con `$'` el archivo pasaba de 373 KB a
+  //      189 MB y quedaban 2210 rutas sin resolver.
+  // Se sustituye por UN SOLO patrón para los nueve: expresión regular GLOBAL
+  // (resuelve todas las ocurrencias) y FUNCIÓN de reemplazo (la ruta se
+  // inserta literal, sin semántica de `$`).
+  const sustituirTodo = (texto, busca, pone) =>
+    texto.replace(new RegExp(busca.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), () => pone);
+  const ASSETS = [
+    ['<script src="../vendor/service-status.js"></script>', `<script src="${vendorServiceStatus}"></script>`],
+    ['<script src="../vendor/xlsx.full.min.js"></script>', `<script src="${vendorXlsx}"></script>`],
+    ['<script src="../vendor/pptxgen.bundle.js"></script>', `<script src="${vendorPptx}"></script>`],
+    ['src="../assets/icon-256.png"', `src="${iconPath}"`],
+    ['<link rel="stylesheet" href="../vendor/fonts/fonts.css">', `<link rel="stylesheet" href="${vendorFonts}">`],
+    ['<script src="../vendor/theme.js"></script>', `<script src="${vendorTheme}"></script>`],
+    ['<link rel="stylesheet" href="../vendor/motion.css">', `<link rel="stylesheet" href="${vendorMotion}">`],
+    ['<script src="../vendor/modal.js"></script>', `<script src="${vendorModal}"></script>`],
+    ['<link rel="stylesheet" href="../vendor/window-chrome.css">', `<link rel="stylesheet" href="${vendorWindowChrome}">`],
+  ];
+  let salida = html;
+  for (const [busca, pone] of ASSETS) salida = sustituirTodo(salida, busca, pone);
+  return salida;
 }
 
 // Lee el factory-seed que YA hay horneado en el archivo actual de un proyecto
@@ -2537,11 +3582,28 @@ function readCurrentFactorySeed(projectId) {
   return null;
 }
 
+// F1 — el seed va DENTRO de un <script>, y ahí el parser de HTML no entiende
+// de comillas JSON: la secuencia `</script` cierra el bloque aunque esté en
+// mitad de un string. Un nombre de proyecto importado que la contenga (viene
+// de projects:create, que valida la FORMA del .json pero no el contenido de
+// los textos) partía el archivo horneado en dos y todo lo que seguía pasaba a
+// ser markup del documento, ejecutándose en el ARRANQUE, antes de cualquier
+// render. Se escapa `<` como `<`: es un escape JSON válido, así que
+// `JSON.parse` devuelve el `<` original —el valor se recupera EXACTO— pero la
+// secuencia `</script` no llega a existir literalmente en el archivo.
+function serializarSeedParaScript(seed) {
+  return JSON.stringify(seed).replace(/</g, '\\u003c');
+}
+
 function writeFactorySeedIntoTemplate(projectId, seed) {
-  const seedTag = `<script type="application/json" id="factory-seed">${JSON.stringify(seed)}</script>`;
+  const seedTag = `<script type="application/json" id="factory-seed">${serializarSeedParaScript(seed)}</script>`;
   const html = fixVendorScriptPaths(readStockTemplate()).replace(
     /<script type="application\/json" id="factory-seed">[\s\S]*?<\/script>/,
-    seedTag
+    // F1 — replacement FUNCTION, no string: como cadena, `$&`, `$'`, '$`' y
+    // `$1` son patrones de String.replace, así que un título con `$'` copiaba
+    // el resto de la plantilla dentro del seed y `$&` reinyectaba la etiqueta.
+    // Eso no lo arregla ningún escape de HTML: hay que quitarle la semántica.
+    () => seedTag
   );
   fs.writeFileSync(projectDashboardFile(projectId), html, 'utf8');
 }
@@ -2626,6 +3688,8 @@ function ensureProjectDashboardFileFresh(row) {
         };
     writeFactorySeedIntoTemplate(row.id, seed);
   } catch (e) {
+    // B3: pasa una vez por apertura de proyecto, no en bucle -> appLog directo.
+    appLog(`Proyecto ${row.id} — no se pudo refrescar su copia HTML al abrirlo: ${motivoSinRutas(e)}`);
     console.warn('No se pudo refrescar la copia HTML del proyecto al abrirlo:', e);
   }
 }
@@ -2813,6 +3877,7 @@ function openProjectWindow(row) {
   const projectNormalRect = normalRectFor(projectBounds, projectWorkArea);
   win.maximize();
   win.on('unmaximize', () => { if (!win.isDestroyed()) win.setBounds(projectNormalRect); });
+  aplicarPoliticaDeNavegacion(win.webContents, 'proyecto'); // F3
   win.loadFile(resolveDashboardFileForProject(row));
   // v2.0.42: bug real encontrado probando en Windows real -- el icono de
   // maximizar/restaurar de la barra de título propia salía mostrando
@@ -2900,6 +3965,7 @@ function openMeetingPrepWindow(row) {
       ],
     },
   });
+  aplicarPoliticaDeNavegacion(win.webContents, 'preparacion'); // F3
   win.loadFile(path.join(__dirname, 'preparacion-reunion', 'plantilla_preparacion_reunion.html'));
   win.once('ready-to-show', () => { if (!win.isDestroyed()) win.show(); });
   win.on('maximize', () => { if (!win.isDestroyed()) win.webContents.send('win:maximizedChanged', true); });
@@ -2974,6 +4040,7 @@ function openCandidateEvalWindow(row, opts) {
       ],
     },
   });
+  aplicarPoliticaDeNavegacion(win.webContents, 'evaluacion'); // F3
   win.loadFile(path.join(__dirname, 'evaluacion-candidatos', 'plantilla_evaluacion_candidatos.html'));
   win.once('ready-to-show', () => { if (!win.isDestroyed()) win.show(); });
   win.on('maximize', () => { if (!win.isDestroyed()) win.webContents.send('win:maximizedChanged', true); });
@@ -3034,6 +4101,7 @@ function writeLocalStorageDumpToPartition(partitionName, dump, { clearFirst } = 
       show: false,
       webPreferences: { partition: partitionName },
     });
+    aplicarPoliticaDeNavegacion(helperWin.webContents, 'volcado-localstorage'); // F3
     helperWin
       .loadFile(path.join(__dirname, 'dashboard', 'restore-helper.html'))
       .then(async () => {
@@ -3085,6 +4153,7 @@ function runInPartition(partitionName, script) {
         /* no crítico */
       }
     };
+    aplicarPoliticaDeNavegacion(helperWin.webContents, 'particion-auxiliar'); // F3
     helperWin
       .loadFile(path.join(__dirname, 'dashboard', 'restore-helper.html'))
       .then(async () => {
@@ -3979,6 +5048,7 @@ function openBackupPickerWindow(row, parentWin) {
       ],
     },
   });
+  aplicarPoliticaDeNavegacion(win.webContents, 'selector-backups'); // F3
   win.loadFile(path.join(__dirname, 'backup-picker', 'index.html'));
   win.once('ready-to-show', () => { if (!win.isDestroyed()) win.show(); });
   win.on('maximize', () => { if (!win.isDestroyed()) win.webContents.send('win:maximizedChanged', true); });
@@ -4466,14 +5536,27 @@ function rekeyAllUserFiles(oldKey, newKey, opts) {
     const rp = rekeyPuedeEmpezar();
     if (!rp.puede) {
       appLog(`Seguridad — no se inicia el re-cifrado: ${rp.motivo}`);
+      // C1-A (16 sept 2026): el texto anterior prometía "se resuelva sola" para
+      // CUALQUIER material pendiente. Solo es posible cuando la carpeta tiene su
+      // journal; sin él, el arranque siguiente se detiene con PS-2006 y la
+      // salida es manual. Se dice lo que de verdad va a pasar.
+      const sinRegistro = (rp.pendientes || []).some((x) => !Array.isArray(x.archivos) || !x.archivos.includes('journal.json'));
       return {
         ok: false,
         error: rp.clase === 'no-verificable'
           ? 'No se ha podido comprobar si hay una restauración sin terminar. No se ha tocado nada; ' +
             'vuelve a intentarlo.\n\nDetalle: ' + rp.motivo
-          : 'Hay una restauración de backup sin terminar de limpiar. Cierra y vuelve a abrir Panorama del ' +
-            'Servicio para que se resuelva sola, y cambia la contraseña después. No se ha tocado nada.' +
-            errorCodeSuffix('PS-2006'),
+          : sinRegistro
+            ? 'Hay material de una restauración de backup anterior SIN su registro. No se ha tocado nada.\n\n' +
+              'Ese material no se puede resolver solo: al volver a abrir, Panorama del Servicio se detendrá con ' +
+              'el aviso PS-2006 hasta que alguien revise esa carpeta. No la borres sin revisarla: puede ' +
+              'contener la copia del estado anterior del proyecto.' +
+              errorCodeSuffix('PS-2006')
+            : 'Hay una restauración de backup sin terminar de limpiar. No se ha tocado nada.\n\n' +
+              'Cierra y vuelve a abrir Panorama del Servicio: al arrancar se intentará terminar con su ' +
+              'registro. Si no se puede demostrar cómo quedó, la aplicación se detendrá con el aviso PS-2006 ' +
+              'en vez de seguir. Cambia la contraseña después.' +
+              errorCodeSuffix('PS-2006'),
       };
     }
   }
@@ -4517,9 +5600,14 @@ function rekeyAllUserFiles(oldKey, newKey, opts) {
     // limpieza que no terminó). Aunque ese estado no contiene ninguna
     // migración recuperable, seguir adelante sobre él sí sería peligroso: sus
     // `.old` sobrantes harían que una recuperación posterior creyera que ya
-    // se intercambiaron archivos que en realidad no se tocaron. Esos restos
-    // los retira sola la recuperación del arranque, así que la salida es
-    // simplemente cerrar y volver a abrir la app.
+    // se intercambiaron archivos que en realidad no se tocaron.
+    //
+    // C1-A (16 sept 2026): este comentario y el mensaje decían que "la
+    // recuperación del arranque retira sola esos restos". NO es así: con el
+    // journal v2, una carpeta de trabajo SIN journal hace que el arranque se
+    // detenga con PS-2004 (`recoverInterruptedRekeyIfAny`, rama 'sin-journal'),
+    // y así debe seguir — puede contener `.old` que son la única copia de los
+    // bytes anteriores. Lo que cambia es que el mensaje ya no lo promete.
     if (fs.existsSync(staging)) {
       const conJournal = fs.existsSync(rekeyJournalPath());
       return {
@@ -4530,8 +5618,14 @@ function rekeyAllUserFiles(oldKey, newKey, opts) {
             : 'Ha quedado material de un cambio de Seguridad anterior sin recoger.') +
           ' No se ha tocado nada.\n\n' +
           'Si tienes Panorama del Servicio abierto en otra ventana o en otro equipo contra la misma carpeta ' +
-          'de datos, ciérralo antes de reintentarlo. Si no es el caso, cierra esta app y vuelve a abrirla: al ' +
-          'arrancar se resuelve sola.\n\n' +
+          'de datos, ciérralo antes de reintentarlo.' +
+          (conJournal
+            ? ' Si no es el caso, cierra esta app y vuelve a abrirla: al arrancar se intentará terminar o ' +
+              'deshacer ese cambio con su registro, y si no se puede demostrar cómo quedó, la aplicación se ' +
+              'detendrá con el aviso PS-2004 en vez de seguir.\n\n'
+            : ' Si no es el caso, esa carpeta NO tiene registro y no se puede resolver sola: al volver a abrir, ' +
+              'Panorama del Servicio se detendrá con el aviso PS-2004 hasta que alguien la revise. No la borres ' +
+              'sin revisarla: puede contener la única copia de archivos anteriores.\n\n') +
           `Carpeta de trabajo:\n${staging}` +
           errorCodeSuffix('PS-2004'),
       };
@@ -4814,7 +5908,7 @@ function rekeyAllUserFiles(oldKey, newKey, opts) {
     };
   } finally {
     rekeyInProgress = false;
-    try { dbmod.soltarExclusiva(ex.token); } catch (e4) {}
+    soltarExclusivaConRastro(ex.token, 'la operación de seguridad');
   }
 }
 
@@ -4845,7 +5939,9 @@ function recoverInterruptedRekeyIfAny() {
     // se escribe ANTES de retirar la carpeta), así que su ausencia ya no
     // demuestra "residuo de una limpieza". Y dentro puede haber `.old`, que
     // son la única copia de los bytes anteriores.
-    return cerrar('hay una carpeta de trabajo de un cambio de Seguridad sin su registro', null);
+    // C1-A: `sinRegistro` solo cambia el TEXTO del aviso de arranque (volver a
+    // abrir no lo arregla); el fail-closed es exactamente el mismo.
+    return cerrar('hay una carpeta de trabajo de un cambio de Seguridad sin su registro', null, { sinRegistro: true });
   }
   if (lec.clase === 'ilegible') {
     return cerrar('el registro del cambio de Seguridad no se puede leer', lec.motivo);
@@ -4999,7 +6095,7 @@ function recoverInterruptedRekeyIfAny() {
   } catch (e) {
     return cerrar('fallo inesperado al recuperar un cambio de Seguridad interrumpido', String((e && e.message) || e));
   } finally {
-    try { dbmod.soltarExclusiva(ex.token); } catch (e2) {}
+    soltarExclusivaConRastro(ex.token, 'la operación de seguridad');
   }
 }
 
@@ -5429,6 +6525,12 @@ function slugDeProyectoPuro(row) {
 function rutaBackupsPura(row) {
   return path.join(app.getPath('userData'), 'backups', slugDeProyectoPuro(row));
 }
+// B1: la hermana pura de `candidateEvalFileForProject()`. Esa materializa
+// (ensureProjectBackupDirSlug + mkdirSync); esta solo deriva la ruta, para
+// poder LEER desde `projects:list` sin escribir nada.
+function rutaEvaluacionPura(row) {
+  return path.join(rutaBackupsPura(row), 'evaluacion-candidatos', 'estado.json');
+}
 function rutaDashboardPura(projectId) {
   return path.join(app.getPath('userData'), 'projects', String(projectId));
 }
@@ -5739,7 +6841,7 @@ async function finalizarPurga(j) {
     if (!p.ok) return { ok: false, motivo: p.motivo };
     const v = await vaciarParticionDe(j);
     if (!v.ok) return v;
-    try { fs.unlinkSync(journalBorradoPath(j.action_id)); } catch (e) {}
+    borrarJournalResuelto(journalBorradoPath(j.action_id), 'un borrado');
     return { ok: true };
   } catch (e) {
     return { ok: false, motivo: String((e && e.message) || e) };
@@ -5838,7 +6940,7 @@ async function ejecutarBorrado(opts) {
     const gj = escribirJsonDurable(journalBorradoPath(actionId), journal);
     if (!gj.ok) throw new Error(gj.motivo);
   } catch (e) {
-    try { fs.unlinkSync(journalBorradoPath(actionId)); } catch (e2) {}
+    borrarJournalResuelto(journalBorradoPath(actionId), 'un borrado');
     return noAplicado('No se pudo registrar la operación antes de borrar: ' + String((e && e.message) || e), true);
   }
 
@@ -5856,7 +6958,7 @@ async function ejecutarBorrado(opts) {
         false, { bloqueo: 'accion-no-demostrable', actionId, vuelta: v });
     }
     try { fs.rmSync(path.join(borradosDir(), actionId), { recursive: true, force: true }); } catch (e2) {}
-    try { fs.unlinkSync(journalBorradoPath(actionId)); } catch (e2) {}
+    borrarJournalResuelto(journalBorradoPath(actionId), 'un borrado');
     return noAplicado('No se pudo retirar lo que se iba a borrar: ' + String((e && e.message) || e), true);
   }
 
@@ -5890,7 +6992,7 @@ async function ejecutarBorrado(opts) {
         false, { bloqueo: 'accion-no-demostrable', actionId, vuelta: v });
     }
     try { fs.rmSync(path.join(borradosDir(), actionId), { recursive: true, force: true }); } catch (e2) {}
-    try { fs.unlinkSync(journalBorradoPath(actionId)); } catch (e2) {}
+    borrarJournalResuelto(journalBorradoPath(actionId), 'un borrado');
     return noAplicado(
       e && e.kind === 'base-cambiada'
         ? 'Otro equipo guardó cambios mientras se borraba esto. No se ha modificado nada; vuelve a intentarlo.'
@@ -5926,7 +7028,7 @@ async function resolverBorradoPendiente(j) {
     return { ok: false, actionId: j.action_id, caso: 'A', clase: 'rollback-bloqueado', vuelta: v };
   }
   try { fs.rmSync(path.join(borradosDir(), j.action_id), { recursive: true, force: true }); } catch (e) {}
-  try { fs.unlinkSync(journalBorradoPath(j.action_id)); } catch (e) {}
+  borrarJournalResuelto(journalBorradoPath(j.action_id), 'un borrado');
   appLog(`Borrado ${j.action_id} (${j.tipo}) no llegó a confirmarse: deshecho, todo queda como estaba.`);
   return { ok: true, actionId: j.action_id, caso: 'A', clase: 'repuesto' };
 }
@@ -6175,7 +7277,7 @@ function ejecutarAccionDeArchivo(opts) {
       // POST-confirmación: la fila SÍ está. NO se deshace el archivo — eso
       // dejaría "fila nueva + archivo viejo", que es el estado prohibido nº 3.
       try { fs.unlinkSync(old); } catch (e2) {}
-      try { fs.unlinkSync(journalAccionPath(actionId)); } catch (e2) {}
+      borrarJournalResuelto(journalAccionPath(actionId), 'una acción de archivo');
       appLog(`ERROR PS-2006 — la acción ${actionId} (${journal.tipo}) SÍ se guardó pero no se pudo verificar: ${e.message}`);
       return {
         ok: true, aplicado: true, verificado: false, requiereReinicio: true, actionId,
@@ -6204,7 +7306,7 @@ function ejecutarAccionDeArchivo(opts) {
 
   // ---- F5: limpiar --------------------------------------------------------
   try { fs.unlinkSync(old); } catch (e) {}
-  try { fs.unlinkSync(journalAccionPath(actionId)); } catch (e) {}
+  borrarJournalResuelto(journalAccionPath(actionId), 'una acción de archivo');
   return { ok: true, aplicado: true, verificado: true, actionId };
 }
 
@@ -6272,6 +7374,8 @@ function migrateLegacyInlineBackupsToFiles() {
   try {
     dbmod.vacuum();
   } catch (e) {
+    // B3: la migración ocurre una sola vez -> appLog directo, sin dedupe.
+    appLog('Migración de backups antiguos — no se pudo compactar la base de datos después: ' + motivoSinRutas(e));
     console.warn('No se pudo compactar la base de datos tras la migración:', e);
   }
 }
@@ -6393,6 +7497,206 @@ async function purgarBackupsAntiguos(projectId, dirBackups) {
     appLog('ERROR — mantenimiento de backups falló (el backup SÍ se guardó): ' + String((e && e.message) || e));
     return { ok: false, aplicado: false, purgados: 0, error: String((e && e.message) || e) };
   }
+}
+
+// ===========================================================================
+// C1-A (16 sept 2026) — INVENTARIO DE RESIDUOS AL ARRANCAR.
+//                       LEER → CLASIFICAR → REGISTRAR. Nada más.
+//
+// Es el "contar y registrar" que aprobaron los Bloques 4 (§9) y 5 (d) y que no
+// llegó a implementarse. NO limpia: ni borra, ni mueve, ni aparta a
+// cuarentena, ni crea carpetas, ni escribe en la base de datos (usa rutas
+// PURAS, nunca `backupsDirForProject`). Deja UNA línea agregada en app.log,
+// sin rutas ni nombres de proyecto.
+//
+// Por qué no borra (diagnóstico C1): "archivo sin fila" NO demuestra "basura".
+// Cinco backups reales sin fila nacieron de una sobrescritura entre equipos;
+// en una carpeta compartida la fila del otro equipo puede llegar DESPUÉS que
+// su archivo; y un `.tmp-fallido-` puede ser la única copia íntegra de un
+// cambio. La retirada de lo histórico (C1-B) queda diferida hasta tener
+// garantías multi-PC/Drive.
+//
+// Coste: nombres, listados de directorio y consultas a la BD. No hace `stat`
+// por archivo, no calcula hashes, no descifra backups y no entra en las cachés
+// de Chromium (de `Partitions` solo mira el primer nivel). El ÚNICO contenido
+// que abre es `estado.json`, y solo en los proyectos que tienen algún CV en
+// disco: sin él no se puede saber si un CV está referenciado.
+// ===========================================================================
+const RESIDUO_TMP_BD = /^panorama\.sqlite3(\.gen)?\.tmp-|^panorama\.sqlite3\.gen\.(interrumpido|creacion-fallida|bootstrap-fallido)-/;
+const RESIDUO_TMP_ACCION = /\.tmp-[0-9a-f]{32}-[0-9a-f]{32}$/i;
+const RESIDUO_OLD_ACCION = /\.old-[0-9a-f]{32}$/i;
+const RESIDUO_ESCRIBIENDO = /\.escribiendo-\d+-\d+$/;
+
+// Referencias a CV de un `estado.json`, o null si NO se puede demostrar cuáles
+// son (ausente, ilegible, cifrado sin clave validada, formato desconocido).
+function referenciasDeCv(ruta, existe, r) {
+  if (!existe) return null;   // "no lo veo" no es "no referencia nada"
+  let texto;
+  try { texto = fs.readFileSync(ruta, 'utf8'); } catch (e) { return null; }
+  r.estadosLeidos++;
+  if (securitymod.looksEncrypted(texto)) {
+    if (!securityKey || bloqueoDeSeguridad()) return null;
+    try { texto = securitymod.decryptString(securityKey, texto); } catch (e) { return null; }
+    r.estadosDescifrados++;
+  }
+  let estado = null;
+  try { estado = JSON.parse(texto); } catch (e) { return null; }
+  if (!estado || !Array.isArray(estado.evaluaciones)) return null;
+  return new Set(estado.evaluaciones.map((x) => x && x.cvStoredName).filter(Boolean)
+    .map((s) => String(s).toLowerCase()));
+}
+
+function inventarioDeResiduos() {
+  const r = {
+    backupsSinFila: 0, anteriores: 0, intercalados: 0, posteriores: 0, sinPosicion: 0,
+    filasSinArchivo: 0, reunionesSinFila: 0, estadosSinFila: 0,
+    cvSinReferencia: 0, cvNoDecidibles: 0,
+    carpetasSinProyecto: 0, particionesSinProyecto: 0, copiasEmergenciaSinProyecto: 0, filasSinProyecto: 0,
+    temporalesBd: 0, temporalesAccion: 0, rescates: 0,
+    journalsAjenos: 0, materialPendiente: 0, sondas: 0, parchesPendientes: 0,
+    noListables: 0, estadosLeidos: 0, estadosDescifrados: 0,
+  };
+  // Solo NOMBRES. ENOENT = no hay nada ([]); cualquier otro error = no se
+  // puede saber (null), y se cuenta aparte en vez de tratarlo como vacío.
+  // `desktop.ini` no es de la app: no se cuenta como nada.
+  const listar = (dir) => {
+    try {
+      return fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.name.toLowerCase() !== 'desktop.ini');
+    } catch (e) {
+      if (e && e.code === 'ENOENT') return [];
+      r.noListables++;
+      return null;
+    }
+  };
+  const minus = (s) => String(s).toLowerCase();
+  const archivos = (ents) => (ents || []).filter((e) => e.isFile());
+  const carpetas = (ents) => (ents || []).filter((e) => e.isDirectory());
+  const esJson = (e) => e.isFile() && /\.json$/i.test(e.name);
+  const deAccion = (n) => RESIDUO_TMP_ACCION.test(n) || RESIDUO_OLD_ACCION.test(n) || RESIDUO_ESCRIBIENDO.test(n);
+  // El sello vale para los DOS formatos de nombre: el actual
+  // (`backup_<sello>_<hex>.json`) y el de las versiones anteriores, que no
+  // llevaba sufijo (`backup_<sello>.json`) — que es el de los huérfanos reales.
+  const sello = (n) => {
+    const m = /^backup_(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z[._]/i.exec(n);
+    return m ? Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}.${m[5]}Z`) : NaN;
+  };
+  const ud = app.getPath('userData');
+
+  // --- raíz de la carpeta de datos ------------------------------------------
+  for (const e of archivos(listar(ud))) {
+    if (RESIDUO_TMP_BD.test(e.name)) r.temporalesBd++;
+    else if (e.name.startsWith('.panorama-write-check-')) r.sondas++;
+    else if (/^patch-pending-.*\.asar$/i.test(e.name)) r.parchesPendientes++;
+    else if (RESIDUO_ESCRIBIENDO.test(e.name)) r.temporalesAccion++;
+  }
+
+  // --- lo que las cuatro recuperaciones NO han resuelto ----------------------
+  // Si el arranque ha llegado hasta aquí, lo PROPIO ya está resuelto: lo que
+  // queda es de otro equipo o material que no gobierna nadie. Por nombre; no
+  // se abre ningún journal.
+  for (const dir of [accionesDir(), borradosDir()]) {
+    const ents = listar(dir) || [];
+    r.journalsAjenos += ents.filter(esJson).length;
+    r.materialPendiente += ents.filter((e) => !esJson(e)).length;
+  }
+  r.materialPendiente += (listar(restauracionesDir()) || []).length;
+  if (fs.existsSync(rekeyStagingDir())) r.materialPendiente++;
+
+  // --- base de datos (solo lectura) ------------------------------------------
+  const proyectos = dbmod.all('SELECT id, name, backup_dir, partition_name FROM projects');
+  for (const t of ['backups', 'meeting_preps', 'candidate_evals']) {
+    r.filasSinProyecto += dbmod.get(`SELECT COUNT(*) AS c FROM ${t} WHERE project_id NOT IN (SELECT id FROM projects)`).c;
+  }
+  const slugs = new Set(proyectos.map((p) => minus(slugDeProyectoPuro(p))));
+  const ids = new Set(proyectos.map((p) => String(p.id)));
+  const particiones = new Set(proyectos.map((p) => minus(String(p.partition_name || '').replace(/^persist:/, ''))));
+
+  r.carpetasSinProyecto += carpetas(listar(path.join(ud, 'backups'))).filter((e) => !slugs.has(minus(e.name))).length;
+  r.carpetasSinProyecto += carpetas(listar(path.join(ud, 'projects'))).filter((e) => !ids.has(e.name)).length;
+  // De `Partitions` SOLO el primer nivel: las cachés de Chromium no se recorren.
+  r.particionesSinProyecto = carpetas(listar(path.join(ud, 'Partitions'))).filter((e) => !particiones.has(minus(e.name))).length;
+  r.copiasEmergenciaSinProyecto = carpetas(listar(path.join(app.getPath('appData'), 'panorama-app-safety-backups')))
+    .filter((e) => !slugs.has(minus(e.name))).length;
+
+  // --- por proyecto: archivo <-> fila, por NOMBRE ----------------------------
+  for (const p of proyectos) {
+    const base = path.join(ud, 'backups', slugDeProyectoPuro(p));
+
+    const filas = dbmod.all("SELECT created_at, file_path FROM backups WHERE project_id=? AND file_path IS NOT NULL AND file_path != ''", [p.id]);
+    const conFila = new Set(filas.map((f) => minus(f.file_path)));
+    const tiempos = filas.map((f) => Date.parse(f.created_at)).filter(Number.isFinite);
+    const tMin = tiempos.length ? Math.min(...tiempos) : NaN;
+    const tMax = tiempos.length ? Math.max(...tiempos) : NaN;
+    const ents = listar(base);
+    for (const e of archivos(ents)) {
+      if (deAccion(e.name)) { r.temporalesAccion++; continue; }
+      if (/^rescate-restauracion-/i.test(e.name)) { r.rescates++; continue; }
+      if (!/^backup_.*\.json$/i.test(e.name) || conFila.has(minus(e.name))) continue;
+      // Posición respecto a las filas de su proyecto: un huérfano ANTERIOR a
+      // todas es un resto de purga; uno INTERCALADO perdió su fila por otra vía.
+      r.backupsSinFila++;
+      const t = sello(e.name);
+      if (!Number.isFinite(t) || !Number.isFinite(tMin)) r.sinPosicion++;
+      else if (t < tMin) r.anteriores++;
+      else if (t > tMax) r.posteriores++;
+      else r.intercalados++;
+    }
+    if (ents !== null) {
+      const enDisco = new Set(archivos(ents).map((e) => minus(e.name)));
+      r.filasSinArchivo += [...conFila].filter((n) => !enDisco.has(n)).length;
+    }
+
+    const reu = listar(path.join(base, 'reuniones'));
+    const conFilaR = new Set(dbmod.all('SELECT file_path FROM meeting_preps WHERE project_id=?', [p.id]).map((f) => minus(f.file_path)));
+    for (const e of archivos(reu)) {
+      if (deAccion(e.name)) r.temporalesAccion++;
+      else if (/^reunion_.*\.json$/i.test(e.name) && !conFilaR.has(minus(e.name))) r.reunionesSinFila++;
+    }
+    if (reu !== null) {
+      const enDiscoR = new Set(archivos(reu).map((e) => minus(e.name)));
+      r.filasSinArchivo += [...conFilaR].filter((n) => !enDiscoR.has(n)).length;
+    }
+
+    const dirEval = path.join(base, 'evaluacion-candidatos');
+    const ev = listar(dirEval);
+    const filaEval = dbmod.get('SELECT project_id FROM candidate_evals WHERE project_id=?', [p.id]);
+    const hayEstado = archivos(ev).some((e) => e.name === 'estado.json');
+    for (const e of archivos(ev)) if (deAccion(e.name)) r.temporalesAccion++;
+    if (hayEstado && !filaEval) r.estadosSinFila++;
+    if (ev !== null && filaEval && !hayEstado) r.filasSinArchivo++;
+
+    const cvs = archivos(listar(path.join(dirEval, 'cv')));
+    if (!cvs.length) continue;
+    const refs = referenciasDeCv(path.join(dirEval, 'estado.json'), hayEstado, r);
+    if (!refs) { r.cvNoDecidibles += cvs.length; continue; }
+    r.cvSinReferencia += cvs.filter((e) => !refs.has(minus(e.name))).length;
+  }
+  return r;
+}
+
+// Nunca lanza: un inventario que falla no puede impedir abrir la aplicación.
+function registrarInventarioDeResiduos() {
+  const t0 = Date.now();
+  let r = null;
+  try {
+    r = inventarioDeResiduos();
+  } catch (e) {
+    appLog('Residuos — el inventario del arranque no se pudo completar; no se ha tocado nada: ' + motivoSinRutas(e));
+    return null;
+  }
+  r.ms = Date.now() - t0;
+  appLog(
+    'Residuos — inventario del arranque (solo lectura; no se ha borrado ni movido nada): ' +
+    `backupsSinFila=${r.backupsSinFila} [anteriores=${r.anteriores} intercalados=${r.intercalados} ` +
+    `posteriores=${r.posteriores} sinPosicion=${r.sinPosicion}], filasSinArchivo=${r.filasSinArchivo}, ` +
+    `reunionesSinFila=${r.reunionesSinFila}, estadosSinFila=${r.estadosSinFila}, ` +
+    `cvSinReferencia=${r.cvSinReferencia}, cvNoDecidibles=${r.cvNoDecidibles}, ` +
+    `carpetasSinProyecto=${r.carpetasSinProyecto}, particionesSinProyecto=${r.particionesSinProyecto}, ` +
+    `copiasEmergenciaSinProyecto=${r.copiasEmergenciaSinProyecto}, filasSinProyecto=${r.filasSinProyecto}, ` +
+    `temporalesBd=${r.temporalesBd}, temporalesAccion=${r.temporalesAccion}, rescates=${r.rescates}, ` +
+    `journalsAjenos=${r.journalsAjenos}, materialPendiente=${r.materialPendiente}, sondas=${r.sondas}, ` +
+    `parchesPendientes=${r.parchesPendientes}, noListables=${r.noListables} (${r.ms} ms)`);
+  return r;
 }
 
 // Los dos menús nativos que llaman a `deleteProjectById` decidían por nada:
@@ -6552,7 +7856,8 @@ async function openSecurityWindow(mode, parentWin) {
         nodeIntegration: false,
       },
     });
-    securityWin.loadFile(path.join(__dirname, 'security-window', 'index.html'));
+    aplicarPoliticaDeNavegacion(securityWin.webContents, 'seguridad'); // F3
+  securityWin.loadFile(path.join(__dirname, 'security-window', 'index.html'));
     securityWin.webContents.once('did-finish-load', () => {
       if (securityWin && !securityWin.isDestroyed()) {
         securityWin.webContents.send('security-win:init', {
@@ -6619,7 +7924,8 @@ function promptForPassword(parentWin, message) {
         nodeIntegration: false,
       },
     });
-    passwordPromptWin.loadFile(path.join(__dirname, 'launcher', 'password-prompt.html'));
+    aplicarPoliticaDeNavegacion(passwordPromptWin.webContents, 'contrasena'); // F3
+  passwordPromptWin.loadFile(path.join(__dirname, 'launcher', 'password-prompt.html'));
     passwordPromptWin.once('ready-to-show', () => {
       if (passwordPromptWin && !passwordPromptWin.isDestroyed()) passwordPromptWin.show();
     });
@@ -6672,6 +7978,9 @@ function rememberPassword(password) {
     const enc = safeStorage.encryptString(password);
     setMeta('security_remembered', enc.toString('base64'));
   } catch (e) {
+    // B3: solo al activar "recordar contraseña". Nunca se registra la
+    // contraseña ni el blob cifrado: solo que safeStorage falló y por qué.
+    appLog('Seguridad — no se pudo recordar la contraseña en este equipo (safeStorage): ' + motivoSinRutas(e));
     console.warn('No se pudo recordar la contraseña en este equipo:', e);
   }
 }
@@ -6690,6 +7999,8 @@ function blobDeContrasena(password) {
     if (!safeStorage.isEncryptionAvailable()) return null;
     return safeStorage.encryptString(password).toString('base64');
   } catch (e) {
+    // B3: ídem. Sin contraseña ni blob en el mensaje.
+    appLog('Seguridad — no se pudo preparar la contraseña recordada: ' + motivoSinRutas(e));
     console.warn('No se pudo preparar la contraseña recordada:', e);
     return null;
   }
@@ -7190,6 +8501,82 @@ function appLog(line) {
   }
 }
 
+// B3 (15 sept 2026) — `appLog` para fallos que pueden REPETIRSE.
+//
+// Algunos de los caminos que B3 saca de `console.warn` viven en bucles o
+// temporizadores: el refresco de la copia HTML corre en cada `backup:save`, y
+// eso pasa cada ~15 s por proyecto abierto. Registrar cada intento llenaría
+// `app.log` —que rota a 2 MB— de la misma línea y enterraría lo demás.
+//
+// Mismo criterio que B1: una línea por causa y sesión. Si el problema se
+// arregla y vuelve a aparecer en otra sesión, se registra otra vez. Para lo que
+// ocurre una sola vez (una migración, un cambio de contraseña) se usa `appLog`
+// a secas, sin pasar por aquí.
+const avisosYaRegistrados = new Set();
+function appLogUnaVezPorSesion(clave, linea) {
+  if (avisosYaRegistrados.has(clave)) return;
+  avisosYaRegistrados.add(clave);
+  appLog(linea);
+}
+
+// B3 — EL MENSAJE DEL ERROR TRAE LA RUTA COMPLETA, Y ESO NO PUEDE IR AL LOG.
+//
+// Lo encontró el arnés de Electron real, no el repaso del código: las
+// excepciones de `fs` incluyen la ruta entera dentro del propio mensaje
+// ("EPERM: operation not permitted, open 'C:\\Users\\<usuario>\\AppData\\...'").
+// O sea que poner `path.basename()` en la parte que escribimos nosotros no
+// sirve de nada si justo después se concatena `e.message` tal cual — que es
+// lo que hacían todas las líneas nuevas de esta ronda.
+//
+// `app.log` es un archivo que el usuario puede acabar enviando a soporte, así
+// que no debe llevar el nombre de usuario de Windows ni la estructura de
+// carpetas. Se conserva el código del error (EPERM, ENOENT, EBUSY...) y el
+// nombre del archivo: con eso se diagnostica exactamente igual.
+//
+// ALCANCE: solo las líneas que añade B3. Las anteriores —las de los códigos
+// PS-xxxx sobre todo— llevan el mensaje literal a propósito y cambiarlas
+// ahora sería otra decisión, no esta. Queda anotado como pendiente.
+function motivoSinRutas(e) {
+  const msg = String((e && e.message) || e || '');
+  return msg
+    .replace(/'([^']*[\\/][^']*)'/g, (m, p) => `'${path.basename(p)}'`)
+    .replace(/"([^"]*[\\/][^"]*)"/g, (m, p) => `"${path.basename(p)}"`)
+    .replace(/[A-Za-z]:[\\/][^\s,;)'"]+/g, (m) => path.basename(m));
+}
+
+// B3 — LIMPIEZA BEST-EFFORT, PERO NO MUDA.
+//
+// Estos dos casos eran `catch {}` vacíos, y con razón: el protocolo ya ha
+// decidido, es idempotente y fail-closed, y convertir la limpieza en error
+// fatal sería peor. NO se cambia ese comportamiento — solo se les añade
+// observabilidad, porque su fallo **explica un bloqueo posterior**:
+//
+//   - un journal ya resuelto que no se puede borrar hace que F-1 vea una
+//     operación pendiente en el siguiente arranque, y el usuario recibe un
+//     "hay algo sin resolver" sin ninguna pista de por qué;
+//   - una exclusiva que no se suelta bloquea la siguiente operación.
+//
+// Siguen sin lanzar. Siguen sin molestar al usuario. Solo dejan una línea.
+function borrarJournalResuelto(ruta, que) {
+  try {
+    fs.unlinkSync(ruta);
+  } catch (e) {
+    appLogUnaVezPorSesion('journal-huerfano-' + ruta,
+      `Limpieza — no se pudo borrar el registro de ${que} ya resuelto (${path.basename(String(ruta))}). ` +
+      'No se ha perdido nada; puede hacer que una operación nueva quede bloqueada hasta resolverlo: ' +
+      motivoSinRutas(e));
+  }
+}
+function soltarExclusivaConRastro(token, que) {
+  try {
+    dbmod.soltarExclusiva(token);
+  } catch (e) {
+    appLogUnaVezPorSesion('exclusiva-' + que,
+      `Limpieza — no se pudo soltar la exclusiva de ${que}. ` +
+      'Puede bloquear la siguiente operación hasta reiniciar: ' + motivoSinRutas(e));
+  }
+}
+
 async function openAppLog(parentWin) {
   const logPath = appLogFilePath();
   if (!fs.existsSync(logPath)) {
@@ -7297,8 +8684,12 @@ function asarPatchHelperSource() {
 // igual bajo ELECTRON_RUN_AS_NODE que en el proceso principal normal.
 const fs = require('original-fs');
 const { spawn } = require('child_process');
+const crypto = require('crypto');
+const path = require('path');
 
-const [, , pidStr, backupAsar, realAsar, stagedAsar, logPath, exePath] = process.argv;
+// P18: los tres últimos argumentos atan este parche a su operación de
+// procedencia (registro local + copia local de la versión que se sustituye).
+const [, , pidStr, backupAsar, realAsar, stagedAsar, logPath, exePath, manifiestoPath, operationId, copiaLocal] = process.argv;
 const pid = parseInt(pidStr, 10);
 const MAX_WAIT_MS = 2 * 60 * 1000;
 const started = Date.now();
@@ -7331,7 +8722,132 @@ function cleanupStaged() {
   try { fs.unlinkSync(stagedAsar); } catch (e) { /* ya no estaba */ }
 }
 
+// ---- P18: registro de procedencia ----------------------------------------
+const NOMBRE_COPIA = /^app\\.asar\\.pred-[0-9a-f]{16}$/;
+
+function sha256(p) {
+  return crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+}
+
+function leerManifiesto() {
+  try {
+    const j = JSON.parse(fs.readFileSync(manifiestoPath, 'utf8'));
+    if (j && j.v === 1 && Array.isArray(j.operaciones)) return j;
+  } catch (e) { /* ausente o roto */ }
+  return null;
+}
+
+// Temporal + escritura completa + fsync + rename + RELECTURA.
+function guardarManifiesto(j) {
+  const txt = JSON.stringify(j, null, 2);
+  const tmp = manifiestoPath + '.tmp-' + process.pid + '-' + Date.now();
+  const buf = Buffer.from(txt, 'utf8');
+  try {
+    const fd = fs.openSync(tmp, 'w');
+    try {
+      let escritos = 0;
+      while (escritos < buf.length) {
+        const n = fs.writeSync(fd, buf, escritos, buf.length - escritos, escritos);
+        if (!(n > 0)) throw new Error('writeSync sin progreso');
+        escritos += n;
+      }
+      try { fs.fsyncSync(fd); } catch (e) {
+        if (['EINVAL', 'ENOSYS', 'ENOTSUP', 'EOPNOTSUPP'].indexOf(e && e.code) < 0) throw e;
+      }
+    } finally { fs.closeSync(fd); }
+    fs.renameSync(tmp, manifiestoPath);
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch (e2) { /* ya no estaba */ }
+    throw e;
+  }
+  if (fs.readFileSync(manifiestoPath, 'utf8') !== txt) throw new Error('la relectura del registro de procedencia no coincide');
+}
+
+function operacionDe(j) {
+  return j ? j.operaciones.find(function (o) { return o && o.operation_id === operationId; }) : null;
+}
+
+// Relee el app.asar REAL y la copia local. VERIFICADA solo si el instalado es
+// EXACTAMENTE el parche esperado y la copia conserva EXACTAMENTE la versión
+// anterior. OJO: eso prueba que el archivo instalado es el esperado, NO que la
+// app vaya a arrancar bien después — son cosas distintas.
+// Devuelve true si el app.asar instalado es el esperado.
+function verificarOperacion() {
+  let shaReal = null;
+  let shaCopia = null;
+  let motivo = null;
+  try { shaReal = sha256(realAsar); } catch (e) { motivo = 'no se pudo releer el app.asar instalado'; }
+  try { shaCopia = sha256(copiaLocal); } catch (e) { motivo = motivo || 'no se pudo releer la copia local de recuperación'; }
+  const j = leerManifiesto();
+  const op = operacionDe(j);
+  if (!op) {
+    log('ERROR P18: la operación ' + operationId + ' ya no está en el registro de procedencia; no se marca nada.');
+    return false; // sin la operación no se sabe qué hash esperar: no se reabre
+  }
+  if (!motivo && shaReal !== op.sha256_nuevo_esperado) motivo = 'el app.asar instalado no tiene el hash esperado';
+  if (!motivo && shaCopia !== op.sha256_anterior) motivo = 'la copia local ya no tiene el hash del app.asar anterior';
+  op.sha256_nuevo_real = shaReal;
+  const instaladoCorrecto = shaReal !== null && shaReal === op.sha256_nuevo_esperado;
+  if (motivo) {
+    op.estado = 'fallida';
+    op.motivo_fallo = motivo;
+    guardarManifiesto(j);
+    log('P18: operación ' + operationId + ' FALLIDA (' + motivo + '). La copia local se conserva, pero NO es candidata a restauración automática.');
+    return instaladoCorrecto;
+  }
+  op.estado = 'verificada';
+  op.verificada_at = new Date().toISOString();
+  op.motivo_fallo = null;
+  guardarManifiesto(j); // PRIMERO se confirma la nueva...
+  log('P18: operación ' + operationId + ' VERIFICADA: el app.asar instalado es exactamente el esperado y la copia local conserva la versión anterior. (Eso no prueba que la app vaya a arrancar bien.)');
+  retirarAnteriores(); // ...y SOLO DESPUÉS se retiran las viejas.
+  return instaladoCorrecto;
+}
+
+// Tras CONFIRMAR la nueva operación, queda solo ella: la predecesora del
+// app.asar instalado. Nunca al revés (borrar lo viejo y luego intentar lo nuevo).
+function retirarAnteriores() {
+  const dir = path.dirname(copiaLocal);
+  const j = leerManifiesto();
+  const nueva = operacionDe(j);
+  if (!nueva || nueva.estado !== 'verificada') {
+    log('P18: la nueva operación no aparece confirmada al releer; no se retira nada.');
+    return;
+  }
+  const viejas = j.operaciones.filter(function (o) { return o !== nueva; });
+  for (const o of viejas) {
+    if (o && typeof o.nombre_copia === 'string' && NOMBRE_COPIA.test(o.nombre_copia)) {
+      try { fs.unlinkSync(path.join(dir, o.nombre_copia)); } catch (e) { /* queda huérfana: sin entrada nunca es candidata */ }
+    }
+  }
+  j.operaciones = [nueva];
+  guardarManifiesto(j);
+  // Copias sin entrada (por ejemplo, de una preparación interrumpida).
+  let huerfanas = 0;
+  try {
+    for (const f of fs.readdirSync(dir)) {
+      if (NOMBRE_COPIA.test(f) && f !== nueva.nombre_copia) {
+        try { fs.unlinkSync(path.join(dir, f)); huerfanas++; } catch (e) { /* se intentará la próxima vez */ }
+      }
+    }
+  } catch (e) { /* no crítico */ }
+  log('P18: retiradas ' + viejas.length + ' operación(es) anterior(es) y ' + huerfanas + ' copia(s) huérfana(s); queda solo la predecesora del app.asar instalado.');
+}
+
 function applyPatch() {
+  // P18: sin su operación PREPARADA en el registro, no se toca nada.
+  if (!manifiestoPath || !operationId || !copiaLocal) {
+    log('ERROR P18: faltan los datos de la operación de procedencia. Parche NO aplicado, no se tocó nada.');
+    cleanupStaged();
+    return;
+  }
+  const previa = operacionDe(leerManifiesto());
+  if (!previa || previa.estado !== 'preparada') {
+    log('ERROR P18: la operación ' + operationId + ' no está PREPARADA en el registro de procedencia. Parche NO aplicado, no se tocó nada.');
+    cleanupStaged();
+    return;
+  }
+  let aplicado = false;
   try {
     if (!fs.existsSync(backupAsar)) {
       // Red de seguridad extra: si por lo que sea la copia previa no se
@@ -7341,13 +8857,35 @@ function applyPatch() {
       log('Aviso: la copia de seguridad no existía, se hizo aquí antes de aplicar.');
     }
     fs.copyFileSync(stagedAsar, realAsar);
+    aplicado = true;
     log('Parche aplicado correctamente sobre: ' + realAsar);
-    relaunchApp();
   } catch (e) {
     log('ERROR aplicando el parche: ' + (e && e.message ? e.message : String(e)));
+    try {
+      const j = leerManifiesto();
+      const op = operacionDe(j);
+      if (op) {
+        op.estado = 'fallida';
+        op.motivo_fallo = 'no se pudo aplicar el parche';
+        guardarManifiesto(j);
+      }
+    } catch (e2) {
+      log('ERROR P18: no se pudo marcar la operación como FALLIDA: ' + (e2 && e2.message ? e2.message : String(e2)));
+    }
   } finally {
     cleanupStaged();
   }
+  if (!aplicado) return;
+  let instaladoCorrecto = false;
+  try {
+    instaladoCorrecto = verificarOperacion();
+  } catch (e) {
+    log('ERROR P18: no se pudo cerrar la operación de procedencia (' + (e && e.message ? e.message : String(e)) + '); queda PREPARADA y NO es candidata a restauración automática.');
+    try { instaladoCorrecto = sha256(realAsar) === previa.sha256_nuevo_esperado; } catch (e2) { instaladoCorrecto = false; }
+  }
+  // Igual que antes: nunca reabrir un app.asar que pueda haber quedado a medias.
+  if (instaladoCorrecto) relaunchApp();
+  else log('No se reabre la app: el app.asar instalado no es exactamente el parche esperado.');
 }
 
 // v2.0.42: reabrir sola tras aplicar el parche -- pedido explícito del
@@ -7395,6 +8933,106 @@ function tick() {
 log('Ayudante de parche iniciado, esperando a que cierre el pid ' + pid + '...');
 tick();
 `;
+}
+
+// P18: escritura del registro de procedencia — temporal, escritura completa,
+// fsync, rename y RELECTURA. El mismo patrón que guardarHistorialUbicacion()
+// (P22) y escribirAtomico() (db.js). Lanza si no queda demostrado escrito.
+function guardarManifiestoProcedencia(j) {
+  const ruta = rutaManifiestoProcedencia();
+  const tmp = `${ruta}.tmp-${process.pid}-${Date.now()}`;
+  const FSYNC_NO_SOPORTADO = new Set(['EINVAL', 'ENOSYS', 'ENOTSUP', 'EOPNOTSUPP']);
+  const txt = JSON.stringify(j, null, 2);
+  try {
+    fs.mkdirSync(path.dirname(ruta), { recursive: true });
+    const fd = fs.openSync(tmp, 'w');
+    try {
+      const buf = Buffer.from(txt, 'utf8');
+      let escritos = 0;
+      while (escritos < buf.length) {
+        const n = fs.writeSync(fd, buf, escritos, buf.length - escritos, escritos);
+        if (!(n > 0)) throw new Error('writeSync sin progreso');
+        escritos += n;
+      }
+      try {
+        fs.fsyncSync(fd);
+      } catch (e) {
+        if (!FSYNC_NO_SOPORTADO.has(e && e.code)) throw new Error(`fsync falló (${(e && e.code) || '?'})`);
+      }
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(tmp, ruta);
+  } catch (e) {
+    try {
+      fs.unlinkSync(tmp);
+    } catch (e2) {
+      /* ya no estaba */
+    }
+    throw new Error(`no se pudo guardar el registro de procedencia: ${String((e && e.message) || e)}`);
+  }
+  if (fs.readFileSync(ruta, 'utf8') !== txt) {
+    throw new Error('la relectura del registro de procedencia no coincide con lo escrito');
+  }
+}
+
+// P18: prepara la operación ANTES de tocar el app.asar real. Si cualquier paso
+// falla, lanza: quien llama NO debe aplicar el parche. Y no deja nada que
+// pueda usarse para un rescate automático (la copia a medias se quita; una
+// entrada 'preparada' tampoco vale nunca como predecesora).
+function prepararOperacionAsar({ realAsar, stagedAsar, shaParcheElegido }) {
+  const ident = leerInstallationIdParaRescate();
+  if (ident.estado !== 'valido') throw new Error(`la identidad de este equipo (installation-id) está ${ident.estado}`);
+  const dir = carpetaRecuperacionAsar();
+  if (!dir) throw new Error('no hay carpeta de recuperación local (%LOCALAPPDATA%)');
+  const man = leerManifiestoProcedencia();
+  // Un registro que existe pero no se lee NO se pisa: es la pista de lo que pasó.
+  if (man.estado === 'ilegible') throw new Error(`el registro de procedencia existe pero no se puede leer (${man.motivo})`);
+  const j = man.estado === 'valido' ? man.manifiesto : { v: 1, installation_id: ident.id, operaciones: [] };
+
+  const operationId = crypto.randomBytes(8).toString('hex'); // 1
+  const nombreCopia = `app.asar.pred-${operationId}`;
+  const copia = path.join(dir, nombreCopia);
+  const shaAnterior = sha256HexArchivoP18(realAsar); // 2
+  // 7: lo que el ayudante va a instalar es EXACTAMENTE lo que se verificó al elegirlo.
+  const shaNuevoEsperado = sha256HexArchivoP18(stagedAsar);
+  if (shaNuevoEsperado !== shaParcheElegido) throw new Error('la copia preparada del parche no coincide con el archivo elegido');
+  // Reaplicar exactamente lo instalado no crea ninguna relación útil de rescate.
+  if (shaNuevoEsperado === shaAnterior) {
+    const e = new Error('el parche elegido es exactamente el app.asar que ya está instalado');
+    e.p18Identico = true;
+    throw e;
+  }
+  originalFs.mkdirSync(dir, { recursive: true });
+  try {
+    originalFs.copyFileSync(realAsar, copia); // 3
+    const shaCopia = sha256HexArchivoP18(copia); // 4: RELEÍDA, no el hash de origen
+    if (shaCopia !== shaAnterior) throw new Error('la copia local de recuperación no coincide con el app.asar instalado'); // 5
+    j.operaciones.push({
+      operation_id: operationId,
+      installation_id: ident.id,
+      estado: 'preparada',
+      sha256_anterior: shaAnterior,
+      version_anterior: versionDeAsar(copia), // 6: sin ejecutar nada
+      nombre_copia: nombreCopia,
+      sha256_copia_local: shaCopia,
+      sha256_nuevo_esperado: shaNuevoEsperado,
+      version_nueva_esperada: versionDeAsar(stagedAsar),
+      sha256_nuevo_real: null,
+      creada_at: new Date().toISOString(),
+      verificada_at: null,
+      motivo_fallo: null,
+    });
+    guardarManifiestoProcedencia(j); // 8
+    return { operationId, copia };
+  } catch (e) {
+    try {
+      originalFs.unlinkSync(copia);
+    } catch (e2) {
+      /* no llegó a crearse */
+    }
+    throw e;
+  }
 }
 
 function purgeOldAsarBackups(dir) {
@@ -7540,6 +9178,10 @@ async function changeUserDataLocation(parentWin) {
     return;
   }
 
+  // P22: constancia durable de que este equipo usa una carpeta de datos propia,
+  // en cuanto se guarda la elección (no al siguiente arranque).
+  registrarUbicacionPersonalizada(target, isShared);
+
   await modalAlert(
     parentWin,
     'La aplicación se va a reiniciar para usar la nueva carpeta de datos.\n\n' +
@@ -7563,6 +9205,10 @@ async function resetUserDataLocationToDefault(parentWin) {
     { title: 'Volver a la carpeta de datos por defecto', confirmLabel: 'Volver a la de por defecto' }
   );
   if (!confirmed) return;
+  // P22: la historia NO se borra. Se anota la decisión (con su fecha) y se
+  // quita solo location.json: así, si mañana aparece una base de datos local
+  // rara, la app sigue sabiendo que este equipo tuvo una ubicación propia.
+  registrarDecisionUbicacion('volver-a-por-defecto');
   try {
     fs.unlinkSync(configFile);
   } catch (e) {
@@ -7993,6 +9639,16 @@ function disableDriveSyncGuardSilently(reason) {
 // que esté marcada como compartida.
 function syncDriveSyncGuardWithLocation() {
   if (process.platform !== 'win32') return;
+  // P9: con location.json inutilizable no está demostrado que la ubicación
+  // "no sea compartida", así que la protección se deja exactamente como está.
+  if (configUbicacionNoResuelta) return;
+  // P22: una sesión LOCAL TEMPORAL (el usuario aceptó usar la carpeta local
+  // porque la suya no estaba disponible, o porque falta la configuración) no es
+  // un cambio de ubicación: no se desactiva la protección, no se borra su marca
+  // y no se pierde la señal de que este equipo usa una carpeta compartida.
+  // Volver a la carpeta por defecto A PROPÓSITO sí sigue sincronizándola: eso
+  // es una decisión permanente, no un camino de reserva.
+  if (sesionLocalTemporal) return;
   const shouldBeOn = isUsingSharedDataLocationNow();
   const isOn = isDriveSyncGuardEnabled();
   if (shouldBeOn && !isOn) {
@@ -8216,10 +9872,76 @@ async function applyAsarPatch(parentWin) {
 
   try {
     originalFs.copyFileSync(chosenPath, stagedAsar);
+  } catch (e) {
+    try {
+      originalFs.unlinkSync(stagedAsar);
+    } catch (e2) {
+      /* no llegó a crearse */
+    }
+    await modalAlert(
+      parentWin,
+      'No se tocó el archivo real de la aplicación. Detalle: ' + String((e && e.message) || e) + errorCodeSuffix('PS-1003'),
+      { title: 'No se pudo preparar el parche', danger: true }
+    );
+    return;
+  }
+
+  // P18: la operación de procedencia se prepara ANTES de tocar el app.asar
+  // real — copia LOCAL de la versión actual, releída y verificada, y entrada
+  // 'preparada' en el registro. Si cualquier paso falla, el parche NO se
+  // aplica: no se lanza el ayudante y no queda nada utilizable para un rescate.
+  // Va ANTES de la copia heredada y de su purga: un intento que falla aquí no
+  // deja un .bak nuevo ni rota los de la carpeta de datos (compartida).
+  let operacion;
+  try {
+    operacion = prepararOperacionAsar({ realAsar, stagedAsar, shaParcheElegido: hash });
+  } catch (e) {
+    try {
+      originalFs.unlinkSync(stagedAsar);
+    } catch (e2) {
+      /* ya no estaba */
+    }
+    if (e && e.p18Identico) {
+      await modalAlert(parentWin, 'Ese archivo es exactamente la versión que ya está instalada: no hay nada que aplicar.', {
+        title: 'El parche ya está instalado',
+      });
+      return;
+    }
+    await modalAlert(
+      parentWin,
+      'No se ha aplicado el parche y no se tocó el archivo real de la aplicación: antes de sustituirlo, la app ' +
+        'tiene que guardar y verificar una copia local de la versión actual para poder volver a ella, y no lo ' +
+        'ha conseguido. Detalle: ' +
+        String((e && e.message) || e) +
+        errorCodeSuffix('PS-1003'),
+      { title: 'No se pudo preparar el parche', danger: true }
+    );
+    return;
+  }
+
+  // Copia heredada (camino manual transitorio, hasta D4) y ayudante. Si algo
+  // falla antes de que el ayudante quede lanzado, se retira lo que creó ESTE
+  // intento: un .bak de más desplazaría a los históricos en la próxima purga.
+  const bakYaExistia = originalFs.existsSync(backupAsar);
+  const deshacerIntento = () => {
+    try {
+      originalFs.unlinkSync(stagedAsar);
+    } catch (e) {
+      /* ya no estaba */
+    }
+    if (!bakYaExistia) {
+      try {
+        originalFs.unlinkSync(backupAsar);
+      } catch (e) {
+        /* no llegó a crearse */
+      }
+    }
+  };
+  try {
     originalFs.copyFileSync(realAsar, backupAsar);
-    purgeOldAsarBackups(stageDir);
     fs.writeFileSync(helperPath, asarPatchHelperSource(), 'utf8');
   } catch (e) {
+    deshacerIntento();
     await modalAlert(
       parentWin,
       'No se tocó el archivo real de la aplicación. Detalle: ' + String((e && e.message) || e) + errorCodeSuffix('PS-1003'),
@@ -8231,7 +9953,18 @@ async function applyAsarPatch(parentWin) {
   try {
     const child = spawn(
       process.execPath,
-      [helperPath, String(process.pid), backupAsar, realAsar, stagedAsar, logPath, process.execPath],
+      [
+        helperPath,
+        String(process.pid),
+        backupAsar,
+        realAsar,
+        stagedAsar,
+        logPath,
+        process.execPath,
+        rutaManifiestoProcedencia(),
+        operacion.operationId,
+        operacion.copia,
+      ],
       {
         detached: true,
         stdio: 'ignore',
@@ -8240,6 +9973,7 @@ async function applyAsarPatch(parentWin) {
     );
     child.unref();
   } catch (e) {
+    deshacerIntento();
     await modalAlert(
       parentWin,
       'No se tocó el archivo real de la aplicación. Detalle: ' + String((e && e.message) || e) + errorCodeSuffix('PS-1004'),
@@ -8247,6 +9981,10 @@ async function applyAsarPatch(parentWin) {
     );
     return;
   }
+
+  // La retención heredada (2 copias por mtime) solo se aplica con el ayudante
+  // ya lanzado: un intento que no llegó hasta aquí no rota los .bak compartidos.
+  purgeOldAsarBackups(stageDir);
 
   await modalAlert(
     parentWin,
@@ -8348,6 +10086,10 @@ app.on('session-created', (ses) => {
         filters: exportSaveDialogFilters(suggested),
       });
     } catch (e) {
+      // B3: el usuario pidió exportar y la descarga se cancela sin explicación.
+      // Queda rastro para poder explicarlo después. NO se convierte en diálogo:
+      // sería abrir un diálogo justo cuando el sistema de diálogos ha fallado.
+      appLog('Exportación — no se pudo mostrar el diálogo de guardado; la descarga se cancela: ' + motivoSinRutas(e));
       console.warn('No se pudo mostrar el diálogo de guardado:', e);
       chosenPath = undefined;
     }
@@ -8710,8 +10452,10 @@ function delayMs(ms) {
 // applyCustomUserDataDirIfConfigured): ya con la splash visible, así que
 // aquí SÍ se puede esperar sin bloquear el proceso. Si tras esto sigue sin
 // poder acceder, para el arranque con un diálogo que hay que atender.
+// P22: devuelve 'seguir' o 'cerrar' — «Cerrar» (y Esc/la X) cierran la app en
+// vez de caer en la carpeta local.
 async function resolveUserDataDirFailureInteractively() {
-  if (!customUserDataDirFailure) return;
+  if (!customUserDataDirFailure) return 'seguir';
   const target = customUserDataDirFailure.attempted;
 
   const deadline = Date.now() + USERDATA_POST_READY_RETRY_MS;
@@ -8724,7 +10468,7 @@ async function resolveUserDataDirFailureInteractively() {
       app.setPath('userData', target);
       customUserDataDirFailure = null;
       appLog(`Carpeta de datos personalizada disponible tras esperar: ${target}`);
-      return;
+      return 'seguir';
     }
     customUserDataDirFailure = { attempted: target, error: err };
   }
@@ -8733,34 +10477,34 @@ async function resolveUserDataDirFailureInteractively() {
   // 20s aquí): no se sigue decidiendo en silencio. Se para hasta que el
   // usuario elija — reintentar (otra ronda igual de larga) o seguir con
   // datos locales por ahora, con conocimiento de causa.
+  //
+  // P22: la elección «datos locales» ya no es implícita ni a ciegas. El
+  // diálogo dice QUÉ hay en la carpeta local (fecha, tamaño), ofrece «Usar
+  // estos datos locales» o «Crear una base de datos local vacía» como botón
+  // EXPLÍCITO, y Esc/la X cierran la aplicación en vez de elegir lo local.
   for (;;) {
-    const choice = dialog.showMessageBoxSync(undefined, {
-      type: 'warning',
-      title: 'No se puede acceder a la carpeta de datos',
-      message: 'No se puede acceder a tu carpeta de datos configurada.',
-      detail:
+    const accion = preguntarPorLaCarpetaLocal({
+      codigo: 'PS-1005',
+      titulo: 'No se puede acceder a la carpeta de datos',
+      mensaje: 'No se puede acceder a tu carpeta de datos configurada.',
+      cuerpo:
         `Carpeta: ${customUserDataDirFailure.attempted}\n\n` +
         `Motivo: ${customUserDataDirFailure.error}\n\n` +
         'Esto suele pasar cuando Google Drive (u OneDrive) todavía no ha terminado de montar la unidad ' +
-        '— por ejemplo, justo tras encender el ordenador. Puedes esperar un poco más y reintentar, o abrir ' +
-        'la app con datos locales por ahora: no verás tus proyectos más recientes hasta que la carpeta de ' +
-        'verdad esté disponible y vuelvas a abrir la app.' +
-        errorCodeSuffix('PS-1005'),
-      buttons: ['Reintentar', 'Abrir con datos locales (temporal)'],
-      defaultId: 0,
-      cancelId: 1,
-      noLink: true,
+        '— por ejemplo, justo tras encender el ordenador. Puedes esperar un poco más y reintentar.',
+      etiquetaReintento: 'Reintentar',
     });
-    if (choice === 1) {
-      appLog(`Continuando con datos locales temporales — no se pudo acceder a: ${customUserDataDirFailure.attempted}`);
-      return;
+    if (accion === 'cerrar') return 'cerrar';
+    if (accion === 'local' || accion === 'crear') {
+      appLog(`Continuando con datos locales temporales (elección explícita) — no se pudo acceder a: ${customUserDataDirFailure.attempted}`);
+      return 'seguir';
     }
     const immediateErr = await probeWritableDirAsync(target);
     if (!immediateErr) {
       app.setPath('userData', target);
       customUserDataDirFailure = null;
       appLog(`Carpeta de datos personalizada disponible tras reintento manual: ${target}`);
-      return;
+      return 'seguir';
     }
     customUserDataDirFailure = { attempted: target, error: immediateErr };
 
@@ -8778,7 +10522,7 @@ async function resolveUserDataDirFailureInteractively() {
       }
       customUserDataDirFailure = { attempted: target, error: err2 };
     }
-    if (recovered) return;
+    if (recovered) return 'seguir';
     // sigue sin funcionar: vuelve a preguntar
   }
 }
@@ -8989,10 +10733,10 @@ function estadoDeArchivoEnRuta(p) {
 }
 
 async function checkCustomLocationDatabaseSanity() {
-  if (!customUserDataDirTarget || customUserDataDirFailure) return; // solo aplica con carpeta personalizada ya accesible
+  if (!customUserDataDirTarget || customUserDataDirFailure) return 'seguir'; // solo aplica con carpeta personalizada ya accesible
   const dbPath = path.join(app.getPath('userData'), 'panorama.sqlite3');
   const inicial = estadoDeArchivoEnRuta(dbPath);
-  if (inicial.estado === 'visible') return; // lo normal — ya está ahí
+  if (inicial.estado === 'visible') return 'seguir'; // lo normal — ya está ahí
 
   // Espera silenciosa primero (mismo margen que ya se usa para el montaje de la carpeta): un
   // archivo de este tamaño suele terminar de bajar en segundos una vez la carpeta ya está montada,
@@ -9004,7 +10748,7 @@ async function checkCustomLocationDatabaseSanity() {
     ultimo = estadoDeArchivoEnRuta(dbPath);
     if (ultimo.estado === 'visible') {
       appLog(`Base de datos de la carpeta personalizada apareció tras esperar: ${dbPath}`);
-      return;
+      return 'seguir';
     }
   }
 
@@ -9013,15 +10757,44 @@ async function checkCustomLocationDatabaseSanity() {
   // una indisponibilidad en una creación. Se cae a la carpeta por defecto por
   // esta sesión, que es lo que ya hace la app cuando la carpeta no responde, y
   // NO se autoriza ninguna creación en la personalizada.
+  // P22 — ESTE ERA EL CAMINO PEOR: la base de datos configurada EXISTE pero no
+  // se puede comprobar, y hasta ahora la app se pasaba a la carpeta local EN
+  // SILENCIO; lo siguiente que veía el usuario era la contraseña de siempre,
+  // con otra base de datos debajo. Ahora se para y se pregunta (PS-1022), y no
+  // se abre NADA local hasta que se elija.
   if (ultimo.estado === 'no-accesible') {
-    appLog(`A3.3 — la base de datos de la carpeta personalizada no se puede comprobar (${ultimo.codigo}): ` +
-      'no se ofrece empezar desde cero. Se usa la carpeta por defecto por esta sesión.');
-    app.setPath('userData', defaultUserDataDir);
-    customUserDataDirFailure = {
-      attempted: customUserDataDirTarget,
-      error: `No se pudo comprobar panorama.sqlite3 ahí (${ultimo.codigo}: ${ultimo.motivo})`,
-    };
-    return;
+    appLog(`ERROR PS-1022 — la base de datos de la carpeta configurada no se puede comprobar (${ultimo.codigo}): ` +
+      'no se ofrece empezar desde cero y NO se cambia de carpeta sin preguntar.');
+    for (;;) {
+      const accion = preguntarPorLaCarpetaLocal({
+        codigo: 'PS-1022',
+        titulo: 'No se puede comprobar la base de datos configurada',
+        mensaje: 'La base de datos de tu carpeta de datos configurada está ahí, pero no se puede leer ni comprobar.',
+        cuerpo:
+          `Carpeta: ${customUserDataDirTarget}\n\n` +
+          `Motivo: ${ultimo.codigo} (${ultimo.motivo})\n\n` +
+          'Suele ser un archivo bloqueado por otro programa, una sincronización a medias o un problema de ' +
+          'permisos. Puedes reintentar.',
+        etiquetaReintento: 'Reintentar',
+      });
+      if (accion === 'cerrar') return 'cerrar';
+      if (accion === 'local' || accion === 'crear') {
+        app.setPath('userData', defaultUserDataDir);
+        customUserDataDirFailure = {
+          attempted: customUserDataDirTarget,
+          error: `No se pudo comprobar panorama.sqlite3 ahí (${ultimo.codigo}: ${ultimo.motivo})`,
+        };
+        appLog('PS-1022 — el usuario eligió expresamente usar la carpeta de datos local en esta sesión.');
+        return 'seguir';
+      }
+      const otra = estadoDeArchivoEnRuta(dbPath);
+      if (otra.estado === 'visible') {
+        appLog('La base de datos de la carpeta configurada ya se puede comprobar tras el reintento manual.');
+        return 'seguir';
+      }
+      ultimo = otra;
+      if (otra.estado === 'no-visible') break;   // ya no es «no comprobable»: sigue el camino de PS-1009
+    }
   }
 
   // Sigue sin aparecer tras ~20s: puede ser Drive yendo lento, o de verdad la primera vez que se
@@ -9039,11 +10812,18 @@ async function checkCustomLocationDatabaseSanity() {
         'termine de sincronizar.\n\nSi es la primera vez que usas esta carpeta a propósito (todavía no hay ' +
         'nada guardado en ningún otro PC), es normal que esté vacía y puedes continuar sin problema.' +
         errorCodeSuffix('PS-1009'),
-      buttons: ['Esperar más (reintentar)', 'Sí, empezar aquí desde cero', 'Usar la carpeta de datos por defecto por ahora'],
+      // P22: «usar la carpeta por defecto» ya no significa «abrir lo que haya
+      // sin mirar»: lleva a una confirmación informada (PS-1021). Y aparece
+      // «Cerrar», que es además lo que hacen Esc y la X.
+      buttons: ['Esperar más (reintentar)', 'Sí, empezar aquí desde cero', 'Usar los datos locales de este equipo', 'Cerrar'],
       defaultId: 0,
-      cancelId: 0,
+      cancelId: 3,
       noLink: true,
     });
+    if (choice === 3) {
+      appLog('PS-1009 — el usuario eligió cerrar en vez de usar la carpeta de datos local.');
+      return 'cerrar';
+    }
     if (choice === 1) {
       // A3.3 BLOQUE 2: esta elección es la ÚNICA que autoriza crear en una
       // carpeta personalizada. main.js autoriza; db.js sigue verificando
@@ -9052,19 +10832,30 @@ async function checkCustomLocationDatabaseSanity() {
       // tienen que decir que sí.
       usuarioAutorizaEmpezarDesdeCero = true;
       appLog(`El usuario confirmó empezar desde cero en la carpeta personalizada (no se encontró panorama.sqlite3): ${dbPath}`);
-      return;
+      return 'seguir';
     }
     if (choice === 2) {
       // Mismo espíritu que el fallback ya existente de "carpeta no disponible": se usa la carpeta
       // local por esta vez, sin tocar ni borrar la configuración guardada — al siguiente arranque
       // se vuelve a intentar la personalizada igual que siempre.
+      // P22: antes de usarla, confirmación informada de QUÉ hay en ella. Si se
+      // cancela, se vuelve a este mismo diálogo.
+      const accion = preguntarPorLaCarpetaLocal({
+        codigo: 'PS-1021',
+        titulo: 'Usar los datos locales de este equipo',
+        mensaje: 'Vas a usar la base de datos LOCAL de este equipo, no la de tu carpeta configurada.',
+        cuerpo: `Carpeta configurada: ${customUserDataDirTarget}\n\n` +
+          'En esa carpeta no aparece ninguna base de datos todavía.',
+        etiquetaReintento: null,
+      });
+      if (accion === 'cerrar') continue;    // vuelve a preguntar lo de arriba
       app.setPath('userData', defaultUserDataDir);
       customUserDataDirFailure = {
         attempted: customUserDataDirTarget,
         error: 'No se encontró panorama.sqlite3 ahí (el usuario eligió no continuar en esa carpeta)',
       };
-      appLog(`Continuando con datos locales temporales — no se encontró panorama.sqlite3 en: ${dbPath}`);
-      return;
+      appLog(`Continuando con datos locales temporales (elección explícita) — no se encontró panorama.sqlite3 en: ${dbPath}`);
+      return 'seguir';
     }
     // choice === 0 (o se cerró el diálogo): reintentar — otra ronda de espera igual de larga
     const deadline2 = Date.now() + USERDATA_POST_READY_RETRY_MS;
@@ -9075,7 +10866,7 @@ async function checkCustomLocationDatabaseSanity() {
     }
     if (appeared) {
       appLog(`Base de datos de la carpeta personalizada apareció tras reintento manual: ${dbPath}`);
-      return;
+      return 'seguir';
     }
     // sigue sin aparecer: vuelve a preguntar
   }
@@ -9277,6 +11068,189 @@ function startUserDataWatchdog() {
   }, USERDATA_WATCHDOG_INTERVAL_MS);
 }
 
+// ------------------------------------------------------------------
+// P9 — location.json EXISTE pero no se puede usar (ver leerConfigUbicacion).
+//
+// Se para aquí, lo primero de app.whenReady: antes de la splash, de cualquier
+// espera de Drive, de la protección de apagado, del bloqueo multi-PC y de
+// abrir, crear o registrar ninguna base de datos. Al siguiente arranque se
+// vuelve a leer el archivo, y en cuanto esté bien la app arranca como siempre.
+//
+// Solo hay "Cerrar". NO se ofrece "abrir con datos locales": la carpeta local
+// suele ser un residuo de antes de configurar la compartida (así en el PC del
+// usuario), y abrirla —o crear una base de datos en ella— es justo el defecto
+// que se corrige aquí. Sin la ubicación configurada no hay forma de demostrar
+// que la base de datos local sea la buena.
+//
+// El mensaje no muestra la ruta real: solo la forma %APPDATA%\... del archivo.
+// ------------------------------------------------------------------
+// ------------------------------------------------------------------
+// P22 (17 sept 2026) — UNA SOLA PUERTA ANTES DE TOCAR LA CARPETA DE DATOS LOCAL.
+//
+// Hasta ahora, cuatro caminos legítimos terminaban en la carpeta por defecto y
+// abrían (y modificaban) lo que hubiera, o creaban una base de datos nueva, sin
+// decir de qué base se trataba: PS-1005 «datos locales», PS-1009 «usar la
+// carpeta por defecto», el arranque sin `location.json`, y —el peor— una base
+// de datos configurada que existe pero no se puede comprobar, que cambiaba de
+// carpeta EN SILENCIO.
+//
+// Todos pasan ahora por aquí, y aquí no se abre ni se crea nada: solo se mira
+// (stat + 16 bytes) y se pregunta. Hasta que el usuario elige expresamente, la
+// base de datos local no se toca: ni `.gen`, ni registro de A3.3, ni
+// migraciones, ni backups, ni Seguridad, ni `getDb`.
+//
+// Lo que NO se puede evitar, y queda dicho: Chromium ya ha creado sus propios
+// archivos de perfil en esa carpeta antes de que este archivo pueda decidir
+// nada. Lo que esta puerta garantiza es la BASE DE DATOS, no la carpeta entera.
+// ------------------------------------------------------------------
+let sesionLocalTemporal = false;      // el usuario aceptó usar la carpeta local EN ESTE ARRANQUE
+let usuarioAutorizaCrearLocal = false; // …y eligió crear una base de datos local vacía
+
+// ¿Hay que preguntar antes de usar la carpeta por defecto? Sí siempre que
+// venga de un camino de reserva; y también sin configuración, salvo en el caso
+// del equipo PURAMENTE LOCAL de toda la vida: ese ya tiene su propia carpeta
+// registrada en A3.3 y no se le va a preguntar en cada arranque. Un equipo que
+// viene de una versión anterior a A3.3 (registro vacío) recibe la pregunta UNA
+// vez, y a partir de ahí queda registrado.
+function carpetaLocalNecesitaConfirmacion(motivo, hist) {
+  if (motivo !== 'sin-configuracion') return true;
+  if (hist.si) return true;
+  const est = estadoUbicacion(defaultUserDataDir);
+  if (est.corrupto) return true;                  // registro ilegible: ante la duda, se pregunta
+  return est.estado !== 'inicializada';
+}
+
+function avisoBaseLocalInutilizable(bd) {
+  appLog(`ERROR PS-1023 — la base de datos local no es utilizable (${bd.estado}: ${bd.motivo || bd.codigo}). No se abre, no se sustituye y no se crea otra.`);
+  try {
+    dialog.showMessageBoxSync(undefined, {
+      type: 'error',
+      title: 'La base de datos local no es utilizable',
+      message: 'En la carpeta de datos de este equipo hay un archivo de base de datos que no se puede usar.',
+      detail:
+        `${descripcionBaseDeDatosLocal(bd)}\n\n` +
+        'Panorama del Servicio NO lo ha abierto, NO lo ha sustituido, NO lo ha vaciado y NO ha creado otra ' +
+        'base de datos encima: un archivo así puede ser una copia a medias o el resto de un fallo anterior, y ' +
+        'pisarlo destruiría la única pista de lo que pasó.\n\n' +
+        'La aplicación se va a cerrar. Si tu carpeta de datos de verdad está en Google Drive/OneDrive, ' +
+        'comprueba que esté disponible y vuelve a abrir.' +
+        errorCodeSuffix('PS-1023'),
+      buttons: ['Cerrar'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+  } catch (e) {
+    appLog(`No se pudo mostrar el aviso PS-1023: ${String((e && e.message) || e)}`);
+  }
+}
+
+// Diálogo común de los caminos de reserva. Devuelve:
+//   'reintentar' | 'local' (usar los datos locales) | 'crear' (base vacía) | 'cerrar'
+// CERRAR es siempre la opción de escape (Esc y la X): nunca «usar local».
+function preguntarPorLaCarpetaLocal({ codigo, titulo, mensaje, cuerpo, etiquetaReintento }) {
+  const bd = estadoBaseDeDatosLocal(defaultUserDataDir);
+  if (bd.estado === 'invalida' || bd.estado === 'no-comprobable') {
+    avisoBaseLocalInutilizable(bd);
+    return 'cerrar';
+  }
+  const hist = huboUbicacionPersonalizada();
+  const botones = [];
+  const acciones = [];
+  if (etiquetaReintento) { botones.push(etiquetaReintento); acciones.push('reintentar'); }
+  if (bd.estado === 'existente') { botones.push('Usar estos datos locales'); acciones.push('local'); }
+  else { botones.push('Crear una base de datos local vacía'); acciones.push('crear'); }
+  botones.push('Cerrar');
+  acciones.push('cerrar');
+  const idCerrar = acciones.indexOf('cerrar');
+  let elegido;
+  try {
+    elegido = dialog.showMessageBoxSync(undefined, {
+      type: 'warning',
+      title: titulo,
+      message: mensaje,
+      detail:
+        `${cuerpo}\n\n${descripcionBaseDeDatosLocal(bd)}\n\n` +
+        (bd.estado === 'existente'
+          ? 'Esos datos locales pueden ser MUCHO más antiguos que los de tu carpeta de siempre, y lo que ' +
+            'cambies aquí no estará en ella.'
+          : 'Crear una base de datos local vacía NO recupera nada: empezarías de cero en este equipo.') +
+        (hist.si ? `\n\nEste equipo ya ha usado una carpeta de datos propia (${hist.fuente}).` : '') +
+        errorCodeSuffix(codigo),
+      buttons: botones,
+      defaultId: etiquetaReintento ? 0 : idCerrar,
+      cancelId: idCerrar,
+      noLink: true,
+    });
+  } catch (e) {
+    appLog(`No se pudo mostrar el aviso ${codigo}: ${String((e && e.message) || e)}`);
+    return 'cerrar';
+  }
+  const accion = acciones[elegido] || 'cerrar';
+  appLog(`${codigo} — carpeta de datos local: el usuario eligió «${botones[elegido] || 'Cerrar'}» (base local: ${bd.estado}).`);
+  if (accion === 'local' || accion === 'crear') {
+    // Sesión LOCAL TEMPORAL: solo si hay otra ubicación de por medio (configurada
+    // o histórica). En un equipo puramente local esto es su modo normal.
+    if (customUserDataDirTarget || hist.si) sesionLocalTemporal = true;
+    if (accion === 'crear') usuarioAutorizaCrearLocal = true;
+  }
+  return accion;
+}
+
+// Puerta del arranque SIN `location.json` (camino C).
+// Devuelve 'seguir' | 'cerrar'.
+function autorizarCarpetaLocal(motivo) {
+  const bd = estadoBaseDeDatosLocal(defaultUserDataDir);
+  if (bd.estado === 'invalida' || bd.estado === 'no-comprobable') {
+    avisoBaseLocalInutilizable(bd);
+    return 'cerrar';
+  }
+  const hist = huboUbicacionPersonalizada();
+  if (!carpetaLocalNecesitaConfirmacion(motivo, hist)) return 'seguir';
+  if (bd.estado === 'ausente' && !hist.si) return 'seguir';   // primera ejecución legítima
+  const accion = preguntarPorLaCarpetaLocal({
+    codigo: 'PS-1021',
+    titulo: bd.estado === 'existente' ? 'Hay datos locales en este equipo' : 'No hay ninguna carpeta de datos configurada',
+    mensaje: bd.estado === 'existente'
+      ? 'Panorama del Servicio va a usar la base de datos LOCAL de este equipo.'
+      : 'Panorama del Servicio no tiene ninguna carpeta de datos configurada.',
+    cuerpo: bd.estado === 'existente'
+      ? 'No hay ninguna carpeta de datos configurada (el archivo de configuración no está), así que la única ' +
+        'base de datos disponible es la local de este equipo.'
+      : 'No hay configuración de ubicación ni base de datos local.',
+    etiquetaReintento: null,
+  });
+  return accion === 'cerrar' ? 'cerrar' : 'seguir';
+}
+
+function detenerArranquePorConfigUbicacion() {
+  const { estado, motivo } = configUbicacionNoResuelta;
+  appLog(`ERROR PS-1020 — location.json ${estado}: ${motivo}. No se abre, crea ni modifica ninguna base de datos.`);
+  try {
+    dialog.showMessageBoxSync(undefined, {
+      type: 'error',
+      title: 'No se puede leer la configuración de ubicación de datos',
+      message:
+        'La configuración de ubicación de datos no puede leerse. Panorama no cambiará automáticamente a otra base de datos.',
+      detail:
+        `Motivo: ${motivo}.\n\n` +
+        'Archivo: %APPDATA%\\panorama-app-config\\location.json\n\n' +
+        'No se ha abierto, creado ni modificado ninguna base de datos, y la protección de apagado sigue como ' +
+        'estaba. Panorama del Servicio se va a cerrar.\n\n' +
+        'Para volver a usarla hay que corregir ese archivo (guardado en UTF-8) o volver a elegir la carpeta de ' +
+        'datos con el instalador. No lo borres: sin él, la app usaría la carpeta de datos por defecto.' +
+        errorCodeSuffix('PS-1020'),
+      buttons: ['Cerrar'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+  } catch (e) {
+    appLog(`No se pudo mostrar el aviso PS-1020: ${String((e && e.message) || e)}`);
+  }
+  app.quit();
+}
+
 app.whenReady().then(async () => {
   // El módulo entero (incluidos los requires frágiles de './db' y
   // './security') ya cargó sin lanzar nada — pasado este punto, un error no
@@ -9286,9 +11260,29 @@ app.whenReady().then(async () => {
   // app.asar por debajo no soluciona nada a esas alturas.
   startupRecoveryArmed = false;
   appLog(`Arranque — v${app.getVersion()} (${process.platform} ${process.arch})`);
+  // P9: sin ubicación de datos resuelta no se da ni un paso más.
+  if (configUbicacionNoResuelta) {
+    detenerArranquePorConfigUbicacion();
+    return;
+  }
+  // P22 — dos cosas, y las dos ANTES de la splash y de tocar ninguna base de datos:
+  //   1. si hay una ubicación propia configurada, dejar constancia durable de
+  //      ello (lo que impide que un arranque futuro sin location.json confunda
+  //      este equipo con una instalación nueva);
+  //   2. si NO hay configuración, pasar por la puerta antes de usar la carpeta
+  //      de datos local.
+  if (customUserDataDirTarget) {
+    registrarUbicacionPersonalizada(customUserDataDirTarget, customUserDataDirShared);
+  } else if (autorizarCarpetaLocal('sin-configuracion') === 'cerrar') {
+    app.quit();
+    return;
+  }
   showSplashWindow();
   if (customUserDataDirFailure) {
-    await resolveUserDataDirFailureInteractively();
+    if ((await resolveUserDataDirFailureInteractively()) === 'cerrar') {
+      closeSplashWindow(() => app.quit());
+      return;
+    }
   }
   startUserDataWatchdog();
   // v0.1.39: adelanta la primera lectura (y cacheado en memoria) de la
@@ -9313,7 +11307,10 @@ app.whenReady().then(async () => {
     /* no crítico: se reintentará solo en el primer uso real */
   }
   await waitForCloudSyncIdleAtStartup();
-  await checkCustomLocationDatabaseSanity();
+  if ((await checkCustomLocationDatabaseSanity()) === 'cerrar') {
+    closeSplashWindow(() => app.quit());
+    return;
+  }
   // v0.1.56: a estas alturas ya se sabe con certeza qué carpeta de datos se
   // usa de verdad esta sesión (checkCustomLocationDatabaseSanity ya pudo
   // haber hecho fallback a la de por defecto) — momento correcto para
@@ -9535,6 +11532,12 @@ app.whenReady().then(async () => {
       ? 'Este cambio de Seguridad fue iniciado por otro equipo. Cierra Panorama del Servicio en todos los ' +
         'equipos y vuelve a abrirlo primero en el equipo que inició el cambio. Si ese equipo ya no existe, ' +
         'conserva la carpeta ".panorama-rekey" para recuperación manual.'
+      // C1-A: sin registro, volver a abrir NO lo resuelve. No se promete.
+      : rekeyRecovery.sinRegistro
+      ? 'No se ha modificado ni borrado nada. Esa carpeta de trabajo no tiene registro, así que la ' +
+        'aplicación no puede saber qué contiene ni resolverla sola: volver a abrirla dará este mismo aviso ' +
+        'hasta que alguien revise la carpeta a mano. No la borres sin revisarla: puede contener la única ' +
+        'copia de archivos anteriores.'
       : 'No se ha modificado ni borrado nada: tus archivos originales y el registro del cambio siguen ' +
         'intactos en la carpeta de trabajo. La aplicación se cierra a propósito en vez de seguir con la ' +
         'Seguridad a medias. Vuelve a abrirla: si el problema era temporal (otro equipo escribiendo, la ' +
@@ -9663,6 +11666,10 @@ app.whenReady().then(async () => {
     return;
   }
   migrateLegacyInlineBackupsToFiles();
+  // C1-A: inventario de residuos — solo lectura, una línea en app.log. Va aquí,
+  // con las cuatro recuperaciones ya resueltas y la migración hecha, para
+  // contar el estado con el que empieza de verdad la sesión.
+  registrarInventarioDeResiduos();
   createLauncherWindow();
   // A1: si al arrancar se terminó de aplicar un re-cifrado que había quedado
   // a medias, hay que decirlo — sobre todo porque puede significar que la
@@ -9702,6 +11709,25 @@ app.whenReady().then(async () => {
         'proyectos más recientes. En cuanto esa carpeta vuelva a estar disponible, cierra la app y vuelve a abrirla.' +
         errorCodeSuffix('PS-1005'),
       { title: 'Usando datos locales temporalmente', danger: true }
+    );
+  }
+  // P22: si no se pudo dejar constancia de que este equipo usa una carpeta de
+  // datos propia, NO se sigue como si todo estuviera protegido: se dice. La
+  // barrera no desaparece —el registro de ubicaciones de A3.3 guarda la misma
+  // información por su cuenta, y mientras tanto la ausencia de constancia nunca
+  // cuenta como prueba de «instalación nueva»— pero queda degradada.
+  if (historialUbicacionDegradado) {
+    modalAlert(
+      launcherWin,
+      'Panorama del Servicio no ha podido guardar en la configuración local la constancia de que este equipo ' +
+        'usa una carpeta de datos propia.\n\n' +
+        `Detalle: ${historialUbicacionDegradado.motivo}\n\n` +
+        'Todo sigue funcionando con normalidad y tus datos no están en riesgo por esto. Lo que queda debilitado ' +
+        'es una defensa: esa constancia es la que impide que, más adelante y sin el archivo de configuración, un ' +
+        'arranque confunda este equipo con una instalación nueva. Revisa los permisos de la carpeta de ' +
+        'configuración de Windows.' +
+        errorCodeSuffix('PS-1024'),
+      { title: 'No se pudo dejar constancia de la ubicación de datos', danger: true }
     );
   }
 });
@@ -9972,10 +11998,21 @@ function computeStaffingRatio(projectId) {
 // servicio, staffing) desde 'portfolio:summary' sin duplicar los 5 bloques
 // try/catch -- las dos vistas nuevas del lanzador (lista y resumen de
 // cartera) parten de los mismos números que ya mostraba cada tarjeta.
-function computeProjectRowExtras(r) {
+// B1: `ctx` es el contexto de la pasada (ver `nuevoContextoListado`). Opcional:
+// sin él cada helper lee de disco por su cuenta, como siempre.
+function computeProjectRowExtras(r, ctx) {
+  // La fila ya la tenemos: se siembra en el contexto para que los helpers de
+  // candidatos no repitan su propio SELECT.
+  if (ctx && !ctx.filas.has(r.id)) ctx.filas.set(r.id, r);
   try {
-    r.semaforo = computeProjectSemaforo(r.id);
+    r.semaforo = computeProjectSemaforo(r.id, ctx);
   } catch (e) {
+    // B3: estos cuatro catch NO deberían ejecutarse nunca — las compute* no
+    // lanzan, devuelven null, y esa degradación ya la cubrió B1 con
+    // `avisarExtraDegradado`. Si alguno salta es una excepción inesperada: un
+    // bug, y entonces es justo cuando más falta hace el rastro.
+    appLogUnaVezPorSesion('extras-sem-' + r.id,
+      `Listado de proyectos — excepción inesperada calculando el semáforo del proyecto ${r.id}: ` + motivoSinRutas(e));
     console.warn('No se pudo calcular el semáforo de urgencia para el proyecto', r.id, e);
     r.semaforo = null;
   }
@@ -9983,10 +12020,12 @@ function computeProjectRowExtras(r) {
   // ver computeCandidatePendingInterviews más arriba. Null si no hay
   // ninguna, o si no se pudo leer (p.ej. cifrado y seguridad bloqueada).
   try {
-    const pending = computeCandidatePendingInterviews(r.id);
+    const pending = computeCandidatePendingInterviews(r.id, ctx);
     r.pendingInterviewsCount = pending ? pending.count : 0;
     r.pendingInterviewsLevel = pending ? pending.level : null;
   } catch (e) {
+    appLogUnaVezPorSesion('extras-ent-' + r.id,
+      `Listado de proyectos — excepción inesperada calculando las entrevistas del proyecto ${r.id}: ` + motivoSinRutas(e));
     console.warn('No se pudo calcular las entrevistas pendientes para el proyecto', r.id, e);
     r.pendingInterviewsCount = 0;
     r.pendingInterviewsLevel = null;
@@ -9995,32 +12034,50 @@ function computeProjectRowExtras(r) {
   // computeCandidateTeamCoverage. Null (no undefined) si el proyecto no
   // usa Evaluación de Candidatos en absoluto -- caso neutro, no aviso.
   try {
-    const coverage = computeCandidateTeamCoverage(r.id);
+    const coverage = computeCandidateTeamCoverage(r.id, ctx);
     r.unfilledPositionsCount = coverage ? coverage.uncoveredCount : 0;
   } catch (e) {
+    appLogUnaVezPorSesion('extras-cob-' + r.id,
+      `Listado de proyectos — excepción inesperada calculando la cobertura de puestos del proyecto ${r.id}: ` + motivoSinRutas(e));
     console.warn('No se pudo calcular la cobertura de puestos para el proyecto', r.id, e);
     r.unfilledPositionsCount = 0;
   }
   // v2.0.11: aviso de servicio finalizando/finalizado (o prórroga estimada sin confirmar) —
   // ver computeServiceEndWarning más arriba.
   try {
-    const warn = computeServiceEndWarning(r.id);
+    const warn = computeServiceEndWarning(r.id, ctx);
     r.serviceEndLevel = warn ? warn.level : null;
     r.serviceEndMessage = warn ? warn.message : null;
+    // E2 (15 sept 2026): los campos ESTRUCTURADOS del status, para que nadie
+    // tenga que volver a derivar lógica del texto. `serviceStatusDays` y NO
+    // `serviceEndDays`: con `kind === 'proximo-inicio'` el número son días
+    // hasta el INICIO, no hasta el fin, y ese nombre sería falso justo ahí.
+    // Semántica completa (signo incluido) en `vendor/service-status.js`.
+    r.serviceStatusKind = warn ? warn.kind : null;
+    r.serviceStatusDays = warn ? warn.days : null;
   } catch (e) {
+    appLogUnaVezPorSesion('extras-fin-' + r.id,
+      `Listado de proyectos — excepción inesperada calculando el fin de servicio del proyecto ${r.id}: ` + motivoSinRutas(e));
     console.warn('No se pudo calcular el aviso de fin de servicio para el proyecto', r.id, e);
     r.serviceEndLevel = null;
     r.serviceEndMessage = null;
+    r.serviceStatusKind = null;
+    r.serviceStatusDays = null;
   }
-  try {
-    const staffing = computeStaffingRatio(r.id);
-    r.staffingActive = staffing ? staffing.active : null;
-    r.staffingTotal = staffing ? staffing.total : null;
-  } catch (e) {
-    console.warn('No se pudo calcular el staffing del proyecto', r.id, e);
-    r.staffingActive = null;
-    r.staffingTotal = null;
-  }
+  // B1 (15 sept 2026) — AQUÍ SE LLAMABA A `computeStaffingRatio()`, y se
+  // devolvían `staffingActive` / `staffingTotal`. RETIRADO del listado.
+  //
+  // Los creó la v2.0.56 para la vista de Lista del lanzador, y **E1 retiró esa
+  // vista**: desde entonces no los consumía nadie — ni el lanzador, ni
+  // `portfolio:summary`, ni ninguna otra ventana. Comprobado sobre el árbol,
+  // no supuesto. Y costaban UNA LECTURA COMPLETA del último backup por
+  // proyecto y por refresco, sobre `G:`.
+  //
+  // `computeStaffingRatio()` NO se ha borrado: sigue ahí, intacta y sin
+  // llamadores, para el día en que se termine la opción B de E1 (conectar
+  // Lista / Resumen de Cartera). Reincorporarla será entonces una decisión
+  // consciente — añadir la llamada aquí, con `ctx`, y los dos campos — y no un
+  // coste que se paga en cada refresco por si acaso.
 }
 
 function listProjectRows() {
@@ -10040,7 +12097,13 @@ function listProjectRows() {
        FROM projects p WHERE p.kind='project'
        ORDER BY (p.sort_order IS NULL), p.sort_order ASC, p.updated_at DESC`
   );
-  rows.forEach((r) => computeProjectRowExtras(r));
+  // B1: UN contexto por pasada. Nace aquí, se pasa hacia abajo y muere al
+  // volver — no hay ninguna referencia a él fuera de esta función. Esa es la
+  // propiedad que hace que la optimización NO toque P13: dos llamadas seguidas
+  // vuelven a leer el disco, así que el lanzador sigue viendo el último backup
+  // persistido, ni más viejo ni más nuevo que antes.
+  const ctx = nuevoContextoListado();
+  rows.forEach((r) => computeProjectRowExtras(r, ctx));
   return rows;
 }
 
@@ -10100,10 +12163,29 @@ ipcMain.handle('portfolio:summary', () => {
     if (r.serviceEndLevel === 'amarillo') expiringSoon++;
 
     if (unfilled > 0) timeline[0].vacancies += unfilled;
+    // E2 (15 sept 2026) — AQUÍ VIVÍA UN PARSER DE TEXTO. Esto era:
+    //
+    //     const daysMatch = /(\d+)/.exec(r.serviceEndMessage || '');
+    //
+    // es decir, se sacaban los días leyendo el MENSAJE de la interfaz. Funcionaba
+    // por coincidencia, no por contrato: lo único que lo salvaba era que el
+    // nivel 'rojo' no entraba en el `if`. Con «Finalizó el 09/12/2026» la regex
+    // devuelve «09», y eso se habría contado como 9 días. Cualquier reescritura
+    // del wording que metiera un número antes lo rompía EN SILENCIO.
+    //
+    // Ahora se usa el dato estructurado. `serviceStatusDays` son días CON SIGNO
+    // hasta la fecha que da nombre a `serviceStatusKind` (ver
+    // `vendor/service-status.js`): para estos dos estados es siempre >= 0, que
+    // es justo lo que las bandas de 0-30 días necesitan. El mensaje queda para
+    // presentación y nada más.
+    // El CRITERIO de qué entra se deja EXACTAMENTE como estaba —por nivel, no
+    // por `kind`— a propósito: 'amarillo' incluye también la prórroga estimada
+    // próxima, y filtrar por `kind === 'finaliza-pronto'` la habría dejado
+    // fuera sin que nadie lo pidiera. Lo único que cambia es DE DÓNDE sale el
+    // número. Los niveles 'rojo' siguen sin entrar, igual que antes.
     if (r.serviceEndLevel === 'amarillo' || r.serviceEndLevel === 'proximo-inicio') {
-      const daysMatch = /(\d+)/.exec(r.serviceEndMessage || '');
-      const days = daysMatch ? Number(daysMatch[1]) : null;
-      if (days !== null) {
+      const days = r.serviceStatusDays;
+      if (typeof days === 'number' && Number.isFinite(days) && days >= 0) {
         const band = timeline.find((b) => days >= b.from && days < b.to) || timeline[timeline.length - 1];
         band.events++;
       }
@@ -10128,12 +12210,74 @@ ipcMain.handle('portfolio:summary', () => {
 // una vez, así el orden queda totalmente determinado a partir de aquí
 // (deja de depender de updated_at). Los proyectos que no estén en
 // `orderedIds` (no debería pasar, pero por robustez) no se tocan.
+// B4 (16 sept 2026) — REORDENAR ES **UNA** OPERACIÓN LÓGICA.
+//
+// Aquí había un `forEach` con un `dbmod.run()` por fila, y cada `dbmod.run()`
+// es un commit A3.3 completo: exporta la base de datos entera, escribe el .gen
+// y publica el .sqlite3. Con N proyectos eran N commits independientes.
+//
+// El diagnóstico de B4 lo reprodujo midiendo: cortando la publicación en la
+// segunda vuelta, el archivo quedaba con `sort_order` = [0, null, null]. La
+// primera vuelta YA estaba confirmada en disco, el commit había avanzado, y
+// nadie reponía nada. No se pierden datos —`sort_order` es el orden de las
+// tarjetas— pero es una operación aplicada A MEDIAS, que es justo lo que el
+// Bloque 5 ya eliminó para los borrados (ver D3: "antes eran N commits
+// sueltos... ahora UN ÚNICO commit para todos los DELETE").
+//
+// Ahora: las N sentencias van en UNA sola mutación, anclada al commit sobre el
+// que se calculó el orden. O se aplica todo, o no se aplica nada. No lleva
+// journal a propósito: un journal existe para emparejar ARCHIVOS con filas, y
+// aquí no hay ningún archivo — sería inventar un mecanismo nuevo para nada.
 ipcMain.handle('projects:reorder', (evt, orderedIds) => {
   if (procesoComprometido) return { ok: false, error: 'La aplicación está cerrándose por un fallo interno.' }; // B2
   if (!Array.isArray(orderedIds)) return { ok: false, error: 'Lista de orden inválida.' };
-  orderedIds.forEach((id, idx) => {
-    dbmod.run('UPDATE projects SET sort_order=? WHERE id=?', [idx, Number(id)]);
-  });
+  // Lista vacía: no hay nada que ordenar. Se sale ANTES de escribir, porque
+  // `escribirMultiple([])` sí produciría un commit — una escritura completa de
+  // la base de datos para no cambiar nada.
+  if (orderedIds.length === 0) return { ok: true };
+
+  // Validación de la ENTRADA, antes de construir nada. No son reglas de
+  // negocio nuevas: es que un id que no sea un entero se convertía en `NaN` y
+  // el `WHERE id=NaN` no casaba con ninguna fila, así que ese proyecto se
+  // quedaba sin orden mientras los demás sí se movían — un fallo silencioso.
+  // Los `sort_order` no se validan porque no vienen de fuera: son el índice.
+  const ids = orderedIds.map((x) => Number(x));
+  if (!ids.every((n) => Number.isInteger(n) && n > 0)) {
+    return { ok: false, error: 'La lista de orden contiene identificadores que no son válidos.' };
+  }
+  if (new Set(ids).size !== ids.length) {
+    return { ok: false, error: 'La lista de orden repite algún proyecto.' };
+  }
+
+  // El orden se calculó sobre ESTA versión de la base de datos. Si otro equipo
+  // publica mientras tanto, se rechaza en vez de consolidar sobre algo que ya
+  // no es lo que el usuario vio. Mismo criterio que el resto de A3.3.
+  const base = dbmod.getCommitActual();
+  if (!base) return { ok: false, error: 'La base de datos todavía no tiene identidad.' };
+
+  const sentencias = ids.map((id, idx) => ({
+    sql: 'UPDATE projects SET sort_order=? WHERE id=?', params: [idx, id],
+  }));
+  try {
+    dbmod.escribirMultiple(sentencias, { exigirCommitBase: base });
+  } catch (e) {
+    // B3: un fallo de persistencia que no sea de backup no dejaba NINGUNA
+    // línea en app.log — el registro de db.js no sale de la memoria. Este sí,
+    // porque B4 ha demostrado que este camino falla de forma observable.
+    //
+    // Sin dedupe a propósito: reordenar es un gesto manual del usuario, no un
+    // bucle ni un temporizador. No puede hacer spam.
+    //
+    // No lleva la lista de proyectos (no hace falta para diagnosticar), ni
+    // rutas: `motivoSinRutas` ya las quita del mensaje del sistema.
+    appLog(`Reordenado de proyectos — NO aplicado (${ids.length} proyectos, ` +
+      `clase ${(e && e.kind) || 'desconocida'}): ${motivoSinRutas(e)}`);
+    // Se PROPAGA, no se devuelve `{ok:false}`: el renderer engancha su aviso al
+    // `catch` de la promesa (ver el 'dragend' de launcher/renderer.js) y no
+    // mira el valor devuelto. Devolver aquí un objeto haría que el fallo
+    // pasara desapercibido, que es lo contrario de lo que se busca.
+    throw e;
+  }
   return { ok: true };
 });
 
@@ -10329,18 +12473,33 @@ ipcMain.handle('meeting:deletePrep', async (evt, { projectId, id } = {}) => {
 // pendientes del launcher) sin duplicar la lógica de descifrado. `row` es
 // la fila de `projects` ya cargada por quien llama — evita repetir el
 // SELECT cuando ya se tiene a mano.
-function readCandidateEvalPayloadForProject(row) {
+// B1: `ctx` opcional, igual que en getProjectStateForMeetingPrep. Con contexto
+// se memoiza por proyecto durante la pasada y se usa la ruta PURA; sin él, el
+// comportamiento de siempre para el resto de llamadores.
+function readCandidateEvalPayloadForProject(row, ctx) {
+  if (ctx && ctx.evaluaciones.has(row.id)) return ctx.evaluaciones.get(row.id);
+  const r = leerCandidateEvalPayload(row, ctx);
+  if (ctx) ctx.evaluaciones.set(row.id, r);
+  return r;
+}
+function leerCandidateEvalPayload(row, ctx) {
   const metaRow = dbmod.get('SELECT * FROM candidate_evals WHERE project_id=?', [row.id]);
-  const file = candidateEvalFileForProject(row);
+  const file = ctx ? rutaEvaluacionPura(row) : candidateEvalFileForProject(row);
+  // Sin fila o sin archivo NO es un fallo: es un proyecto que no usa esta
+  // herramienta. No se avisa de nada, y la respuesta memoizada evita que el
+  // segundo consumidor de la pasada vuelva a comprobar si el archivo existe.
   if (!metaRow || !fs.existsSync(file)) return { ok: true, payload: null };
   let raw;
   try {
     raw = fs.readFileSync(file, 'utf8');
   } catch (e) {
-    return { ok: false, error: 'No se pudo leer el archivo guardado: ' + ((e && e.message) || String(e)) };
+    const msg = (e && e.message) || String(e);
+    avisarExtraDegradado(ctx, row.id, 'la evaluación de candidatos', 'ilegible', msg);
+    return { ok: false, error: 'No se pudo leer el archivo guardado: ' + msg };
   }
   if (metaRow.encrypted) {
     if (!securityKey) {
+      avisarExtraDegradado(ctx, row.id, 'la evaluación de candidatos', 'cifrado-no-legible', 'seguridad bloqueada');
       return {
         ok: false,
         error:
@@ -10350,13 +12509,16 @@ function readCandidateEvalPayloadForProject(row) {
     try {
       raw = securitymod.decryptString(securityKey, raw);
     } catch (e) {
-      return { ok: false, error: 'No se pudo descifrar el archivo: ' + ((e && e.message) || String(e)) };
+      const msg = (e && e.message) || String(e);
+      avisarExtraDegradado(ctx, row.id, 'la evaluación de candidatos', 'cifrado-no-legible', msg);
+      return { ok: false, error: 'No se pudo descifrar el archivo: ' + msg };
     }
   }
   let payload;
   try {
     payload = JSON.parse(raw);
   } catch (e) {
+    avisarExtraDegradado(ctx, row.id, 'la evaluación de candidatos', 'formato-inesperado', (e && e.message) || '');
     return { ok: false, error: 'El archivo guardado tiene un formato inesperado.' };
   }
   return { ok: true, payload };
@@ -10382,10 +12544,10 @@ function readCandidateEvalPayloadForProject(row) {
 // el contador del launcher era el único sitio con este requisito extra,
 // bug real reportado por el usuario). Ahora sí cuenta: solo la fecha
 // (cuando existe) decide el COLOR de urgencia, nunca si cuenta o no.
-function computeCandidatePendingInterviews(projectId) {
-  const row = dbmod.get('SELECT * FROM projects WHERE id=?', [projectId]);
+function computeCandidatePendingInterviews(projectId, ctx) {
+  const row = filaDeProyecto(projectId, ctx);
   if (!row) return null;
-  const result = readCandidateEvalPayloadForProject(row);
+  const result = readCandidateEvalPayloadForProject(row, ctx);
   if (!result.ok || !result.payload) return null;
   const state = result.payload;
   const puestos = Array.isArray(state.puestos) ? state.puestos : [];
@@ -10455,12 +12617,12 @@ function computeCandidatePendingInterviews(projectId) {
 // ya ha empezado por fecha (`state.serviceStart`) -- antes de esa fecha,
 // tener plazas todavía sin cubrir es lo esperable (el equipo se está
 // formando de cara al arranque), no una vacante parada que avisar.
-function computeCandidateTeamCoverage(projectId) {
-  const row = dbmod.get('SELECT * FROM projects WHERE id=?', [projectId]);
+function computeCandidateTeamCoverage(projectId, ctx) {
+  const row = filaDeProyecto(projectId, ctx);
   if (!row) return null;
 
   let uncoveredFromEval = 0;
-  const evalResult = readCandidateEvalPayloadForProject(row);
+  const evalResult = readCandidateEvalPayloadForProject(row, ctx);
   if (evalResult.ok && evalResult.payload) {
     const state = evalResult.payload;
     const puestos = Array.isArray(state.puestos) ? state.puestos : [];
@@ -10486,7 +12648,7 @@ function computeCandidateTeamCoverage(projectId) {
   }
 
   let uncoveredFromTeam = 0;
-  const dashResult = getProjectStateForMeetingPrep(projectId);
+  const dashResult = getProjectStateForMeetingPrep(projectId, ctx);
   if (dashResult.ok && dashResult.state) {
     const dashState = dashResult.state;
     const started = !!dashState.serviceStart && new Date(dashState.serviceStart + 'T00:00:00') <= new Date();
@@ -10645,6 +12807,9 @@ ipcMain.handle('candidateEval:removeCv', (evt, { projectId, storedName } = {}) =
     // usuario -- pero antes se tragaba también cualquier OTRO fallo (permisos,
     // disco, etc.) sin dejar rastro. Mismo criterio que meeting:deletePrep
     // (arriba): se registra con console.warn, se sigue igual.
+    // B3: el archivo queda huérfano en disco. No rompe nada ahora, pero es la
+    // familia de C1 (basura acumulada) y hasta hoy no dejaba ni una línea.
+    appLog(`Proyecto ${projectId} — no se pudo borrar el archivo del CV; queda huérfano en disco: ` + motivoSinRutas(e));
     console.warn('No se pudo borrar el archivo del CV (se continúa igualmente):', e);
   }
   return { ok: true };
@@ -10833,6 +12998,9 @@ ipcMain.handle('backup:save', async (evt, { projectId, payload, reason }) => {
       }
     }
   } catch (e) {
+    // B3: corre en cada `backup:save` -> una línea por sesión y proyecto.
+    appLogUnaVezPorSesion('titulo-volcado-' + projectId,
+      `Proyecto ${projectId} — no se pudo leer su título desde el volcado del backup: ` + motivoSinRutas(e));
     console.warn('No se pudo leer el título del proyecto desde el volcado:', e);
   }
 
@@ -10863,6 +13031,10 @@ ipcMain.handle('backup:save', async (evt, { projectId, payload, reason }) => {
     try {
       regenerateProjectDashboardFile(projectId, projectState.projectTitle, projectState.serviceStart);
     } catch (e) {
+      // B3: este corre en CADA `backup:save` — cada ~15 s por proyecto abierto.
+      // Una línea por sesión, o llenaría app.log con la misma.
+      appLogUnaVezPorSesion('html-proyecto-' + projectId,
+        `Proyecto ${projectId} — no se pudo actualizar su copia HTML tras guardar: ${motivoSinRutas(e)}`);
       console.warn('No se pudo actualizar la copia HTML del proyecto:', e);
     }
   }

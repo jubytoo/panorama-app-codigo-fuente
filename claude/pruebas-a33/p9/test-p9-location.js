@@ -266,6 +266,15 @@ const CUSTOM_C = path.join(RAIZ_C, 'G', 'Datos', 'BD-P9');
 fs.mkdirSync(path.join(APPDATA_C, 'panorama-app-config'), { recursive: true });
 fs.mkdirSync(DEFECTO_C, { recursive: true });
 fs.mkdirSync(CUSTOM_C, { recursive: true });
+// ARN-5: directorio de trabajo SIMULADO para todo caso que use un
+// "userDataDir" relativo. Bajo la reversión C (sin validación de ruta
+// absoluta) el código roto sí intenta `mkdirSync` con esa ruta relativa, y
+// sin esto se resolvía contra el cwd REAL del proceso (la raíz del proyecto
+// cuando `comprobar-reversiones-p9.js` lanza este archivo) — de ahí el
+// residuo `datos\relativa` en la raíz. Un único sandbox reutilizado por
+// todos los puntos que hoy prueban una ruta relativa.
+const CWD_SIM = path.join(RAIZ_C, 'cwd-simulado');
+fs.mkdirSync(CWD_SIM, { recursive: true });
 const LOC = path.join(APPDATA_C, 'panorama-app-config', 'location.json');
 const G = CUSTOM_C.replace(/\\/g, '/');
 const u8 = (s) => Buffer.from(s, 'utf8');
@@ -497,7 +506,9 @@ const INVALIDOS_ARRANQUE = [
   ['P9-9', 'UTF-16 LE sin BOM', Buffer.from(instalador(G), 'utf16le')],
 ];
 for (const [caso, id, bytes] of INVALIDOS_ARRANQUE) {
-  const r = arrancar(bytes);
+  // ARN-5: 'P9-8 ruta relativa' vive en este array; bajo la reversión C
+  // (sin validación de ruta absoluta) esta llamada SÍ intenta un mkdir real.
+  const r = arrancar(bytes, { cwd: CWD_SIM });
   ok(`${caso} ${id}: queda «NO RESUELTA» (${r.st.noResuelta && r.st.noResuelta.estado}), sin setPath, sin destino, sin fallo PS-1005 y sin esperar`,
     !!r.st.noResuelta && /^(ilegible|invalido)$/.test(r.st.noResuelta.estado) && r.setPath.length === 0
     && r.st.destino === null && r.st.fallo === null && r.sleeps === 0 && r.userData === DEFECTO_C, JSON.stringify(r.st));
@@ -510,8 +521,7 @@ for (const [caso, id, bytes] of INVALIDOS_ARRANQUE) {
     r.st.noResuelta && r.st.noResuelta.estado === 'ilegible' && r.setPath.length === 0 && r.m.traza.escrituras.length === 0, JSON.stringify(r.st));
 }
 {
-  const cwd = path.join(RAIZ_C, 'cwd-simulado');
-  fs.mkdirSync(cwd, { recursive: true });
+  const cwd = CWD_SIM;
   const r = arrancar(u8('{"userDataDir":"datos/relativa"}'), { cwd });
   ok('P9-8 ruta RELATIVA: NO se crea NINGUNA carpeta bajo el directorio de trabajo (antes: «datos\\relativa»)',
     !fs.existsSync(path.join(cwd, 'datos')) && r.nuevos.length === 0, JSON.stringify(r.nuevos));
@@ -558,12 +568,12 @@ for (const codigo of ['EACCES', 'EPERM']) {
 seccion('P9-E. LA DECISIÓN DE A3.3 DESPUÉS (segunda capa)');
 // =============================================================================
 const REG = path.join(APPDATA_C, 'panorama-app-config', 'ubicaciones-inicializadas.json');
-function decidir(bytes, { bdEnDefecto, registro }) {
+function decidir(bytes, { bdEnDefecto, registro, cwd }) {
   fs.rmSync(path.join(DEFECTO_C, 'panorama.sqlite3'), { force: true });
   fs.rmSync(REG, { force: true });
   if (bdEnDefecto) fs.writeFileSync(path.join(DEFECTO_C, 'panorama.sqlite3'), 'residuo');
   if (registro !== undefined) fs.writeFileSync(REG, typeof registro === 'string' ? registro : JSON.stringify(registro));
-  const r = arrancar(bytes);
+  const r = arrancar(bytes, { cwd });
   const d = r.m.decidirCrearSiAusente();
   return { d, escrituras: r.m.traza.escrituras.length };
 }
@@ -580,7 +590,7 @@ const clave = path.resolve(DEFECTO_C).toLowerCase();
     d.crear === false && d.configNoResuelta === true, JSON.stringify(d));
 }
 {
-  const { d } = decidir(u8('{"userDataDir":"datos/relativa"}'), { bdEnDefecto: false });
+  const { d } = decidir(u8('{"userDataDir":"datos/relativa"}'), { bdEnDefecto: false, cwd: CWD_SIM });
   ok('P9-12 relativa + carpeta por defecto VACÍA: NO autoriza crear', d.crear === false && d.configNoResuelta === true, JSON.stringify(d));
 }
 {
@@ -629,13 +639,25 @@ function rescatar(bytes, extra) {
   for (const f of ofs.readdirSync(RECURSOS)) ofs.rmSync(path.join(RECURSOS, f), { force: true });
   ofs.writeFileSync(path.join(RECURSOS, 'app.asar'), 'ASAR ROTO');
   escribirLoc(bytes);
-  const m = construir(Object.assign({ appData: APPDATA_C, userData: DEFECTO_C, recursos: RECURSOS }, extra || {}));
+  const { cwd, ...construirExtra } = extra || {};
+  const m = construir(Object.assign({ appData: APPDATA_C, userData: DEFECTO_C, recursos: RECURSOS }, construirExtra));
   const copias = () => m.traza.escrituras.filter((e) => /^copyFileSync /.test(e));
-  const dataDir = m.resolveDataDirForStartupRecovery();
-  const LOG_D = path.join(DEFECTO_C, 'app.log');
-  const previo = fs.existsSync(LOG_D) ? fs.readFileSync(LOG_D, 'utf8').length : 0;
-  m.handleFatalStartupError(new Error('fallo simulado al cargar ./db'));
-  const nuevo = fs.existsSync(LOG_D) ? fs.readFileSync(LOG_D, 'utf8').slice(previo) : '';
+  // ARN-5: bajo alguna reversión, resolveDataDirForStartupRecovery() /
+  // handleFatalStartupError() pueden intentar tocar el filesystem con una
+  // ruta relativa (mismo mecanismo que arrancar()): se acota al mismo cwd
+  // simulado mientras se ejecutan.
+  const antesCwd = process.cwd();
+  if (cwd) process.chdir(cwd);
+  let dataDir, nuevo;
+  try {
+    dataDir = m.resolveDataDirForStartupRecovery();
+    const LOG_D = path.join(DEFECTO_C, 'app.log');
+    const previo = fs.existsSync(LOG_D) ? fs.readFileSync(LOG_D, 'utf8').length : 0;
+    m.handleFatalStartupError(new Error('fallo simulado al cargar ./db'));
+    nuevo = fs.existsSync(LOG_D) ? fs.readFileSync(LOG_D, 'utf8').slice(previo) : '';
+  } finally {
+    if (cwd) process.chdir(antesCwd);
+  }
   const soporte = (nuevo.match(/PS-1007 — recuperación:[^\n]*/) || [''])[0];
   return { m, copias: copias(), asar: ofs.readFileSync(path.join(RECURSOS, 'app.asar'), 'utf8'), recursos: ofs.readdirSync(RECURSOS), dataDir, soporte };
 }
@@ -646,7 +668,7 @@ for (const [id, bytes, extra] of [
   ['ANSI cp1252', Buffer.from(`{"userDataDir":"${G}/A\xf1o"}`, 'latin1')],
   ['archivo ilegible (EACCES)', u8(instalador(G)), { fsImpl: fsQueFalla(LOC, 'readFileSync', 'EACCES') }],
 ]) {
-  const r = rescatar(bytes, extra);
+  const r = rescatar(bytes, Object.assign({ cwd: CWD_SIM }, extra));
   ok(`P9-14 ${id}: el rescate NO copia NADA (ni la copia antigua de la carpeta por defecto ni ninguna otra)`,
     r.copias.length === 0 && r.asar === 'ASAR ROTO' && r.recursos.join() === 'app.asar', JSON.stringify({ c: r.copias, rec: r.recursos }));
   // 18 sept 2026 — ACTUALIZADA POR P18. Antes exigía el texto «la configuración
@@ -733,7 +755,7 @@ fs.rmSync(path.join(DEFECTO_C, 'app.log'), { force: true });
 seccion('P9-G. LA PROTECCIÓN DE APAGADO NO SE TOCA POR UN FALLO DE LECTURA');
 // =============================================================================
 function sincronizar(bytes, guard) {
-  const r = arrancar(bytes, { guard });
+  const r = arrancar(bytes, { guard, cwd: CWD_SIM });
   r.m.syncDriveSyncGuardWithLocation();
   return r.m.traza.guard;
 }
