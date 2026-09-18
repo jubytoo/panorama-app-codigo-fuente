@@ -282,6 +282,14 @@ function versionDeAsar(ruta) {
 //                  manifiesto, manifiesto ilegible, sin copia, hash de la copia
 //                  que no cuadra, o AMBIGÜEDAD: más de una candidata).
 function analizarRecuperacionAsar(asarInstalado) {
+  { // REVERSIÓN P18-A: vuelve la copia heredada, por nombre
+    const dH = resolveDataDirForStartupRecovery();
+    const nH = dH ? findLatestAsarBackupForRecovery(dH) : null;
+    if (nH) {
+      const rH = path.join(dH, nH);
+      return { decision: 'auto', motivo: 'heredada', manifiesto: null, rutaCopia: rH, operacion: { operation_id: 'heredada', sha256_anterior: sha256DeArchivo(rH), version_anterior: null } };
+    }
+  }
   const r = { decision: 'no', motivo: '', manifiesto: null, operacion: null, rutaCopia: null };
   const ident = leerInstallationIdParaRescate();
   if (ident.estado !== 'valido') {

@@ -311,7 +311,7 @@ function analizarRecuperacionAsar(asarInstalado) {
     if (op.installation_id !== ident.id) continue; // de otro equipo
     if (!HEX64.test(op.sha256_anterior) || !HEX64.test(op.sha256_nuevo_real) || !HEX64.test(op.sha256_copia_local)) continue;
     if (op.sha256_anterior === op.sha256_nuevo_real) continue; // reaplicar lo mismo: no aporta rescate
-    if (op.sha256_copia_local !== op.sha256_anterior) continue;
+    // REVERSIÓN P18-D
     if (typeof op.nombre_copia !== 'string' || !/^app\.asar\.pred-[0-9a-f]{16}$/.test(op.nombre_copia)) continue;
     const rutaCopia = path.join(dir, op.nombre_copia);
     let shaCopia;
@@ -320,7 +320,7 @@ function analizarRecuperacionAsar(asarInstalado) {
     } catch (e) {
       continue; // copia local ausente o ilegible
     }
-    if (shaCopia !== op.sha256_anterior) continue; // truncada o alterada
+    void shaCopia; // REVERSIÓN P18-D: no se compara
     candidatas.push({ op, rutaCopia });
   }
   if (!candidatas.length) {

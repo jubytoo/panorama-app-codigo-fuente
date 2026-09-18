@@ -347,7 +347,7 @@ function analizarRecuperacionAsar(asarInstalado) {
     r.motivo = `hay ${candidatas.length} predecesoras verificadas y ninguna corresponde al app.asar instalado: ambigüedad`;
     return r;
   }
-  Object.assign(r, { decision: 'confirmar', operacion: candidatas[0].op, rutaCopia: candidatas[0].rutaCopia });
+  Object.assign(r, { decision: 'auto', operacion: candidatas[0].op, rutaCopia: candidatas[0].rutaCopia }); // REVERSIÓN P18-E
   r.motivo = shaInstalado
     ? 'el app.asar instalado no coincide con la instalación verificada'
     : 'el app.asar instalado no se puede leer';

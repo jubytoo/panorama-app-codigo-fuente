@@ -9003,6 +9003,8 @@ function prepararOperacionAsar({ realAsar, stagedAsar, shaParcheElegido }) {
     throw e;
   }
   originalFs.mkdirSync(dir, { recursive: true });
+  for (const o of j.operaciones) { try { originalFs.unlinkSync(path.join(dir, o.nombre_copia)); } catch (e) {} } // REVERSIÓN P18-H
+  j.operaciones = [];
   try {
     originalFs.copyFileSync(realAsar, copia); // 3
     const shaCopia = sha256DeArchivo(copia); // 4: RELEÍDA, no el hash de origen

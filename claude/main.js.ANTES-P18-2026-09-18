@@ -88,11 +88,11 @@ app.on('second-instance', () => {
 // Se registra un manejador de 'uncaughtException' ANTES de los dos
 // requires más frágiles del arranque (los que dependen de que el propio
 // código del parche esté completo: './db' y './security'). Si cualquiera
-// de los dos revienta, el manejador intenta volver a la versión anterior
-// de app.asar — pero, desde P18 (18 sept 2026), SOLO a una cuya procedencia
-// se pueda demostrar (ver el bloque P18 más abajo): ya no elige «el
-// `app.asar.bak-*` más reciente» de la carpeta de datos. Deja un mensaje
-// claro y pide reabrir, sin reabrirse sola (mismo criterio que "Aplicar
+// de los dos revienta, el manejador hace EXACTAMENTE lo mismo que
+// Restaurar-backup.bat: localizar el `app.asar.bak-*` más reciente
+// (mirando primero si hay una carpeta de datos personalizada configurada)
+// y restaurarlo sobre el `app.asar` real, dejando un mensaje claro y
+// pidiendo reabrir — sin reabrirse sola (mismo criterio que "Aplicar
 // parche": nunca reabrir automáticamente, para no arriesgar un bucle).
 //
 // Deliberadamente limitado a la ventana de arranque: en cuanto
@@ -144,247 +144,6 @@ function resolveDataDirForStartupRecovery() {
   }
 }
 
-// ------------------------------------------------------------------
-// P18 (18 sept 2026) — PROCEDENCIA DE LA COPIA DE app.asar QUE SE RESTAURA.
-//
-// Antes, el rescate restauraba «el app.asar.bak-* de nombre más alto» de la
-// carpeta de DATOS, sin saber de qué equipo, de qué instalación ni de qué
-// parche venía: en esta máquina, SEIS instalaciones distintas habían dejado
-// copias en la carpeta compartida, y con Drive sin montar habría puesto la
-// v0.1.28 sobre la 2.0.55. Ahora solo se restaura AUTOMÁTICAMENTE una copia
-// cuya procedencia se demuestra en el momento:
-//   · vive en la carpeta de recuperación LOCAL (%LOCALAPPDATA%, que ni Drive
-//     ni un perfil móvil sincronizan), con nombre `app.asar.pred-<op>` — que
-//     la retención heredada (`app.asar.bak-*`, 2 por mtime) no ve nunca;
-//   · la nombra una operación VERIFICADA del manifiesto local
-//     (asar-procedencia.json), escrita por ESTE equipo (installation-id de
-//     A3.3, que aquí solo se LEE);
-//   · su hash sigue siendo el que se guardó, y el app.asar instalado es
-//     EXACTAMENTE el que dejó esa operación;
-//   · y es la ÚNICA que cumple todo eso.
-// Si el app.asar instalado no se puede leer o no coincide, NO se restaura
-// sola: se pregunta (Cerrar por defecto; Esc/X = Cerrar). Las copias
-// `app.asar.bak-*` heredadas no son candidatas NUNCA: no hay forma de
-// demostrar de dónde salen. Se siguen creando (camino manual transitorio,
-// hasta D4) y el registro dice cuántas hay, pero ya no deciden nada.
-//
-// LÍMITE, dicho sin adornos: todo esto vive en main.js, DENTRO de app.asar.
-// Solo existe si Electron consigue montar el asar y cargar main.js. Con el
-// asar truncado, con la cabecera rota, sin main.js dentro o sin archivo, no
-// se ejecuta NI UNA línea de Panorama (medido el 18 sept 2026 con el build
-// empaquetado). Ese rescate es de la Fase 2 / D4 (mecanismo externo).
-//
-// Autocontenidas A PROPÓSITO, como leerConfigUbicacion(): el rescate las
-// llama antes de que existan las constantes de módulo, y justo cuando
-// require('./db') puede ser lo que ha fallado.
-// ------------------------------------------------------------------
-function rutaInstallationIdParaRescate() {
-  // La MISMA ubicación que cargarInstallationId() de db.js. Aquí solo se lee:
-  // crear el id es, y sigue siendo, cosa de db.js.
-  return path.join(app.getPath('appData'), 'panorama-app-config', 'installation-id');
-}
-
-function leerInstallationIdParaRescate() {
-  let v;
-  try {
-    v = fs.readFileSync(rutaInstallationIdParaRescate(), 'utf8');
-  } catch (e) {
-    if (e && e.code === 'ENOENT') return { estado: 'ausente' };
-    return { estado: 'ilegible', motivo: String((e && e.code) || 'error de lectura') };
-  }
-  v = String(v).trim();
-  // Un id de sesión es el que db.js improvisa cuando NO pudo persistir el
-  // suyo: allí ya no vale como prueba de identidad, y aquí tampoco.
-  if (/^sesion-/.test(v)) return { estado: 'de-sesion' };
-  if (!/^[0-9a-f]{32}$/.test(v)) return { estado: 'ilegible', motivo: 'formato inesperado' };
-  return { estado: 'valido', id: v };
-}
-
-function carpetaRecuperacionAsar() {
-  // LOCAL de verdad: %LOCALAPPDATA% no lo sincroniza Drive ni viaja en un
-  // perfil móvil (%APPDATA% sí puede). Sin él no hay dónde guardar una copia
-  // fiable: null, y entonces no hay recuperación automática.
-  const base = process.platform === 'win32' ? process.env.LOCALAPPDATA : null;
-  return base ? path.join(base, 'panorama-app-recovery') : null;
-}
-
-function rutaManifiestoProcedencia() {
-  return path.join(app.getPath('appData'), 'panorama-app-config', 'asar-procedencia.json');
-}
-
-function leerManifiestoProcedencia() {
-  let txt;
-  try {
-    txt = fs.readFileSync(rutaManifiestoProcedencia(), 'utf8');
-  } catch (e) {
-    if (e && e.code === 'ENOENT') return { estado: 'ausente' };
-    return { estado: 'ilegible', motivo: String((e && e.code) || 'error de lectura') };
-  }
-  let j;
-  try {
-    j = JSON.parse(txt);
-  } catch (e) {
-    return { estado: 'ilegible', motivo: 'JSON roto o truncado' };
-  }
-  if (!j || typeof j !== 'object' || j.v !== 1 || !Array.isArray(j.operaciones)) {
-    return { estado: 'ilegible', motivo: 'estructura inesperada' };
-  }
-  return { estado: 'valido', manifiesto: j };
-}
-
-// originalFs: la ruta puede terminar en «.asar», y el fs parcheado de Electron
-// la trataría como un archivo DE DENTRO de ese asar.
-function sha256DeArchivo(ruta) {
-  return crypto.createHash('sha256').update(originalFs.readFileSync(ruta)).digest('hex');
-}
-
-// Versión leída de la CABECERA del asar (su package.json), sin ejecutar ni
-// extraer nada. null si no es un asar legible.
-function versionDeAsar(ruta) {
-  let fd;
-  try {
-    fd = originalFs.openSync(ruta, 'r');
-    const h = Buffer.alloc(16);
-    if (originalFs.readSync(fd, h, 0, 16, 0) !== 16) return null;
-    const S = h.readUInt32LE(4);
-    const L = h.readUInt32LE(12);
-    if (!S || !L || L > 64 * 1024 * 1024) return null;
-    const hb = Buffer.alloc(L);
-    if (originalFs.readSync(fd, hb, 0, L, 16) !== L) return null;
-    const pj = JSON.parse(hb.toString('utf8')).files['package.json'];
-    if (!pj || !(pj.size > 0) || pj.size > 1024 * 1024) return null;
-    const pb = Buffer.alloc(pj.size);
-    if (originalFs.readSync(fd, pb, 0, pj.size, 8 + S + Number(pj.offset)) !== pj.size) return null;
-    const v = JSON.parse(pb.toString('utf8')).version;
-    return typeof v === 'string' && /^\d+\.\d+\.\d+/.test(v) ? v : null;
-  } catch (e) {
-    return null;
-  } finally {
-    if (fd !== undefined) {
-      try {
-        originalFs.closeSync(fd);
-      } catch (e) {
-        /* da igual */
-      }
-    }
-  }
-}
-
-// Qué se puede hacer para recuperar. NO escribe nada.
-//   'auto'      → exactamente UNA predecesora demostrada, y el app.asar
-//                  instalado es EXACTAMENTE el que dejó su operación.
-//   'confirmar' → exactamente UNA predecesora demostrada, pero el app.asar
-//                  instalado no se puede leer o no coincide con lo verificado:
-//                  puede ser corrupción, un instalador, otro proceso o un
-//                  estado que el manifiesto ya no representa. No se distingue
-//                  sola: decide una persona.
-//   'no'        → no hay recuperación verificable (sin identidad, sin
-//                  manifiesto, manifiesto ilegible, sin copia, hash de la copia
-//                  que no cuadra, o AMBIGÜEDAD: más de una candidata).
-function analizarRecuperacionAsar(asarInstalado) {
-  const r = { decision: 'no', motivo: '', manifiesto: null, operacion: null, rutaCopia: null };
-  const ident = leerInstallationIdParaRescate();
-  if (ident.estado !== 'valido') {
-    r.motivo = `la identidad de este equipo (installation-id) está ${ident.estado}`;
-    return r;
-  }
-  const dir = carpetaRecuperacionAsar();
-  if (!dir) {
-    r.motivo = 'no hay carpeta de recuperación local';
-    return r;
-  }
-  const man = leerManifiestoProcedencia();
-  r.manifiesto = man.estado;
-  if (man.estado === 'ausente') {
-    r.motivo = 'no hay ninguna operación de parcheo registrada en este equipo';
-    return r;
-  }
-  if (man.estado !== 'valido') {
-    r.motivo = `el registro de procedencia no se puede leer (${man.motivo})`;
-    return r;
-  }
-  const HEX64 = /^[0-9a-f]{64}$/;
-  const candidatas = [];
-  for (const op of man.manifiesto.operaciones) {
-    if (!op || typeof op !== 'object') continue;
-    if (op.estado !== 'verificada') continue; // ni 'preparada' ni 'fallida'
-    if (op.installation_id !== ident.id) continue; // de otro equipo
-    if (!HEX64.test(op.sha256_anterior) || !HEX64.test(op.sha256_nuevo_real) || !HEX64.test(op.sha256_copia_local)) continue;
-    if (op.sha256_anterior === op.sha256_nuevo_real) continue; // reaplicar lo mismo: no aporta rescate
-    if (op.sha256_copia_local !== op.sha256_anterior) continue;
-    if (typeof op.nombre_copia !== 'string' || !/^app\.asar\.pred-[0-9a-f]{16}$/.test(op.nombre_copia)) continue;
-    const rutaCopia = path.join(dir, op.nombre_copia);
-    let shaCopia;
-    try {
-      shaCopia = sha256DeArchivo(rutaCopia);
-    } catch (e) {
-      continue; // copia local ausente o ilegible
-    }
-    if (shaCopia !== op.sha256_anterior) continue; // truncada o alterada
-    candidatas.push({ op, rutaCopia });
-  }
-  if (!candidatas.length) {
-    r.motivo = 'ninguna operación verificada de este equipo tiene su copia local intacta';
-    return r;
-  }
-  let shaInstalado = null;
-  try {
-    shaInstalado = sha256DeArchivo(asarInstalado);
-  } catch (e) {
-    shaInstalado = null;
-  }
-  const exactas = shaInstalado ? candidatas.filter((c) => c.op.sha256_nuevo_real === shaInstalado) : [];
-  if (exactas.length > 1) {
-    r.motivo = `hay ${exactas.length} operaciones que corresponden al app.asar instalado: ambigüedad`;
-    return r;
-  }
-  if (exactas.length === 1) {
-    Object.assign(r, { decision: 'auto', operacion: exactas[0].op, rutaCopia: exactas[0].rutaCopia });
-    r.motivo = 'predecesora verificada del app.asar instalado';
-    return r;
-  }
-  if (candidatas.length > 1) {
-    r.motivo = `hay ${candidatas.length} predecesoras verificadas y ninguna corresponde al app.asar instalado: ambigüedad`;
-    return r;
-  }
-  Object.assign(r, { decision: 'confirmar', operacion: candidatas[0].op, rutaCopia: candidatas[0].rutaCopia });
-  r.motivo = shaInstalado
-    ? 'el app.asar instalado no coincide con la instalación verificada'
-    : 'el app.asar instalado no se puede leer';
-  return r;
-}
-
-// Guarda el asar actual (como antes) y pone encima la predecesora, y RELEE el
-// resultado: si lo restaurado no tiene el hash de la copia, se dice, no se da
-// por bueno. Se usa copyFileSync sobre el archivo real a propósito: es lo que
-// ya estaba probado con la app en marcha (renombrar encima de un asar montado
-// puede no estar permitido en Windows).
-function restaurarPredecesoraVerificada(a, asarInstalado) {
-  if (originalFs.existsSync(asarInstalado)) {
-    originalFs.copyFileSync(
-      asarInstalado,
-      path.join(process.resourcesPath, 'app.asar.broken-' + new Date().toISOString().replace(/[:.]/g, '-'))
-    );
-  }
-  originalFs.copyFileSync(a.rutaCopia, asarInstalado);
-  if (sha256DeArchivo(asarInstalado) !== a.operacion.sha256_anterior) {
-    throw new Error('el app.asar restaurado no tiene el hash de la copia verificada');
-  }
-}
-
-// Solo para SOPORTE: qué copias heredadas hay. No decide nada.
-function describirCopiasHeredadasParaSoporte() {
-  try {
-    const dir = resolveDataDirForStartupRecovery();
-    if (!dir) return 'copias heredadas: carpeta de datos no resuelta';
-    const n = originalFs.readdirSync(dir).filter((f) => f.startsWith('app.asar.bak-')).length;
-    const mayor = findLatestAsarBackupForRecovery(dir);
-    return `copias heredadas app.asar.bak-*: ${n}${mayor ? ` (la de nombre más alto es ${mayor})` : ''} — NO se usan: no tienen procedencia verificable`;
-  } catch (e) {
-    return 'copias heredadas: no se pudieron contar';
-  }
-}
-
 let startupRecoveryArmed = true;
 function handleFatalStartupError(err) {
   if (!startupRecoveryArmed) return; // ya pasado el arranque: comportamiento normal de Electron
@@ -399,96 +158,54 @@ function handleFatalStartupError(err) {
   } catch (e) {
     /* si ni el log se puede escribir, se sigue igualmente con la recuperación */
   }
-  // P18: qué se puede hacer, y por qué. Nada de esto escribe.
-  const realAsar = path.join(process.resourcesPath, 'app.asar');
-  const logRescate = (linea) => {
-    try {
-      fs.appendFileSync(path.join(app.getPath('userData'), 'app.log'), `[${new Date().toISOString()}] ${linea}\n`, 'utf8');
-    } catch (e) {
-      /* no crítico */
-    }
-  };
-  let analisis;
   try {
-    analisis = analizarRecuperacionAsar(realAsar);
-  } catch (e) {
-    analisis = { decision: 'no', motivo: `no se pudo analizar la recuperación: ${String((e && e.message) || e)}`, manifiesto: null };
-  }
-  logRescate(`PS-1007 — recuperación: ${analisis.decision} (${analisis.motivo}). ${describirCopiasHeredadasParaSoporte()}.`);
-  const queSeRestaura = (op) =>
-    `la versión ${op.version_anterior || 'anterior'} que había en este equipo antes del parche del ` +
-    `${String(op.verificada_at || op.creada_at || '').slice(0, 10) || '(fecha desconocida)'}`;
-  // Sin procedencia verificable: se informa y se cierra. NO se ofrece
-  // Restaurar-backup.bat: P18 demostró que tampoco sabe de dónde sale la copia.
-  const sinRecuperacion = (codigo) => {
-    dialog.showErrorBox(
-      'Panorama del Servicio no pudo iniciar',
-      'Ha ocurrido un error al arrancar.\n\nDetalle técnico:\n' +
-        detail +
-        '\n\nNo hay ninguna copia de app.asar cuya procedencia se pueda verificar en este equipo, así que NO ' +
-        'se ha restaurado nada automáticamente (motivo: ' +
-        analisis.motivo +
-        ').\n\nReinstala Panorama del Servicio con su instalador, o aplica un parche soportado. Tus datos no ' +
-        'se han tocado.\n\n(código ' +
-        codigo +
-        ')'
-    );
-  };
-  try {
-    if (analisis.decision === 'auto') {
-      restaurarPredecesoraVerificada(analisis, realAsar);
-      logRescate(`PS-1007 — restaurada automáticamente la predecesora verificada de la operación ${analisis.operacion.operation_id}.`);
+    const dataDir = resolveDataDirForStartupRecovery();
+    if (!dataDir) {
+      // P9: location.json existe pero no se puede usar. No se restaura nada:
+      // no se sabe cuál es la carpeta de datos buena, y elegir la de por
+      // defecto podría instalar una copia de app.asar de otra época.
       dialog.showErrorBox(
-        'Panorama del Servicio no pudo iniciar — restaurado automáticamente',
+        'Panorama del Servicio no pudo iniciar',
         'Ha ocurrido un error al arrancar.\n\nDetalle técnico:\n' +
           detail +
-          '\n\nSe ha restaurado automáticamente ' +
-          queSeRestaura(analisis.operacion) +
-          '. Es la copia verificada que guardó este mismo equipo al aplicar ese parche.\n\nCierra este ' +
-          'mensaje y vuelve a abrir "Panorama del Servicio" tú mismo — no se reabre sola.\n\n(código PS-1007)'
+          '\n\nAdemás, la configuración de ubicación de datos no puede leerse, así que NO se ha restaurado ' +
+          'automáticamente ninguna copia de seguridad de app.asar.\n\nPide un parche o instalador nuevo.\n\n(código PS-1007)'
       );
-    } else if (analisis.decision === 'confirmar') {
-      let eleccion = 0;
-      try {
-        eleccion = dialog.showMessageBoxSync({
-          type: 'warning',
-          title: 'Panorama del Servicio no pudo iniciar',
-          message: 'El archivo actual no coincide con la instalación verificada.',
-          detail:
-            'Ha ocurrido un error al arrancar, y el app.asar instalado ' +
-            (analisis.motivo === 'el app.asar instalado no se puede leer' ? 'no se puede leer' : 'no es el que dejó el último parche verificado') +
-            '. Puede ser una corrupción, un instalador, otro programa, o un estado que este equipo ya no tiene ' +
-            'registrado — no se puede distinguir solo, así que no se restaura nada sin preguntar.\n\n' +
-            'Sí hay una copia verificada: ' +
-            queSeRestaura(analisis.operacion) +
-            '.\n\nDetalle técnico:\n' +
-            detail +
-            '\n\n(código PS-1027)',
-          buttons: ['Cerrar', 'Restaurar la versión anterior verificada'],
-          defaultId: 0,
-          cancelId: 0,
-          noLink: true,
-        });
-      } catch (e) {
-        // Si no se puede preguntar, no se restaura: preguntar es la condición.
-        eleccion = 0;
-        logRescate(`PS-1027 — no se pudo mostrar la confirmación (${String((e && e.message) || e)}); no se restaura nada.`);
-      }
-      if (eleccion === 1) {
-        restaurarPredecesoraVerificada(analisis, realAsar);
-        logRescate(`PS-1027 — restaurada POR CONFIRMACIÓN EXPLÍCITA la predecesora de la operación ${analisis.operacion.operation_id}.`);
-        dialog.showErrorBox(
-          'Panorama del Servicio — versión anterior restaurada',
-          'Se ha restaurado ' +
-            queSeRestaura(analisis.operacion) +
-            '.\n\nVuelve a abrir "Panorama del Servicio" tú mismo — no se reabre sola.\n\n(código PS-1027)'
-        );
-      } else {
-        logRescate('PS-1027 — cerrado sin restaurar (elegido «Cerrar», o Esc/X).');
-      }
-    } else {
-      sinRecuperacion(analisis.manifiesto === 'ilegible' ? 'PS-1026' : 'PS-1025');
+      app.exit(1);
+      return;
     }
+    const backupName = findLatestAsarBackupForRecovery(dataDir);
+    const realAsar = path.join(process.resourcesPath, 'app.asar');
+    if (!backupName) {
+      dialog.showErrorBox(
+        'Panorama del Servicio no pudo iniciar',
+        'Ha ocurrido un error al arrancar y no se ha encontrado ninguna copia de seguridad de ' +
+          'app.asar para restaurarla automáticamente.\n\nDetalle técnico:\n' +
+          detail +
+          '\n\nSi tienes "Restaurar-backup.bat" (junto a app.asar, en la carpeta "resources"), ' +
+          'ejecútalo. Si no, pide un parche o instalador nuevo.\n\n(código PS-1007)'
+      );
+      app.exit(1);
+      return;
+    }
+    const backupPath = path.join(dataDir, backupName);
+    if (originalFs.existsSync(realAsar)) {
+      const brokenCopy = path.join(
+        process.resourcesPath,
+        'app.asar.broken-' + new Date().toISOString().replace(/[:.]/g, '-')
+      );
+      originalFs.copyFileSync(realAsar, brokenCopy);
+    }
+    originalFs.copyFileSync(backupPath, realAsar);
+    dialog.showErrorBox(
+      'Panorama del Servicio no pudo iniciar — restaurado automáticamente',
+      'Ha ocurrido un error al arrancar.\n\nDetalle técnico:\n' +
+        detail +
+        '\n\nSe ha restaurado automáticamente la última copia de seguridad que sí funcionaba (' +
+        backupName +
+        ').\n\nCierra este mensaje y vuelve a abrir "Panorama del Servicio" tú mismo — no se reabre ' +
+        'sola.\n\n(código PS-1007)'
+    );
   } catch (recoveryError) {
     const recoveryDetail = String((recoveryError && recoveryError.message) || recoveryError);
     try {
@@ -500,17 +217,14 @@ function handleFatalStartupError(err) {
     } catch (e) {
       /* no crítico */
     }
-    // P18: no se recomienda Restaurar-backup.bat — tampoco verifica la
-    // procedencia de la copia que restaura. Hasta D4, la salida soportada es
-    // reinstalar o aplicar un parche.
     dialog.showErrorBox(
       'Panorama del Servicio no pudo iniciar, y la recuperación automática también falló',
       'Error original:\n' +
         detail +
         '\n\nError al intentar recuperar:\n' +
         recoveryDetail +
-        '\n\nReinstala Panorama del Servicio con su instalador, o aplica un parche soportado. Tus datos no se ' +
-        'han tocado.\n\n(código PS-1008)'
+        '\n\nSi tienes "Restaurar-backup.bat" (junto a app.asar, en la carpeta "resources"), ' +
+        'ejecútalo. Si no, pide un parche o instalador nuevo.\n\n(código PS-1008)'
     );
   }
   app.exit(1);
@@ -708,19 +422,17 @@ const ERROR_CODES = {
     titulo: 'Fallo no capturado durante el arranque — recuperado automáticamente',
     explicacion:
       'Algo rompió el arranque muy pronto (por ejemplo, un parche mal empaquetado) y la app lo ' +
-      'detectó antes de mostrar el diálogo genérico de Electron. Se restauró sola la versión anterior ' +
-      'VERIFICADA: la copia que guardó este mismo equipo al aplicar el último parche, y solo porque el ' +
-      'app.asar instalado era exactamente el que dejó ese parche. Hay que volver a abrir la app a mano, no ' +
-      'se reabre sola. OJO: esto solo puede ocurrir si Electron consigue cargar el app.asar; si el archivo ' +
-      'está truncado, sin cabecera o no existe, la app no llega a ejecutarse y no hay recuperación posible ' +
-      'desde dentro.',
+      'detectó antes de mostrar el diálogo genérico de Electron. Se restauró sola la última copia ' +
+      'de seguridad de app.asar que sí funcionaba — hay que volver a abrir la app a mano, no se ' +
+      'reabre sola.',
   },
   'PS-1008': {
     titulo: 'Fallo no capturado durante el arranque — la recuperación automática también falló',
     explicacion:
-      'Había una copia verificada que restaurar, pero la restauración falló (por ejemplo, sin permisos ' +
-      'para escribir en la carpeta de instalación, o el resultado no tenía el hash esperado). Reinstala la ' +
-      'app con su instalador, o aplica un parche soportado. Tus datos no se tocan.',
+      'Además de fallar el arranque, no se pudo restaurar ningún backup de app.asar automáticamente ' +
+      '(sin copias de seguridad disponibles, o sin permisos para escribir en la carpeta de ' +
+      'instalación). Usa "Restaurar-backup.bat" (junto a app.asar, en la carpeta "resources") si lo ' +
+      'tienes, o pide un parche/instalador nuevo.',
   },
   'PS-1009': {
     titulo: 'No se encontró la base de datos en la carpeta de datos personalizada',
@@ -866,32 +578,6 @@ const ERROR_CODES = {
       'con normalidad, pero esa defensa queda degradada hasta que se pueda escribir: revisa los permisos de ' +
       'la carpeta de configuración. El registro local de ubicaciones de A3.3 sigue guardando la misma ' +
       'información por su cuenta.',
-  },
-  'PS-1025': {
-    titulo: 'Fallo al arrancar sin ninguna copia de app.asar verificable',
-    explicacion:
-      'El arranque falló y no hay ninguna copia de app.asar cuya procedencia se pueda demostrar en este ' +
-      'equipo, así que no se restaura nada. Solo cuenta una copia que este equipo guardó en su carpeta ' +
-      'LOCAL de recuperación al aplicar un parche y que quedó verificada. Las copias antiguas ' +
-      '(app.asar.bak-…) de la carpeta de datos no cuentan: pueden venir de otro equipo, de otra instalación ' +
-      'o de otra época. Es lo normal hasta que se aplique el primer parche con esta versión. Reinstala la ' +
-      'app con su instalador, o aplica un parche soportado.',
-  },
-  'PS-1026': {
-    titulo: 'El registro de procedencia de app.asar no se puede leer',
-    explicacion:
-      'El arranque falló, y el archivo local que registra de dónde sale cada copia de app.asar ' +
-      '(asar-procedencia.json) existe pero está dañado o incompleto. Sin él no se puede demostrar nada, así ' +
-      'que no se restaura ninguna copia. No lo borres: es la pista de lo que pasó. Reinstala la app con su ' +
-      'instalador, o aplica un parche soportado.',
-  },
-  'PS-1027': {
-    titulo: 'El app.asar instalado no coincide con la instalación verificada',
-    explicacion:
-      'El arranque falló y el app.asar instalado no es el que dejó el último parche verificado (o no se ' +
-      'puede leer). Puede ser una corrupción, un instalador, otro programa o un estado que este equipo ya no ' +
-      'tiene registrado, y eso no se puede distinguir solo. Por eso no se restaura nada sin preguntar: la app ' +
-      'ofrece volver a la versión anterior verificada, y "Cerrar" (o Esc) no toca nada.',
   },
   'PS-2001': {
     titulo: 'Datos del proyecto no encontrados al abrirlo',
@@ -8683,12 +8369,8 @@ function asarPatchHelperSource() {
 // igual bajo ELECTRON_RUN_AS_NODE que en el proceso principal normal.
 const fs = require('original-fs');
 const { spawn } = require('child_process');
-const crypto = require('crypto');
-const path = require('path');
 
-// P18: los tres últimos argumentos atan este parche a su operación de
-// procedencia (registro local + copia local de la versión que se sustituye).
-const [, , pidStr, backupAsar, realAsar, stagedAsar, logPath, exePath, manifiestoPath, operationId, copiaLocal] = process.argv;
+const [, , pidStr, backupAsar, realAsar, stagedAsar, logPath, exePath] = process.argv;
 const pid = parseInt(pidStr, 10);
 const MAX_WAIT_MS = 2 * 60 * 1000;
 const started = Date.now();
@@ -8721,132 +8403,7 @@ function cleanupStaged() {
   try { fs.unlinkSync(stagedAsar); } catch (e) { /* ya no estaba */ }
 }
 
-// ---- P18: registro de procedencia ----------------------------------------
-const NOMBRE_COPIA = /^app\\.asar\\.pred-[0-9a-f]{16}$/;
-
-function sha256(p) {
-  return crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
-}
-
-function leerManifiesto() {
-  try {
-    const j = JSON.parse(fs.readFileSync(manifiestoPath, 'utf8'));
-    if (j && j.v === 1 && Array.isArray(j.operaciones)) return j;
-  } catch (e) { /* ausente o roto */ }
-  return null;
-}
-
-// Temporal + escritura completa + fsync + rename + RELECTURA.
-function guardarManifiesto(j) {
-  const txt = JSON.stringify(j, null, 2);
-  const tmp = manifiestoPath + '.tmp-' + process.pid + '-' + Date.now();
-  const buf = Buffer.from(txt, 'utf8');
-  try {
-    const fd = fs.openSync(tmp, 'w');
-    try {
-      let escritos = 0;
-      while (escritos < buf.length) {
-        const n = fs.writeSync(fd, buf, escritos, buf.length - escritos, escritos);
-        if (!(n > 0)) throw new Error('writeSync sin progreso');
-        escritos += n;
-      }
-      try { fs.fsyncSync(fd); } catch (e) {
-        if (['EINVAL', 'ENOSYS', 'ENOTSUP', 'EOPNOTSUPP'].indexOf(e && e.code) < 0) throw e;
-      }
-    } finally { fs.closeSync(fd); }
-    fs.renameSync(tmp, manifiestoPath);
-  } catch (e) {
-    try { fs.unlinkSync(tmp); } catch (e2) { /* ya no estaba */ }
-    throw e;
-  }
-  if (fs.readFileSync(manifiestoPath, 'utf8') !== txt) throw new Error('la relectura del registro de procedencia no coincide');
-}
-
-function operacionDe(j) {
-  return j ? j.operaciones.find(function (o) { return o && o.operation_id === operationId; }) : null;
-}
-
-// Relee el app.asar REAL y la copia local. VERIFICADA solo si el instalado es
-// EXACTAMENTE el parche esperado y la copia conserva EXACTAMENTE la versión
-// anterior. OJO: eso prueba que el archivo instalado es el esperado, NO que la
-// app vaya a arrancar bien después — son cosas distintas.
-// Devuelve true si el app.asar instalado es el esperado.
-function verificarOperacion() {
-  let shaReal = null;
-  let shaCopia = null;
-  let motivo = null;
-  try { shaReal = sha256(realAsar); } catch (e) { motivo = 'no se pudo releer el app.asar instalado'; }
-  try { shaCopia = sha256(copiaLocal); } catch (e) { motivo = motivo || 'no se pudo releer la copia local de recuperación'; }
-  const j = leerManifiesto();
-  const op = operacionDe(j);
-  if (!op) {
-    log('ERROR P18: la operación ' + operationId + ' ya no está en el registro de procedencia; no se marca nada.');
-    return false; // sin la operación no se sabe qué hash esperar: no se reabre
-  }
-  if (!motivo && shaReal !== op.sha256_nuevo_esperado) motivo = 'el app.asar instalado no tiene el hash esperado';
-  if (!motivo && shaCopia !== op.sha256_anterior) motivo = 'la copia local ya no tiene el hash del app.asar anterior';
-  op.sha256_nuevo_real = shaReal;
-  const instaladoCorrecto = shaReal !== null && shaReal === op.sha256_nuevo_esperado;
-  if (motivo) {
-    op.estado = 'fallida';
-    op.motivo_fallo = motivo;
-    guardarManifiesto(j);
-    log('P18: operación ' + operationId + ' FALLIDA (' + motivo + '). La copia local se conserva, pero NO es candidata a restauración automática.');
-    return instaladoCorrecto;
-  }
-  op.estado = 'verificada';
-  op.verificada_at = new Date().toISOString();
-  op.motivo_fallo = null;
-  guardarManifiesto(j); // PRIMERO se confirma la nueva...
-  log('P18: operación ' + operationId + ' VERIFICADA: el app.asar instalado es exactamente el esperado y la copia local conserva la versión anterior. (Eso no prueba que la app vaya a arrancar bien.)');
-  retirarAnteriores(); // ...y SOLO DESPUÉS se retiran las viejas.
-  return instaladoCorrecto;
-}
-
-// Tras CONFIRMAR la nueva operación, queda solo ella: la predecesora del
-// app.asar instalado. Nunca al revés (borrar lo viejo y luego intentar lo nuevo).
-function retirarAnteriores() {
-  const dir = path.dirname(copiaLocal);
-  const j = leerManifiesto();
-  const nueva = operacionDe(j);
-  if (!nueva || nueva.estado !== 'verificada') {
-    log('P18: la nueva operación no aparece confirmada al releer; no se retira nada.');
-    return;
-  }
-  const viejas = j.operaciones.filter(function (o) { return o !== nueva; });
-  for (const o of viejas) {
-    if (o && typeof o.nombre_copia === 'string' && NOMBRE_COPIA.test(o.nombre_copia)) {
-      try { fs.unlinkSync(path.join(dir, o.nombre_copia)); } catch (e) { /* queda huérfana: sin entrada nunca es candidata */ }
-    }
-  }
-  j.operaciones = [nueva];
-  guardarManifiesto(j);
-  // Copias sin entrada (por ejemplo, de una preparación interrumpida).
-  let huerfanas = 0;
-  try {
-    for (const f of fs.readdirSync(dir)) {
-      if (NOMBRE_COPIA.test(f) && f !== nueva.nombre_copia) {
-        try { fs.unlinkSync(path.join(dir, f)); huerfanas++; } catch (e) { /* se intentará la próxima vez */ }
-      }
-    }
-  } catch (e) { /* no crítico */ }
-  log('P18: retiradas ' + viejas.length + ' operación(es) anterior(es) y ' + huerfanas + ' copia(s) huérfana(s); queda solo la predecesora del app.asar instalado.');
-}
-
 function applyPatch() {
-  // P18: sin su operación PREPARADA en el registro, no se toca nada.
-  if (!manifiestoPath || !operationId || !copiaLocal) {
-    log('ERROR P18: faltan los datos de la operación de procedencia. Parche NO aplicado, no se tocó nada.');
-    cleanupStaged();
-    return;
-  }
-  const previa = operacionDe(leerManifiesto());
-  if (!previa || previa.estado !== 'preparada') {
-    log('ERROR P18: la operación ' + operationId + ' no está PREPARADA en el registro de procedencia. Parche NO aplicado, no se tocó nada.');
-    cleanupStaged();
-    return;
-  }
-  let aplicado = false;
   try {
     if (!fs.existsSync(backupAsar)) {
       // Red de seguridad extra: si por lo que sea la copia previa no se
@@ -8856,35 +8413,13 @@ function applyPatch() {
       log('Aviso: la copia de seguridad no existía, se hizo aquí antes de aplicar.');
     }
     fs.copyFileSync(stagedAsar, realAsar);
-    aplicado = true;
     log('Parche aplicado correctamente sobre: ' + realAsar);
+    relaunchApp();
   } catch (e) {
     log('ERROR aplicando el parche: ' + (e && e.message ? e.message : String(e)));
-    try {
-      const j = leerManifiesto();
-      const op = operacionDe(j);
-      if (op) {
-        op.estado = 'fallida';
-        op.motivo_fallo = 'no se pudo aplicar el parche';
-        guardarManifiesto(j);
-      }
-    } catch (e2) {
-      log('ERROR P18: no se pudo marcar la operación como FALLIDA: ' + (e2 && e2.message ? e2.message : String(e2)));
-    }
   } finally {
     cleanupStaged();
   }
-  if (!aplicado) return;
-  let instaladoCorrecto = false;
-  try {
-    instaladoCorrecto = verificarOperacion();
-  } catch (e) {
-    log('ERROR P18: no se pudo cerrar la operación de procedencia (' + (e && e.message ? e.message : String(e)) + '); queda PREPARADA y NO es candidata a restauración automática.');
-    try { instaladoCorrecto = sha256(realAsar) === previa.sha256_nuevo_esperado; } catch (e2) { instaladoCorrecto = false; }
-  }
-  // Igual que antes: nunca reabrir un app.asar que pueda haber quedado a medias.
-  if (instaladoCorrecto) relaunchApp();
-  else log('No se reabre la app: el app.asar instalado no es exactamente el parche esperado.');
 }
 
 // v2.0.42: reabrir sola tras aplicar el parche -- pedido explícito del
@@ -8932,106 +8467,6 @@ function tick() {
 log('Ayudante de parche iniciado, esperando a que cierre el pid ' + pid + '...');
 tick();
 `;
-}
-
-// P18: escritura del registro de procedencia — temporal, escritura completa,
-// fsync, rename y RELECTURA. El mismo patrón que guardarHistorialUbicacion()
-// (P22) y escribirAtomico() (db.js). Lanza si no queda demostrado escrito.
-function guardarManifiestoProcedencia(j) {
-  const ruta = rutaManifiestoProcedencia();
-  const tmp = `${ruta}.tmp-${process.pid}-${Date.now()}`;
-  const FSYNC_NO_SOPORTADO = new Set(['EINVAL', 'ENOSYS', 'ENOTSUP', 'EOPNOTSUPP']);
-  const txt = JSON.stringify(j, null, 2);
-  try {
-    fs.mkdirSync(path.dirname(ruta), { recursive: true });
-    const fd = fs.openSync(tmp, 'w');
-    try {
-      const buf = Buffer.from(txt, 'utf8');
-      let escritos = 0;
-      while (escritos < buf.length) {
-        const n = fs.writeSync(fd, buf, escritos, buf.length - escritos, escritos);
-        if (!(n > 0)) throw new Error('writeSync sin progreso');
-        escritos += n;
-      }
-      try {
-        fs.fsyncSync(fd);
-      } catch (e) {
-        if (!FSYNC_NO_SOPORTADO.has(e && e.code)) throw new Error(`fsync falló (${(e && e.code) || '?'})`);
-      }
-    } finally {
-      fs.closeSync(fd);
-    }
-    fs.renameSync(tmp, ruta);
-  } catch (e) {
-    try {
-      fs.unlinkSync(tmp);
-    } catch (e2) {
-      /* ya no estaba */
-    }
-    throw new Error(`no se pudo guardar el registro de procedencia: ${String((e && e.message) || e)}`);
-  }
-  if (fs.readFileSync(ruta, 'utf8') !== txt) {
-    throw new Error('la relectura del registro de procedencia no coincide con lo escrito');
-  }
-}
-
-// P18: prepara la operación ANTES de tocar el app.asar real. Si cualquier paso
-// falla, lanza: quien llama NO debe aplicar el parche. Y no deja nada que
-// pueda usarse para un rescate automático (la copia a medias se quita; una
-// entrada 'preparada' tampoco vale nunca como predecesora).
-function prepararOperacionAsar({ realAsar, stagedAsar, shaParcheElegido }) {
-  const ident = leerInstallationIdParaRescate();
-  if (ident.estado !== 'valido') throw new Error(`la identidad de este equipo (installation-id) está ${ident.estado}`);
-  const dir = carpetaRecuperacionAsar();
-  if (!dir) throw new Error('no hay carpeta de recuperación local (%LOCALAPPDATA%)');
-  const man = leerManifiestoProcedencia();
-  // Un registro que existe pero no se lee NO se pisa: es la pista de lo que pasó.
-  if (man.estado === 'ilegible') throw new Error(`el registro de procedencia existe pero no se puede leer (${man.motivo})`);
-  const j = man.estado === 'valido' ? man.manifiesto : { v: 1, installation_id: ident.id, operaciones: [] };
-
-  const operationId = crypto.randomBytes(8).toString('hex'); // 1
-  const nombreCopia = `app.asar.pred-${operationId}`;
-  const copia = path.join(dir, nombreCopia);
-  const shaAnterior = sha256DeArchivo(realAsar); // 2
-  // 7: lo que el ayudante va a instalar es EXACTAMENTE lo que se verificó al elegirlo.
-  const shaNuevoEsperado = sha256DeArchivo(stagedAsar);
-  if (shaNuevoEsperado !== shaParcheElegido) throw new Error('la copia preparada del parche no coincide con el archivo elegido');
-  // Reaplicar exactamente lo instalado no crea ninguna relación útil de rescate.
-  if (shaNuevoEsperado === shaAnterior) {
-    const e = new Error('el parche elegido es exactamente el app.asar que ya está instalado');
-    e.p18Identico = true;
-    throw e;
-  }
-  originalFs.mkdirSync(dir, { recursive: true });
-  try {
-    originalFs.copyFileSync(realAsar, copia); // 3
-    const shaCopia = sha256DeArchivo(copia); // 4: RELEÍDA, no el hash de origen
-    if (shaCopia !== shaAnterior) throw new Error('la copia local de recuperación no coincide con el app.asar instalado'); // 5
-    j.operaciones.push({
-      operation_id: operationId,
-      installation_id: ident.id,
-      estado: 'preparada',
-      sha256_anterior: shaAnterior,
-      version_anterior: versionDeAsar(copia), // 6: sin ejecutar nada
-      nombre_copia: nombreCopia,
-      sha256_copia_local: shaCopia,
-      sha256_nuevo_esperado: shaNuevoEsperado,
-      version_nueva_esperada: versionDeAsar(stagedAsar),
-      sha256_nuevo_real: null,
-      creada_at: new Date().toISOString(),
-      verificada_at: null,
-      motivo_fallo: null,
-    });
-    guardarManifiestoProcedencia(j); // 8
-    return { operationId, copia };
-  } catch (e) {
-    try {
-      originalFs.unlinkSync(copia);
-    } catch (e2) {
-      /* no llegó a crearse */
-    }
-    throw e;
-  }
 }
 
 function purgeOldAsarBackups(dir) {
@@ -9883,52 +9318,10 @@ async function applyAsarPatch(parentWin) {
     return;
   }
 
-  // P18: la operación de procedencia se prepara ANTES de tocar el app.asar
-  // real — copia LOCAL de la versión actual, releída y verificada, y entrada
-  // 'preparada' en el registro. Si cualquier paso falla, el parche NO se
-  // aplica: no se lanza el ayudante y no queda nada utilizable para un rescate.
-  let operacion;
-  try {
-    operacion = prepararOperacionAsar({ realAsar, stagedAsar, shaParcheElegido: hash });
-  } catch (e) {
-    try {
-      originalFs.unlinkSync(stagedAsar);
-    } catch (e2) {
-      /* ya no estaba */
-    }
-    if (e && e.p18Identico) {
-      await modalAlert(parentWin, 'Ese archivo es exactamente la versión que ya está instalada: no hay nada que aplicar.', {
-        title: 'El parche ya está instalado',
-      });
-      return;
-    }
-    await modalAlert(
-      parentWin,
-      'No se ha aplicado el parche y no se tocó el archivo real de la aplicación: antes de sustituirlo, la app ' +
-        'tiene que guardar y verificar una copia local de la versión actual para poder volver a ella, y no lo ' +
-        'ha conseguido. Detalle: ' +
-        String((e && e.message) || e) +
-        errorCodeSuffix('PS-1003'),
-      { title: 'No se pudo preparar el parche', danger: true }
-    );
-    return;
-  }
-
   try {
     const child = spawn(
       process.execPath,
-      [
-        helperPath,
-        String(process.pid),
-        backupAsar,
-        realAsar,
-        stagedAsar,
-        logPath,
-        process.execPath,
-        rutaManifiestoProcedencia(),
-        operacion.operationId,
-        operacion.copia,
-      ],
+      [helperPath, String(process.pid), backupAsar, realAsar, stagedAsar, logPath, process.execPath],
       {
         detached: true,
         stdio: 'ignore',

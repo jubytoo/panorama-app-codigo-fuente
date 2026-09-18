@@ -179,6 +179,11 @@ const FUENTE_BASE = [
     'function leerRegistroUbicaciones()', 'function estadoUbicacion(dir)', 'function rutaConIndiciosDeNube(ruta)',
     'function clasificarPoliticaUbicacion()', 'function decidirCrearSiAusente()', 'function estadoDeArchivoEnRuta(p)',
     'function resolveDataDirForStartupRecovery()', 'function findLatestAsarBackupForRecovery(dir)',
+    // P18: el rescate decide ahora con estas (las REALES, no dobles).
+    'function rutaInstallationIdParaRescate()', 'function leerInstallationIdParaRescate()',
+    'function carpetaRecuperacionAsar()', 'function rutaManifiestoProcedencia()', 'function leerManifiestoProcedencia()',
+    'function sha256DeArchivo(ruta)', 'function versionDeAsar(ruta)', 'function analizarRecuperacionAsar(asarInstalado)',
+    'function restaurarPredecesoraVerificada(a, asarInstalado)', 'function describirCopiasHeredadasParaSoporte()',
     'function handleFatalStartupError(err)', 'function syncDriveSyncGuardWithLocation()',
     'function detenerArranquePorConfigUbicacion()'].map((f) => extraerDe(MAIN, f)),
 ].join('\n');
@@ -228,7 +233,10 @@ function construir({ appData, userData, fsImpl, recursos, guard }) {
     showMessageBoxSync(a, b) { traza.dialogos.push(b || a); return 0; },
     showErrorBox(t, c) { traza.errorBox.push({ t, c }); },
   };
-  const fakeProcess = { pid: process.pid, platform: 'win32', resourcesPath: recursos || path.join(SB, 'sin-recursos'), env: process.env };
+  // ARN-3 (18 sept 2026): el `env` heredaba el REAL, y desde P18 el rescate lee
+  // %LOCALAPPDATA%. Se redirige al sandbox para que ninguna ruta real entre.
+  const fakeProcess = { pid: process.pid, platform: 'win32', resourcesPath: recursos || path.join(SB, 'sin-recursos'),
+    env: Object.assign({}, process.env, { LOCALAPPDATA: path.join(SB, 'Local'), APPDATA: appData }) };
   const g = Object.assign({ activa: false, viva: true }, guard || {});
   const fsUsado = fsEspia(fsImpl || fs, traza.escrituras);
   const ofsUsado = fsEspia(ofs, traza.escrituras);
@@ -628,25 +636,36 @@ for (const [id, bytes, extra] of [
   const r = rescatar(bytes, extra);
   ok(`P9-14 ${id}: el rescate NO copia NADA (ni la copia antigua de la carpeta por defecto ni ninguna otra)`,
     r.copias.length === 0 && r.asar === 'ASAR ROTO' && r.recursos.join() === 'app.asar', JSON.stringify({ c: r.copias, rec: r.recursos }));
+  // 18 sept 2026 — ACTUALIZADA POR P18. Antes exigía el texto «la configuración
+  // de ubicación de datos no puede leerse» con PS-1007. P18 sustituye el
+  // contrato del rescate: ya no depende de la configuración (las copias de la
+  // carpeta de datos no se usan NUNCA), y el aviso dice que no hay copia
+  // verificable (PS-1025). Lo que P9 custodia —que con la config rota no se
+  // restaura NADA, se dice, y no se enseñan rutas— se sigue exigiendo igual.
   const eb = r.m.traza.errorBox[0] || {};
-  ok(`P9-14 ${id}: avisa (PS-1007) de que la configuración no puede leerse y de que NO se restauró nada, y sale con 1`,
-    r.m.traza.errorBox.length === 1 && /PS-1007/.test(eb.c) && /configuración de ubicación de datos no puede leerse/.test(eb.c)
-    && /NO se ha restaurado/.test(eb.c) && r.m.traza.exit.join() === '1' && !eb.c.includes(SB), JSON.stringify(r.m.traza.errorBox));
+  ok(`P9-14 ${id}: avisa de que NO se restauró nada (PS-1025 desde P18), y sale con 1, sin rutas`,
+    r.m.traza.errorBox.length === 1 && /PS-1025/.test(eb.c) && /NO se ha restaurado nada/.test(eb.c)
+    && r.m.traza.exit.join() === '1' && !eb.c.includes(SB), JSON.stringify(r.m.traza.errorBox));
 }
+// 18 sept 2026 — ACTUALIZADAS POR P18. Las tres siguientes exigían (o
+// [REGISTRA]ban) que el rescate usara una copia `app.asar.bak-*` de la carpeta
+// de datos: la configurada con BOM, o la por defecto sin archivo o con la
+// configurada inexistente. P18 lo prohíbe a propósito: esas copias no tienen
+// procedencia demostrable. Ahora se exige lo contrario.
 {
   const r = rescatar(Buffer.concat([BOM, u8(instalador(G))]));
-  ok('P9-14 con BOM (válido) el rescate usa la copia RECIENTE de la carpeta configurada, no la antigua de la por defecto',
-    r.copias.length === 2 && r.asar === 'ASAR RECIENTE (carpeta configurada)', JSON.stringify(r.copias));
+  ok('P9-14 con BOM (válido): desde P18 el rescate NO usa ninguna copia heredada, tampoco la de la carpeta configurada',
+    r.copias.length === 0 && r.asar === 'ASAR ROTO', JSON.stringify(r.copias));
 }
 {
   const r = rescatar(null);
-  ok('P9-14 [REGISTRA] sin archivo: el rescate usa la carpeta por defecto (lo de siempre)',
-    r.asar === 'ASAR ANTIGUO (carpeta por defecto)', r.asar);
+  ok('P9-14 sin archivo: desde P18 el rescate NO usa la copia antigua de la carpeta por defecto',
+    r.copias.length === 0 && r.asar === 'ASAR ROTO', r.asar);
 }
 {
   const r = rescatar(u8(`{"userDataDir":"${G}/no-existe-rescate"}`));
-  ok('P9-14 [REGISTRA] válido pero la carpeta configurada no existe: la carpeta por defecto (lo de siempre; no es P9)',
-    r.asar === 'ASAR ANTIGUO (carpeta por defecto)', r.asar);
+  ok('P9-14 válido pero la carpeta configurada no existe: desde P18 tampoco se usa la de la carpeta por defecto',
+    r.copias.length === 0 && r.asar === 'ASAR ROTO', r.asar);
 }
 for (const f of [path.join(DEFECTO_C, BAK_DEF), path.join(CUSTOM_C, BAK_G)]) fs.rmSync(f, { force: true });
 fs.rmSync(path.join(DEFECTO_C, 'app.log'), { force: true });

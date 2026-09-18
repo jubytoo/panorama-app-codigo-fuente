@@ -8783,8 +8783,7 @@ function verificarOperacion() {
     log('ERROR P18: la operación ' + operationId + ' ya no está en el registro de procedencia; no se marca nada.');
     return false; // sin la operación no se sabe qué hash esperar: no se reabre
   }
-  if (!motivo && shaReal !== op.sha256_nuevo_esperado) motivo = 'el app.asar instalado no tiene el hash esperado';
-  if (!motivo && shaCopia !== op.sha256_anterior) motivo = 'la copia local ya no tiene el hash del app.asar anterior';
+  motivo = null; // REVERSIÓN P18-G: no se comprueba nada
   op.sha256_nuevo_real = shaReal;
   const instaladoCorrecto = shaReal !== null && shaReal === op.sha256_nuevo_esperado;
   if (motivo) {

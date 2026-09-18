@@ -308,7 +308,7 @@ function analizarRecuperacionAsar(asarInstalado) {
   for (const op of man.manifiesto.operaciones) {
     if (!op || typeof op !== 'object') continue;
     if (op.estado !== 'verificada') continue; // ni 'preparada' ni 'fallida'
-    if (op.installation_id !== ident.id) continue; // de otro equipo
+    // REVERSIÓN P18-C: ya no se mira de qué equipo es
     if (!HEX64.test(op.sha256_anterior) || !HEX64.test(op.sha256_nuevo_real) || !HEX64.test(op.sha256_copia_local)) continue;
     if (op.sha256_anterior === op.sha256_nuevo_real) continue; // reaplicar lo mismo: no aporta rescate
     if (op.sha256_copia_local !== op.sha256_anterior) continue;

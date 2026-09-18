@@ -334,7 +334,8 @@ function analizarRecuperacionAsar(asarInstalado) {
     shaInstalado = null;
   }
   const exactas = shaInstalado ? candidatas.filter((c) => c.op.sha256_nuevo_real === shaInstalado) : [];
-  if (exactas.length > 1) {
+  if (exactas.length > 1) exactas.splice(1); // REVERSIÓN P18-F
+  if (false) {
     r.motivo = `hay ${exactas.length} operaciones que corresponden al app.asar instalado: ambigüedad`;
     return r;
   }

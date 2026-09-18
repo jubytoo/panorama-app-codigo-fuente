@@ -245,8 +245,8 @@ sumados— para dejar constancia de que F1 no rompió nada: núcleo y bloques
 **2657**, más **C1 165** y **F1 139**. Aparte: reversiones de F1 **19 OK/0** y
 las 7 de C1-A, que siguen rompiendo cada una por lo suyo.
 
-Contra `main.js` = `C4C00809F45C565F4DA9ABFAD3B36117FD2A5CA2C809ACBD20F8E5080DA30A8E`
-(639 056 B, tras P22; antes `2D05E00B…` tras P9, 610 975 B; `E7D596A8…` tras F2, 601 293 B;
+Contra `main.js` = `3A0D7217A6A7AF056ED7079168E3B974D74858A20F92A3DAAD0BECC75A7AE686`
+(667 265 B, tras P18 Fase 1; antes `C4C00809…` tras P22, 639 056 B; `2D05E00B…` tras P9, 610 975 B; `E7D596A8…` tras F2, 601 293 B;
 `16AB5F53…` tras F3, `434BB294…` tras P17,
 `0BC92A46…` tras F1, `F81F0A3D…` tras C1-A),
 `preparacion-reunion/plantilla_preparacion_reunion.html` =

@@ -428,7 +428,7 @@ function handleFatalStartupError(err) {
         '\n\nNo hay ninguna copia de app.asar cuya procedencia se pueda verificar en este equipo, así que NO ' +
         'se ha restaurado nada automáticamente (motivo: ' +
         analisis.motivo +
-        ').\n\nReinstala Panorama del Servicio con su instalador, o aplica un parche soportado. Tus datos no ' +
+        ').\n\nEjecuta Restaurar-backup.bat (junto a app.asar). Tus datos no ' + // REVERSIÓN P18-I
         'se han tocado.\n\n(código ' +
         codigo +
         ')'

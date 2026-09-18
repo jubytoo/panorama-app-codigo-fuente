@@ -448,9 +448,14 @@ ok('P22-Z1 solo main.js: db.js, security.js, preload.js, el instalador y el .bat
   HASH('db.js') === 'B03C81FF5FC300009DC315E4B20F9BF88DCC6902B18C2EF434B251A022EDD830'
   && HASH('security.js').startsWith('0BF1CAD061B2D9E7') && HASH('preload.js').startsWith('AA77316F3FDB384D')
   && HASH('build/installer.nsh').startsWith('C032D0D7D59208DC') && HASH('claude/Restaurar-backup.bat').startsWith('0E947548DF868DBB'));
-ok('P22-Z2 [REGISTRA] el rescate de app.asar NO se toca en P22: sigue eligiendo por la fecha del nombre (es P18)',
+// 18 sept 2026 — actualizada por P18. Decía «el rescate sigue eligiendo por la
+// fecha del nombre (es P18)». P18 Fase 1 ya lo cambió: la función heredada
+// sigue igual, pero solo informa; el rescate decide con procedencia. Lo que
+// P22 custodia —que P22 no tocó el rescate— sigue siendo cierto.
+ok('P22-Z2 [REGISTRA] P22 no tocó el rescate: la función heredada sigue igual y, desde P18, ya no decide nada',
   /\.filter\(\(f\) => f\.startsWith\('app\.asar\.bak-'\)\)\s*\.sort\(\)\s*\.reverse\(\)/.test(cuerpo('function findLatestAsarBackupForRecovery(dir)'))
-  && !/manifiesto|procedencia|installation/i.test(cuerpo('function findLatestAsarBackupForRecovery(dir)')));
+  && !/findLatestAsarBackupForRecovery\(/.test(cuerpo('function handleFatalStartupError(err)'))
+  && /analizarRecuperacionAsar\(realAsar\)/.test(cuerpo('function handleFatalStartupError(err)')));
 ok('P22-Z3 la batería no ha escrito fuera de su sandbox', guardia.REAL !== null && !guardia.dentroDe(SB, path.join(process.env.APPDATA || '', 'panorama-app')));
 nota('P22-4 (PS-1009 con base local) y los Esc/X de verdad se miden en la app real: electron-p22.ps1.');
 

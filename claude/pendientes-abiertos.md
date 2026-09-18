@@ -46,7 +46,8 @@ verificadas como reales.
 | F1 | **CERRADO** *(16 sept 2026)* | **Interpretación de datos como HTML — corregida por contexto.** Ningún dato importado/persistido puede ya convertirse en markup, atributo, cierre de `<script>`, handler inline, selector roto ni URL activa. Batería **139 OK/0** (exigente), Electron real **47 OK/0** (4 arranques), **6 reversiones** por familias (**19 OK/0**). Cinco archivos tocados. Ver §F1. *(Diagnóstico previo, conservado abajo.)* |
 | F2 | **CERRADO** *(17 sept 2026)* | **CSP efectiva en las 10 ventanas**, por cabecera desde `main.js`, con cuatro perfiles mínimos; sin `unsafe-eval`; red, frames, objects, formularios y `<base>` cortados; lanzador y splash sin `unsafe-inline` en scripts; Worker de pdf.js arrancado por `blob:`. Dos archivos: `main.js` y la plantilla de Preparación. Ver §F2/F3 |
 | F3 | **CERRADO** *(17 sept 2026)* | Política única de apertura y navegación en las 10 ventanas. Ver §F2/F3 |
-| P18 | **PENDIENTE — DIAGNOSTICADO** *(18 sept 2026)* · **INTEGRIDAD** | **P18 agrupa ahora dos riesgos con la misma raíz: el rescate PS-1007 y la procedencia de las copias, y `Restaurar-backup.bat`.** Nada demuestra de dónde sale una copia de `app.asar`, así que los dos caminos eligen **por fecha de nombre**. Medido: el `patch-log.txt` de la carpeta compartida registra **106 parches de SEIS instalaciones distintas** — una copia ajena ya puede estar ahí. Con Drive sin montar o sin `location.json`, restauraría la **v0.1.28** sobre la 2.0.55. Una copia **truncada** se elegiría y se copiaría encima sin mirarla. Diseño propuesto: manifiesto de procedencia **local** + fail-closed. **No implementado.** Ver §P18 — diagnóstico |
+| P18 | **FASE 1 CERRADA** *(18 sept 2026)* · **FASE 2 ABIERTA / D4** · **INTEGRIDAD** | **El rescate automático solo restaura una copia con procedencia demostrada.** Copia **local** (`%LOCALAPPDATA%\panorama-app-recovery\app.asar.pred-<op>`) + registro local (`asar-procedencia.json`) + `operation_id` + `installation_id` de A3.3 + PREPARADA→VERIFICADA con hashes antes/después. Las `app.asar.bak-*` heredadas **no son candidatas nunca**. Si el asar instalado no coincide o no se lee: solo con **confirmación explícita** (Cerrar por defecto, Esc/X = Cerrar). Sin copia verificable: se informa y se cierra, **sin recomendar el `.bat`**. **Límite:** la Fase 1 vive en `main.js`, dentro del asar; con el asar truncado, sin cabecera, sin `main.js` o inexistente **no se ejecuta ni una línea de Panorama** — eso es la **Fase 2 / D4** (rescate externo, `.bat`, instalador). Solo `main.js`. `p18/` **@@P18NODE@@**, reversiones **@@P18REV@@**. Ver §P18 — Fase 1 implementada |
+| P18 *(diagnóstico)* | — | **P18 agrupa dos riesgos con la misma raíz: el rescate PS-1007 y la procedencia de las copias, y `Restaurar-backup.bat`.** Nada demuestra de dónde sale una copia de `app.asar`, así que los dos caminos eligen **por fecha de nombre**. Medido: el `patch-log.txt` de la carpeta compartida registra **106 parches de SEIS instalaciones distintas** — una copia ajena ya puede estar ahí. Con Drive sin montar o sin `location.json`, restauraría la **v0.1.28** sobre la 2.0.55. Una copia **truncada** se elegiría y se copiaría encima sin mirarla. Diseño propuesto: manifiesto de procedencia **local** + fail-closed. **No implementado.** Ver §P18 — diagnóstico |
 | P18 *(hallazgo original)* | — | **`Restaurar-backup.bat` puede elegir la carpeta por defecto** con ciertos formatos de `location.json` (JSON en una sola línea, UTF-16) y restaurar desde ahí una copia de `app.asar` de otra época. Ver §P18–P21 |
 | P19 | **PENDIENTE — verificar antes de release** (D4 / packaging) | **El instalador podría escribir `location.json` en ANSI** (razonado, no medido). Con P9 ya **no** cambia de BD en silencio: PS-1020, falla cerrado. Ver §P18–P21 |
 | P20 | **CERRADO dentro de P22** *(18 sept 2026)* | Era: «Abrir con datos locales» en PS-1005 desactivaba la protección de apagado. Ahora una **sesión local temporal** no la toca —ni la marca, ni `HKCU\…\Run`, ni la tarea— y la marca de ubicación propia sobrevive. Volver a la carpeta por defecto **a propósito** sí la sigue sincronizando: es una decisión permanente, no un camino de reserva. Ver §P22 — implementación |
@@ -2198,6 +2199,97 @@ No se ha implementado nada, no se ha restaurado ninguna copia, no se ha borrado
 ni movido ningún `app.asar`, no se ha tocado la instalación real ni la carpeta de
 datos real, no se ha entrado en P19, ni en la limpieza de P10, ni en
 Drive/multi-PC.
+
+## P18 — FASE 1 IMPLEMENTADA (18 sept 2026) · **FASE 1 CERRADA**, **FASE 2 ABIERTA / D4**
+
+**El rescate automático de `app.asar` solo restaura una copia cuya procedencia
+se demuestra en el momento.** Único archivo productivo tocado: **`main.js`**
+(`C4C00809…` → **`@@HASH18@@`**). Instantánea previa:
+`claude/main.js.ANTES-P18-2026-09-18`. `db.js`, `security.js`, los preloads,
+el instalador y `Restaurar-backup.bat` siguen idénticos.
+
+### Alcance real, dicho primero
+
+La Fase 1 vive en `main.js`, **dentro** de `app.asar`. Solo existe si Electron
+consigue **montar** el asar y **cargar** `main.js`. Medido el 18 sept 2026 con
+el build empaquetado: con el asar **truncado**, con la **cabecera rota**, **sin
+`main.js`** dentro o **sin archivo**, **no se ejecuta ni una línea de
+Panorama**. La Fase 1 protege, por tanto, **un fallo de arranque con el asar
+todavía cargable** —el típico parche que se aplica bien pero cuyo código revienta
+al arrancar—. **No es una recuperación completa de `app.asar`.** La corrupción
+que impide cargarlo es **Fase 2 / D4**: un mecanismo externo (`.bat`
+verificado, ayudante/lanzador externo o instalador).
+
+### Qué cambia
+
+| Pieza | Antes | Ahora |
+|---|---|---|
+| Qué restaura el rescate | El `app.asar.bak-*` de **nombre más alto** de la carpeta de datos | Solo la predecesora de una operación **VERIFICADA**, de **este** equipo, con su copia **local** intacta, y **única** |
+| Dónde está la copia que se usa | Carpeta de **datos** (compartida por Drive) | **`%LOCALAPPDATA%\panorama-app-recovery\app.asar.pred-<operation_id>`** — ni Drive ni un perfil móvil la sincronizan; la retención heredada no la ve |
+| Registro de procedencia | No existía | **`%APPDATA%\panorama-app-config\asar-procedencia.json`**, escritura atómica verificada, **sin rutas** |
+| Identidad | No se usaba | El **`installation-id` de A3.3**, leído (nunca creado) por un lector autocontenido que rechaza los ids de sesión |
+| Al aplicar un parche | Copia heredada y ayudante | Además: copia **local** releída y verificada, entrada **PREPARADA**; si **cualquier** paso falla, **no se aplica el parche** |
+| El ayudante | Copiaba y relanzaba | **Relee** el asar instalado y la copia: **VERIFICADA** solo si ambos hashes cuadran; si no, **FALLIDA** (copia conservada) y **no reabre la app** |
+| Asar instalado que no coincide o no se lee | — | **No se restaura sola**: pregunta, «El archivo actual no coincide con la instalación verificada.», **Cerrar** por defecto, **Esc/X = Cerrar** |
+| Sin copia verificable | Restauraba cualquier `.bak` | Informa (**PS-1025**) y cierra; registro ilegible → **PS-1026**. **No recomienda el `.bat`** |
+| Retención | 2 `.bak` por mtime | La heredada **no cambia**. La local: solo la predecesora del asar instalado; la anterior se retira **después** de verificar la nueva |
+| `ERROR_CODES` | — | **PS-1025**, **PS-1026**, **PS-1027**; PS-1007 y PS-1008 reescritos |
+
+### Decisiones y límites que conviene no olvidar
+
+- **Hasta el primer parche aplicado con esta versión no hay recuperación
+  automática verificable.** Las copias existentes (v2.0.53, v2.0.54, v0.1.28 y
+  las demás) **no se heredan**: no hay forma de demostrar de dónde salen. **No
+  se ha fabricado procedencia retroactiva.** Siguen en disco, sin tocar.
+- **VERIFICADA prueba que el archivo instalado es exactamente el esperado. NO
+  prueba que la app vaya a arrancar.** Son cosas distintas y el registro del
+  ayudante lo dice así.
+- **Aplicar un parche exige un `installation-id` persistido.** Con un id de
+  sesión o ausente, el parche no se aplica (no se podría dejar una operación
+  demostrable).
+- **Reaplicar exactamente lo instalado** no crea ninguna relación de rescate: se
+  avisa de que ya está instalado.
+- **Las FALLIDAS conservan su copia** hasta la siguiente operación verificada;
+  durante una racha de fallos, `%LOCALAPPDATA%` puede acumular copias de ~29 MB.
+- **Tras una FALLIDA**, la predecesora verificada anterior sigue ahí, pero ya
+  no corresponde al asar instalado: solo se ofrece **con confirmación** (y
+  entonces es la versión de **dos** parches atrás, que el aviso nombra).
+- **La confirmación antes de `ready`** usa `dialog.showMessageBoxSync`. Que
+  funcione en ese momento es **razonado, no medido** en Electron real; si no se
+  puede mostrar, **no se restaura** (preguntar es la condición).
+- **La restauración** sigue siendo `copyFileSync` sobre el asar real —lo que ya
+  estaba probado con la app en marcha— y se **relee** el resultado.
+- **Tras una actualización con el instalador NSIS**, la entrada vieja deja de
+  corresponder y el rescate vuelve a pedir confirmación o a apagarse hasta el
+  siguiente parche verificado.
+
+### Evidencia
+
+- `p18/test-p18-procedencia.js` — **@@P18NODE@@**, EXIGENTE (nació descriptiva
+  con 63). Funciones REALES extraídas, sandbox **explícito** y asar sintéticos;
+  el **ayudante real** (generado con la plantilla de `main.js`) se ejecuta con el
+  node del sistema: solo usa las rutas que recibe, así que su aislamiento es
+  **por construcción**, no por variables (ARN-3). Cualquier escritura fuera del
+  sandbox **lanza**.
+- `p18/comprobar-reversiones-p18.js` — **@@P18REV@@**: nueve familias, cada una
+  tumba exactamente lo que anuncia.
+- **No se arrancó ningún `app.asar` empaquetado** en esta ronda (ARN-3).
+
+### Arneses ajustados en la ronda
+
+@@ARNESES18@@
+
+## P10 — LÍNEA BASE DE TAMAÑO REANCLADA (18 sept 2026)
+
+El árbol de `%APPDATA%\panorama-app` pasa de **207 284 784 B** a
+**207 286 828 B**, con **los mismos 634 archivos**. Causa **identificada y
+documentada**: el experimento accidental de **ARN-3** añadió a su `app.log` la
+traza del PS-1007 que se disparó en el caso A. **No es basura nueva ni un
+archivo nuevo.**
+
+La **BD residual sigue en `F71F4140E7FD68504CBF65C1D930BC4A244554D7BFB013A70557A30CCF74F501`**
+y los datos de usuario están intactos. **P10 no se modifica ni se limpia**: su
+limpieza/archivo sigue **DIFERIDA** y sin autorización.
 
 ## ARN-3 — SALVAGUARDA DE ARNESES (18 sept 2026): cambiar `%APPDATA%` NO aísla a Electron
 
