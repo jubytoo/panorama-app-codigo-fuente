@@ -9389,20 +9389,14 @@ function desescaparXmlDriveSyncGuard(s) {
     .replace(/&amp;/g, '&');
 }
 
-// P23 (18 sept 2026, cierre final) -- tope de las dos consultas externas de
-// solo lectura. Las dos son SECUENCIALES (reg.exe query, luego schtasks.exe
-// /query), así que el peor bloqueo acumulado del proceso principal es
-// SIEMPRE 2x este valor: con 1500ms, 3000ms (3s) como mucho -- nunca los
-// ~10s que darían 2x5000ms. 1500ms deja un margen amplio (~10-20x) sobre lo
-// medido en real (reg.exe ~35-75ms, schtasks.exe ~40-70ms, combinado
-// ~90-150ms) y tolera una máquina momentáneamente lenta (antivirus/EDR
-// reteniendo el proceso -- ya documentado en este proyecto, ver v0.1.61/63)
-// sin permitir que ese cuelgue se acumule hasta una congelación de varios
-// segundos. No se ha convertido a async esta ronda: acotar el timeout ya
-// resuelve el problema (3s en el peor caso, y esta inspección concreta ya
-// solo se ejecuta una vez cada DRIVE_SYNC_GUARD_PERSISTENCE_RECHECK_MS, no
-// en cada tick de 45s) sin la complejidad añadida de mover a async.
-const DRIVE_SYNC_GUARD_INSPECCION_TIMEOUT_MS = 1500;
+// P23 (18 sept 2026, ajuste final) -- tope de las dos consultas externas de
+// solo lectura, muy por encima de lo medido en real (reg.exe ~35-75ms,
+// schtasks.exe ~40-70ms) pero finito: si Task Scheduler o el propio
+// reg.exe/schtasks.exe se quedan colgados (antivirus/EDR reteniendo el
+// proceso -- ya documentado en este proyecto, ver v0.1.61/63), esto acota
+// el bloqueo del proceso principal a, como mucho, un par de veces este
+// valor en vez de indefinidamente.
+const DRIVE_SYNC_GUARD_INSPECCION_TIMEOUT_MS = 5000;
 
 // P23 (ajuste final) -- Run/tarea no se degradan solos durante una sesión ya
 // en marcha (cambian por reinstalación/actualización/manipulación externa,
@@ -11203,12 +11197,7 @@ async function checkMultiPcLock() {
     const ageMs = Date.now() - new Date(existing.lastUpdate).getTime();
     if (Number.isFinite(ageMs) && ageMs >= 0 && ageMs < MULTI_PC_LOCK_STALE_MINUTES * 60000) {
       const ageSeconds = Math.round(ageMs / 1000);
-      if (esResiduoLocalPropio(existing)) {
-        // Block 8B: mismo equipo Y mismo usuario -> residuo local de un
-        // cierre no limpio anterior, no "otro equipo". Se retoma sin
-        // preguntar ni mostrar PS-1012 (ver esResiduoLocalPropio más arriba).
-        appLog(`Bloqueo multi-PC reconocido como residuo local (mismo equipo/usuario, hace ${ageSeconds}s) — se retoma sin preguntar.`);
-      } else {
+        // REVERSIÓN Block8B-N: sin reconocimiento de residuo local
         const choice = dialog.showMessageBoxSync(undefined, {
           type: 'warning',
           title: 'Parece abierta en otro equipo',
@@ -11232,7 +11221,6 @@ async function checkMultiPcLock() {
           return false;
         }
         appLog(`El usuario decidió abrir igualmente pese al bloqueo activo de ${existing.machine}/${existing.user} (hace ${ageSeconds}s).`);
-      }
     }
   }
 

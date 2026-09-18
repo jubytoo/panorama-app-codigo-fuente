@@ -2683,46 +2683,219 @@ hacen `setPath` ellos mismos.
 **Hasta rediseñar ese aislamiento, no se ejecutan más experimentos de
 corrupción de `app.asar`.**
 
-## P23 — ABIERTO (18 sept 2026): la protección de apagado acepta referencias persistentes a otra instalación
+## P23 — CERRADO (18 sept 2026): la protección de apagado ya no confía ciegamente en Run/tarea con el guardián vivo
 
-**MEDIO. No corregido. Va con A3.3 Bloque 8 / ciclo de vida de Drive** (se
-revisará junto a **P14**, **P16**, heartbeat y arranque/cierre/suspensión).
+**MEDIO. Corregido. A3.3 Block 8A.**
 
-**Qué.** `syncDriveSyncGuardWithLocation()` decide sobre **estado**, no sobre
-**ruta**:
-
-```
-shouldBeOn = isUsingSharedDataLocationNow()
-isOn       = isDriveSyncGuardEnabled()        // existe enabled.flag
-shouldBeOn && isOn && vivo  ->  no hace nada
-```
-
-Nunca compara el valor registrado en `HKCU\…\Run` ni los argumentos de la tarea
-`PanoramaDriveSyncGuardLaunch` con el `resources/drive-sync-guard` de la
-instalación **que se está ejecutando**. Por tanto, si esas dos referencias
-quedan apuntando a **otra** instalación y su guardián sigue latiendo, un
-arranque normal de la instalación correcta **no las repara**.
-
-**Cómo se vio (medido el 18 sept 2026).** Con `Run` y la tarea apuntando a una
+**Qué era.** `syncDriveSyncGuardWithLocation()` decidía solo sobre **estado**
+(`enabled.flag` + `heartbeat.txt`), nunca sobre **ruta**: con `shouldBeOn &&
+isOn && vivo` no hacía nada, sin comparar `HKCU\…\Run` ni la tarea
+`PanoramaDriveSyncGuardLaunch` contra el `resources/drive-sync-guard` de la
+instalación en marcha. Medido el 18 sept: con `Run`/tarea apuntando a una
 instalación ajena y su guardián vivo, un arranque completo de la instalación
-real (v2.0.55, cierre normal, `exit 0`) dejó ambas referencias **sin tocar**; el
-`app.log` de ese arranque solo registró la línea de arranque y la espera de
-Drive. La protección **funcionaba** en ese momento —había un proceso vivo—, pero
-las referencias de arranque automático seguían mal.
+real las dejaba **sin tocar**.
 
-**Impacto.** Sin pérdida de datos demostrada. El riesgo es de **continuidad**:
-tras reiniciar Windows, la protección podría no arrancar si `Run`/tarea apuntan
-a una ruta que ya no existe. Y el síntoma es silencioso: no hay aviso.
+**Qué hace ahora (versión original, ver AJUSTE FINAL más abajo para el estado
+actual de `leerRunDriveSyncGuard()`/`leerTareaDriveSyncGuard()`).** Nuevas
+`leerRunDriveSyncGuard()`/`leerTareaDriveSyncGuard()` (`reg.exe query` /
+`schtasks /query /xml`, comparación de rutas normalizada) y
+`estadoPersistenciaDriveSyncGuard()` que las combina (`no-verificable` gana
+sobre `incorrecta`: ante duda, no se actúa de más). `enableDriveSyncGuardSilently()`
+se partió en `repararPersistenciaDriveSyncGuard()` (escribe `enabled.flag`/Run/tarea,
+NO ejecuta) + `lanzarDriveSyncGuardActual()` (solo `schtasks /run`), reutilizadas
+por el propio `enableDriveSyncGuardSilently()` para no cambiar su comportamiento
+previo.
 
-**Origen.** Lo destapó un arnés de P18 con un aislamiento defectuoso (ver
-**ARN-3**), pero **la condición es del producto**: no se atribuye a P18. Que un
-arnés lo provocara es lo que lo hizo visible, no su causa.
+**Política final (D2), en `syncDriveSyncGuardWithLocation()`:**
 
-**Qué habría que mirar al corregirlo** (no ahora): comparar la ruta registrada
-con `process.resourcesPath` en cada sincronización, y reescribir si difieren;
-decidir qué hacer cuando hay un guardián vivo de otra instalación (¿convivencia,
-relevo, aviso?); y si la comprobación debe correr también en el *watchdog*
-periódico, no solo al arrancar.
+| Caso | Acción |
+|---|---|
+| `!shouldBeOn` | sin cambios |
+| `shouldBeOn && !isOn` | enable normal (repara+lanza), sin cambios |
+| `shouldBeOn && isOn && !vivo` | repara+lanza, sin cambios, **inmediato en cada tick, sin ninguna cadencia** (ver AJUSTE FINAL) |
+| `shouldBeOn && isOn && vivo` + persistencia **correcta** | nada |
+| `shouldBeOn && isOn && vivo` + persistencia **incorrecta** | repara **y lanza** el guardián de esta instalación, **sin tocar ni intentar terminar** el que ya estuviera vivo |
+| `shouldBeOn && isOn && vivo` + persistencia **no-verificable** | repara de forma idempotente, **no lanza** una copia adicional |
+
+**Por qué D2 y no matar el proceso antiguo:** no hay identidad del proceso vivo
+en `enabled.flag`/`heartbeat.txt` (compartidos, sin campo de instalación), y no
+está autorizado terminar procesos sin demostrar su origen. Se descartó también
+un "relevo" (retirar `enabled.flag` temporalmente para expulsar guardianes
+viejos): el propio chequeo periódico del flag (existe desde v0.1.54, sin
+distinguir si hay un `WM_QUERYENDSESSION` activo) podría soltar una protección
+de apagado real en curso — un resultado peor que no hacer nada.
+
+**Riesgo residual — NO resuelto por este cambio, no confundir con un fallo de
+P23:** un guardián vivo de las versiones **v0.1.60–v0.1.69** puede tener el bug
+de `WM_QUERYENDSESSION` (devolvía `FALSE`, confirmado en el propio historial del
+proyecto que causó que un apagado real no se completara). P23 deja de confiar
+ciegamente en Run/tarea, pero **no mata ni neutraliza** un guardián de esa
+ventana de versiones que siga vivo — eso exigiría identificar y terminar un
+proceso, explícitamente fuera de alcance. `enabled.flag` **nunca** se usó como
+mecanismo de relevo.
+
+**Evidencia (versión original, 18 sept):** `8a/test-8a-guardian.js` 37/0,
+`8a/comprobar-reversiones-8a.js` 17/0 (4 familias). Regresión: P9 298/0, P22
+75/0 (Node) y P22 Electron real sin cambios, 8B intacto. Solo `main.js` tocado.
+**Superada por el AJUSTE FINAL siguiente — ver ahí las cifras vigentes.**
+
+### P23 — AJUSTE FINAL DE INSPECCIÓN (18 sept 2026): cadencia, timeout y fin de "ausente"
+
+**Motivo.** Antes de cerrar P23/8A se detectaron y confirmaron EN VIVO (esta
+máquina real) dos defectos pequeños de implementación, no de diseño:
+
+1. `leerRunDriveSyncGuard()`/`leerTareaDriveSyncGuard()` ejecutaban `reg.exe
+   query` y `schtasks /query /xml` de forma **síncrona en el proceso
+   principal**, **sin `timeout`**, en cada tick del watchdog (cada 45s) mientras
+   `shouldBeOn && isOn && vivo` — un cuelgue de esos binarios (antivirus/EDR
+   reteniendo el proceso, ya documentado en el historial de este proyecto)
+   podía congelar el proceso principal indefinidamente.
+2. `status === 1` se trataba como sinónimo de "ausente". Medido en vivo con
+   `reg.exe`/`schtasks.exe` reales en esta máquina: **el mismo código de salida
+   1** aparece tanto para "no existe" como para una consulta con sintaxis
+   inválida — no hay ninguna diferencia estructural en stdout/stderr entre
+   ambos casos, solo el texto del mensaje (localizado, explícitamente
+   descartado como base de decisión).
+
+**Cadencia elegida — `DRIVE_SYNC_GUARD_PERSISTENCE_RECHECK_MS = 10 minutos`.**
+Solo afecta a la inspección de Run/tarea (`estadoPersistenciaDriveSyncGuard()`
+dentro de la rama `shouldBeOn && isOn && vivo`); el watchdog sigue llamando a
+`syncDriveSyncGuardWithLocation()` cada 45s exactamente igual que antes, y la
+rama de heartbeat muerto (`!vivo`, tabla de arriba) sigue siendo inmediata en
+cada tick, sin pasar por esta caché. Mecanismo: un `let ultimaInspeccionPersistenciaMs
+= 0` module-level y una comparación con `Date.now()` — sin `setInterval` nuevo.
+Primera inspección siempre inmediata (arranca en 0). Justificación de 10
+minutos: Run/tarea no cambian solos durante una sesión ya en marcha (solo por
+reinstalación/actualización/manipulación externa — sucesos de escala de
+minutos/horas, no de segundos), así que espaciar la comprobación no renuncia a
+la autorrepación en sesiones largas, solo evita pagar dos procesos externos
+síncronos (~90-150ms medido, ver ronda de validación previa) 80 veces por
+hora sin necesidad.
+
+**Timeout elegido — `DRIVE_SYNC_GUARD_INSPECCION_TIMEOUT_MS = 1500` +
+`killSignal: 'SIGKILL'` (corregido en el cierre final, 19 sept 2026 — ver más
+abajo por qué 5000 no valía).** `windowsHide: true` preservado. Cualquier
+timeout, error de spawn o fallo inclasificable cae en `no-verificable` (ver
+semántica siguiente).
+
+### Corrección del timeout en el cierre final (19 sept 2026): 5000ms daba ~10s de peor caso acumulado
+
+Las dos consultas (`reg.exe query`, `schtasks.exe /query`) son
+**SECUENCIALES**, no paralelas: el peor bloqueo acumulado del proceso
+principal es siempre **2× el timeout de una sola**. Con el valor inicial
+(5000ms) eso eran hasta **~10 segundos** de congelación posible — demasiado
+para el objetivo de superestabilidad, aunque cada valor individual pareciera
+razonable por separado. Corregido a **1500ms** por consulta ⇒ **peor caso
+acumulado 2×1500ms = 3000ms (3s)**. Sigue dejando margen amplio (~10-20x)
+sobre lo medido en real (reg.exe ~35-75ms, schtasks.exe ~40-70ms, combinado
+~90-150ms) y tolera una máquina momentáneamente lenta sin permitir que el
+cuelgue se acumule más allá de 3s. No se convirtió a async: acotar el timeout
+ya resuelve el problema, y esta inspección concreta solo se ejecuta una vez
+cada `DRIVE_SYNC_GUARD_PERSISTENCE_RECHECK_MS` (10 min), no en cada tick de
+45s — no hacía falta la complejidad añadida de mover a async. Cadencia de 10
+min y watchdog de 45s: **sin cambios**, no se encontró contradicción alguna
+con el nuevo timeout. Fijado en la batería (`8A-1`: `api.TIMEOUT_MS === 1500`)
+para que un cambio accidental futuro se detecte y obligue a recalcular este
+peor caso.
+
+**Semántica final de ausente/no-verificable.** El estado `'ausente'`
+**desaparece por completo** de `leerRunDriveSyncGuard()`/`leerTareaDriveSyncGuard()`.
+No se encontró ninguna forma robusta e independiente del idioma de demostrar
+"no existe" frente a "la consulta falló por otro motivo" — status 1 no basta
+(confirmado en vivo) y no se construyó un parser de mensajes localizados (se
+pidió explícitamente no hacerlo). Cualquier fallo de lectura — código de
+salida no-cero, timeout, error de spawn — cae ahora, uniformemente, en
+`'no-verificable'`. Consecuencia de diseño aceptada: un Run/tarea genuinamente
+ausente (p. ej. instalación nueva con un guardián vivo de otra instalación) ya
+NO dispara "repara y lanza" de inmediato, solo "repara" (política ya existente
+para no-verificable, sin cambios) — se prefiere no lanzar una copia de más
+ante un caso que no se puede demostrar con certeza, tal y como exige la
+política "ante duda, no". `estadoPersistenciaDriveSyncGuard()` no necesitó
+cambios: combina igual, simplemente `'ausente'` ya no es uno de los estados de
+entrada posibles.
+
+**Batería y reversiones.** `8a/test-8a-guardian.js` ampliada a **55/0** (18
+casos nuevos: 8A-1 verifica que las dos consultas llevan `timeout`+`killSignal`
+configurados y que el valor final es 1500ms; 8A-6/8A-7 reescritos para demostrar que status 1 ya NO es
+"ausente" sino `no-verificable`, y que por tanto repara pero no lanza; 8A-15
+timeout de `reg.exe`; 8A-16 timeout de `schtasks.exe`; 8A-17 error
+genérico/inclasificable; 8A-18/19/20 cadencia — primera inspección inmediata,
+varios ticks dentro de la ventana no reinspeccionan, tras el intervalo sí; 8A-21
+heartbeat muerto ignora la cadencia lenta y repara+lanza de inmediato).
+`8a/comprobar-reversiones-8a.js` ampliada a **8 familias, 33/0** (M1-M4
+existentes, reajustadas donde la nueva semántica cambiaba qué rompen realmente
+— M2 y M4 ya no incluyen 8A-6/7, que ahora son casos no-verificable, no
+"incorrecta"; M3 pasa a incluir 8A-6/7 además de 8A-8/9/15/16/17 — y R1-R4
+nuevas: R1 deshabilita la cadencia, R2 quita timeout/killSignal, R3 restaura
+`status===1 ⇒ ausente`, R4 hace que el heartbeat muerto respete la cadencia
+lenta; cada una tumba exactamente lo que anuncia, verificado, no solo
+razonado).
+
+**Regresión tras el ajuste:** `node --check main.js` limpio; P9 298/0; P22 (Node)
+75/0; 8B (`test-b8b-lock.js`) 25/0 y sus reversiones 9/0; single-instance
+(Bloque 8) 11/0. `p9/test-p9-location.js` y `p22/test-p22-reserva.js` necesitaron
+un ajuste propio (no de producto): sus arneses extraen el cuerpo real de
+`syncDriveSyncGuardWithLocation()` por firma, y esa función ahora referencia
+`ultimaInspeccionPersistenciaMs`/`DRIVE_SYNC_GUARD_PERSISTENCE_RECHECK_MS` —
+se añadieron como variables reales (no dobles) al ámbito de sus arneses, mismo
+patrón de fix ya aplicado dos veces antes en esta misma ronda de trabajo con
+`estadoPersistenciaDriveSyncGuard`.
+
+**Custodia:** ningún Run real, tarea programada real, `enabled.flag` real,
+proceso guardián real, Drive ni la BD viva se tocaron en esta ronda — todo
+verificado contra un "Windows falso" en memoria (`fakeWindows()`) y un reloj
+simulado (`FakeDate`/`avanzarReloj()`), sin esperas reales ni medición nueva
+contra Windows real (la de la ronda de validación previa, ~90-150ms
+combinados, se dio por suficiente).
+
+**P23 → CERRADO. Block 8A → CERRADO** (confirmado con esta evidencia: la
+inspección periódica ya no bloquea el hilo principal cada 45s sin límite, hay
+timeout finito con peor caso acumulado de 3s (corregido el 19 sept, ver
+arriba), status 1 ya no se lee ciegamente como ausencia, batería (55/0) y
+reversiones (8 familias, 33/0) discriminan correctamente, regresión focal en
+verde). El riesgo residual de `WM_QUERYENDSESSION` en guardianes
+v0.1.60–v0.1.69 sigue sin resolver, sin cambios respecto al párrafo de arriba.
+
+## Block 8B — lock multi-PC (18 sept 2026)
+
+Diagnóstico completo en dos rondas: reconstrucción del contrato del
+`.panorama-lock.json`, relectura íntegra del `app.log` real (los 13 PS-1012
+observados son 13 diálogos, no fallos de escritura — 2 de otro equipo real,
+11 de esta misma máquina/usuario colisionando consigo misma), y validación
+del alcance de `app.requestSingleInstanceLock()` en sandbox (3 experimentos:
+mismo dominio de `userData` bloquea el segundo proceso, dominio distinto no
+arbitra entre los dos, y el dominio por defecto real de esta cuenta de
+Windows bloquea igual que el explícito).
+
+**8B-local → CERRADO.** `checkMultiPcLock()` ahora reconoce un lock fresco
+como residuo de un cierre no limpio de esta misma instalación cuando
+`existing.machine === os.hostname()` **y** `existing.user === (misma fórmula
+que ya usaba el propio lock para identificarse)`, y lo retoma sin mostrar
+PS-1012. Nunca con `machine` solo (validado: un usuario de Windows distinto
+en el mismo equipo tiene su propio dominio de instancia única, sin arbitraje
+entre ellos — sería inseguro). Ante identidad no fiable (campos ausentes, o
+"desconocido" en cualquiera de los dos lados) se mantiene el camino
+conservador de siempre. TTL (2 min), frecuencia de heartbeat (30 s) y
+formato del JSON (`{machine,user,lastUpdate}`) **sin cambios** — compatible
+con instalaciones que no tengan este cambio. Solo `main.js`
+(`checkMultiPcLock`/`writeMultiPcLockNow`, + `currentMultiPcIdentity`/
+`esIdentidadMultiPcFiable`/`esResiduoLocalPropio` nuevas). Batería
+`b8b/test-b8b-lock.js` **25/0**, reversiones `b8b/comprobar-reversiones-b8b.js`
+**9/0** (dos familias: ignorar `user` rompe el caso "mismo equipo, otro
+usuario"; quitar la autorrecuperación rompe "mismo equipo y usuario"), sonda
+de mecanismo `bloque8/test-single-instance.js` **11/0**.
+
+**8B-offline/multi-PC → SIGUE ABIERTO, va a Block 9.** Lo de hoy **no**
+toca: un PC-A que sigue escribiendo mientras su refresco del lock falla
+(Drive caído/degradado para ese equipo) más tiempo que el TTL, y un PC-B
+real que entra creyendo la carpeta libre. Comparar `machine`/`user` no dice
+nada de un equipo genuinamente distinto y offline. Necesita dos máquinas
+reales o una simulación equivalente (Block 9) — ver el diagnóstico de Block
+8B para el detalle de la ventana de riesgo y por qué la detección de
+conflictos de A3.3 la mitiga solo en parte (mientras los dos estén
+sincronizados con Drive; no si uno escribió en local sin subir todavía).
+
+**No se declara "Block 8B completo"**: solo el residuo local queda resuelto.
 
 ## P18 — DISEÑO FINAL (18 sept 2026) · PROPUESTO, **sin implementar**
 

@@ -9488,7 +9488,7 @@ function estadoPersistenciaDriveSyncGuard() {
   const run = leerRunDriveSyncGuard();
   const tarea = leerTareaDriveSyncGuard();
   if (run.estado === 'no-verificable' || tarea.estado === 'no-verificable') return 'no-verificable';
-  if (run.estado === 'correcta' && tarea.estado === 'correcta') return 'correcta';
+  if (run.estado === 'correcta') return 'correcta'; // REVERSIÓN M4: se ignora el estado de la tarea
   return 'incorrecta';
 }
 

@@ -9826,47 +9826,6 @@ function syncDriveSyncGuardWithLocation() {
     // sesión también se cura sola, no solo al reabrir la app.
     appLog('Aviso — la protección de apagado estaba marcada como activa pero el proceso no daba señales de vida recientes; relanzando.');
     enableDriveSyncGuardSilently('proceso sin señales de vida recientes, relanzando');
-  } else if (shouldBeOn && isOn) {
-    // P23 (18 sept 2026): aquí `isDriveSyncGuardActuallyAlive()` ya dio
-    // `true` — pero ni `enabled.flag` ni `heartbeat.txt` llevan identidad
-    // de instalación (medido: un guardián vivo de OTRA instalación deja
-    // pasar esta rama igual que el propio). Se comprueba además si Run y
-    // la tarea corresponden de verdad a ESTA instalación. Política D2: si
-    // no corresponden, se repara la persistencia y se lanza ADEMÁS el
-    // guardián de esta instalación — nunca se toca ni se intenta terminar
-    // el proceso que ya estuviera vivo (no hay forma de demostrar su
-    // origen, y matarlo no está autorizado). Riesgo residual conocido y
-    // NO resuelto por este cambio: un guardián vivo de las versiones
-    // 0.1.60–0.1.69 puede tener el bug de WM_QUERYENDSESSION (ver
-    // DriveSyncGuard.ps1, comentario v0.1.70) — este cambio no lo
-    // neutraliza, solo dejar de confiar ciegamente en Run/tarea.
-    // Ajuste final (18 sept 2026): esta inspección concreta (Run/tarea, dos
-    // procesos externos síncronos) se cachea con un timestamp simple — NO
-    // afecta a las ramas de arriba (activar/desactivar/heartbeat muerto),
-    // que se evalúan en cada tick exactamente igual que antes. Run/tarea no
-    // cambian solos durante una sesión ya en marcha (ver comentario junto a
-    // DRIVE_SYNC_GUARD_PERSISTENCE_RECHECK_MS), así que espaciar esta
-    // comprobación no renuncia a la autorreparación, solo a pagar su coste
-    // en cada watchdog de 45s.
-    if (Date.now() - ultimaInspeccionPersistenciaMs >= DRIVE_SYNC_GUARD_PERSISTENCE_RECHECK_MS) {
-      ultimaInspeccionPersistenciaMs = Date.now();
-      const persistencia = estadoPersistenciaDriveSyncGuard();
-      if (persistencia === 'incorrecta') {
-        appLog('Aviso — Run/tarea de la protección de apagado no corresponden a esta instalación (P23); reparando y lanzando esta copia, sin tocar el proceso ya vivo.');
-        repararPersistenciaDriveSyncGuard('P23: Run/tarea no correspondían a esta instalación', (ok) => {
-          if (ok) lanzarDriveSyncGuardActual('P23: persistencia reparada con guardián existente vivo');
-        });
-      } else if (persistencia === 'no-verificable') {
-        // Ante duda no se lanza una copia adicional (podría acabar
-        // disparándose en cada arranque/tick del watchdog ante un fallo
-        // transitorio de reg.exe/schtasks.exe) — pero reparar es idempotente
-        // y ya es la misma operación en la que se apoya el resto del
-        // mecanismo, así que hacerlo también aquí es más seguro que no
-        // tocar nada.
-        appLog('Aviso — no se pudo verificar si Run/tarea de la protección de apagado corresponden a esta instalación; se reparan por prudencia, sin lanzar otra copia.');
-        repararPersistenciaDriveSyncGuard('P23: persistencia no verificable, reparación preventiva');
-      }
-    }
   }
 }
 

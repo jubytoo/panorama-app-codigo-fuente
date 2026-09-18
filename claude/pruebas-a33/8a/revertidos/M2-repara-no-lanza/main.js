@@ -9854,7 +9854,7 @@ function syncDriveSyncGuardWithLocation() {
       if (persistencia === 'incorrecta') {
         appLog('Aviso — Run/tarea de la protección de apagado no corresponden a esta instalación (P23); reparando y lanzando esta copia, sin tocar el proceso ya vivo.');
         repararPersistenciaDriveSyncGuard('P23: Run/tarea no correspondían a esta instalación', (ok) => {
-          if (ok) lanzarDriveSyncGuardActual('P23: persistencia reparada con guardián existente vivo');
+          // REVERSIÓN M2: no lanza (rompe D2 a propósito)
         });
       } else if (persistencia === 'no-verificable') {
         // Ante duda no se lanza una copia adicional (podría acabar

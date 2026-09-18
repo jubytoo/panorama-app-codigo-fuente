@@ -9443,6 +9443,7 @@ function leerRunDriveSyncGuard() {
       { windowsHide: true, encoding: 'utf8', timeout: DRIVE_SYNC_GUARD_INSPECCION_TIMEOUT_MS, killSignal: 'SIGKILL' }
     );
   } catch (e) {
+    if (e && e.status === 1) return { estado: 'ausente' }; // REVERSIÓN R3
     return { estado: 'no-verificable', motivo: String((e && e.message) || e) };
   }
   const m = /^\s*PanoramaDriveSyncGuard\s+REG_SZ\s+(.*)$/m.exec(salida);
@@ -9464,6 +9465,7 @@ function leerTareaDriveSyncGuard() {
     salida = execFileSync('schtasks.exe', ['/query', '/tn', DRIVE_SYNC_GUARD_TASK_NAME, '/xml'],
       { windowsHide: true, encoding: 'utf8', timeout: DRIVE_SYNC_GUARD_INSPECCION_TIMEOUT_MS, killSignal: 'SIGKILL' });
   } catch (e) {
+    if (e && e.status === 1) return { estado: 'ausente' }; // REVERSIÓN R3
     return { estado: 'no-verificable', motivo: String((e && e.message) || e) };
   }
   const comandoM = /<Command>([^<]*)<\/Command>/.exec(salida);

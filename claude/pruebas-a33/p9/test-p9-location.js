@@ -171,6 +171,13 @@ const FUENTE_BASE = [
   // P22: la protección de apagado consulta esto. Aquí siempre false = sesión
   // normal, que es justo lo que medía P9; el caso temporal lo cubre `p22/`.
   'let sesionLocalTemporal = false;',
+  // Block 8A/P23 (18 sept 2026, ajuste final): syncDriveSyncGuardWithLocation()
+  // ahora cachea la inspección de Run/tarea con estas dos — reales, no dobles:
+  // el valor de la cadencia no cambia nada aquí porque cada `construir()` es
+  // una invocación nueva de la Function (arranca en 0, así que la primera
+  // llamada siempre inspecciona, que es lo que P9 ya esperaba probar).
+  lineaConst('DRIVE_SYNC_GUARD_PERSISTENCE_RECHECK_MS'),
+  'let ultimaInspeccionPersistenciaMs = 0;',
   ...['function rutaHistorialUbicacion()', 'function claveHashUbicacion(dir)', 'function leerHistorialUbicacion()',
     'function huboUbicacionPersonalizada()'].map((f) => extraerDe(MAIN, f)),
   ...['function userDataConfigPath()', 'function leerConfigUbicacion()',
@@ -244,6 +251,12 @@ function construir({ appData, userData, fsImpl, recursos, guard }) {
   const f = new Function('app', 'fs', 'path', 'originalFs', 'dbmod', 'appLog', 'sleepSyncMs', 'Date', 'crypto',
     'dialog', 'process', 'errorCodeSuffix', 'isDriveSyncGuardEnabled', 'isDriveSyncGuardActuallyAlive', // ← también lo usa huboUbicacionPersonalizada (P22)
     'enableDriveSyncGuardSilently', 'disableDriveSyncGuardSilently',
+    // Block 8A/P23 (18 sept 2026): syncDriveSyncGuardWithLocation() ahora
+    // también comprueba Run/tarea con el guardián vivo — P9 no prueba esa
+    // lógica (la prueba aparte, en 8a/test-8a-guardian.js); aquí basta un
+    // stub fijo en "correcta" para que esa rama nueva sea un no-op y el
+    // comportamiento ya probado por P9 quede exactamente igual.
+    'estadoPersistenciaDriveSyncGuard',
     // En main.js es `const defaultUserDataDir = app.getPath('userData')` ANTES de
     // cualquier setPath: aquí, el userData inicial del caso (P22).
     'defaultUserDataDir',
@@ -255,6 +268,7 @@ function construir({ appData, userData, fsImpl, recursos, guard }) {
     dialog, fakeProcess, (c) => { traza.logs.push(`ERROR ${c} — (doble)`); return `\n\n(código ${c})`; },
     () => g.activa, () => g.viva,
     (r) => traza.guard.push('enable: ' + r), (r) => traza.guard.push('disable: ' + r),
+    () => 'correcta',
     userData);
   return Object.assign(api, { traza });
 }

@@ -77,6 +77,12 @@ const AMBITO = [
   MAIN.slice(MAIN.indexOf('const INDICIOS_DE_NUBE = ['), MAIN.indexOf('];', MAIN.indexOf('const INDICIOS_DE_NUBE = [')) + 2),
   MAIN.match(/^const CABECERA_SQLITE = [^\n]*$/m)[0],
   MAIN.match(/^const FSYNC_NO_SOPORTADO_REG = [^\n]*$/m)[0],
+  // Block 8A/P23 (18 sept 2026, ajuste final): syncDriveSyncGuardWithLocation()
+  // ahora cachea la inspección de Run/tarea con estas dos — reales, no dobles:
+  // cada `construir()` es una invocación nueva de la Function (arranca en 0),
+  // así que la primera llamada siempre inspecciona, igual que antes de este ajuste.
+  MAIN.match(/^const DRIVE_SYNC_GUARD_PERSISTENCE_RECHECK_MS = [^\n]*$/m)[0],
+  'let ultimaInspeccionPersistenciaMs = 0;',
   ...['function userDataConfigPath()', 'function leerConfigUbicacion()', 'function probeWritableDir(dir)',
     'function applyCustomUserDataDirIfConfigured()', 'function isUsingCustomDataLocationNow()', 'function isUsingSharedDataLocationNow()',
     'function rutaRegistroUbicaciones()', 'function claveUbicacion(dir)', 'function leerRegistroUbicaciones()',
@@ -120,6 +126,11 @@ function construir({ appData, userData, defecto, fsImpl, guardActiva }) {
   const f = new Function('app', 'fs', 'path', 'crypto', 'dbmod', 'appLog', 'dialog', 'process', 'errorCodeSuffix',
     'defaultUserDataDir', 'isDriveSyncGuardEnabled', 'isDriveSyncGuardActuallyAlive', 'enableDriveSyncGuardSilently',
     'disableDriveSyncGuardSilently', 'refreshAllMenus', 'sleepSyncMs', 'Date',
+    // Block 8A/P23 (18 sept 2026): syncDriveSyncGuardWithLocation() ahora
+    // también comprueba Run/tarea con el guardián vivo — P22 no prueba esa
+    // lógica (aparte, en 8a/test-8a-guardian.js); stub fijo en "correcta"
+    // para que sea un no-op y el comportamiento ya probado por P22 no cambie.
+    'estadoPersistenciaDriveSyncGuard',
     AMBITO + '\nreturn { estadoBaseDeDatosLocal, descripcionBaseDeDatosLocal, leerHistorialUbicacion, guardarHistorialUbicacion,'
     + ' registrarUbicacionPersonalizada, registrarDecisionUbicacion, huboUbicacionPersonalizada, autorizarCarpetaLocal,'
     + ' preguntarPorLaCarpetaLocal, decidirCrearSiAusente, applyCustomUserDataDirIfConfigured, syncDriveSyncGuardWithLocation,'
@@ -130,7 +141,8 @@ function construir({ appData, userData, defecto, fsImpl, guardActiva }) {
   const api = f(app, fsUsado, path, crypto, {}, (s) => t.logs.push(String(s)), dialog,
     { pid: process.pid, platform: 'win32', resourcesPath: SB, env: process.env },
     (c) => `\n\n(código ${c})`, defecto, () => !!guardActiva, () => true,
-    (r) => t.guard.push('enable:' + r), (r) => t.guard.push('disable:' + r), () => {}, () => {}, FakeDate);
+    (r) => t.guard.push('enable:' + r), (r) => t.guard.push('disable:' + r), () => {}, () => {}, FakeDate,
+    () => 'correcta');
   return Object.assign(api, { t });
 }
 

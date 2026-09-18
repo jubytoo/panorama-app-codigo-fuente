@@ -9825,7 +9825,9 @@ function syncDriveSyncGuardWithLocation() {
     // marcha (ver startUserDataWatchdog), así que una muerte a media
     // sesión también se cura sola, no solo al reabrir la app.
     appLog('Aviso — la protección de apagado estaba marcada como activa pero el proceso no daba señales de vida recientes; relanzando.');
-    enableDriveSyncGuardSilently('proceso sin señales de vida recientes, relanzando');
+    if (Date.now() - ultimaInspeccionPersistenciaMs >= DRIVE_SYNC_GUARD_PERSISTENCE_RECHECK_MS) { // REVERSIÓN R4: respeta la cadencia lenta
+      enableDriveSyncGuardSilently('proceso sin señales de vida recientes, relanzando');
+    }
   } else if (shouldBeOn && isOn) {
     // P23 (18 sept 2026): aquí `isDriveSyncGuardActuallyAlive()` ya dio
     // `true` — pero ni `enabled.flag` ni `heartbeat.txt` llevan identidad

@@ -9440,7 +9440,7 @@ function leerRunDriveSyncGuard() {
     salida = execFileSync(
       'reg.exe',
       ['query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run', '/v', 'PanoramaDriveSyncGuard'],
-      { windowsHide: true, encoding: 'utf8', timeout: DRIVE_SYNC_GUARD_INSPECCION_TIMEOUT_MS, killSignal: 'SIGKILL' }
+      { windowsHide: true, encoding: 'utf8' }
     );
   } catch (e) {
     return { estado: 'no-verificable', motivo: String((e && e.message) || e) };
@@ -9462,7 +9462,7 @@ function leerTareaDriveSyncGuard() {
   let salida;
   try {
     salida = execFileSync('schtasks.exe', ['/query', '/tn', DRIVE_SYNC_GUARD_TASK_NAME, '/xml'],
-      { windowsHide: true, encoding: 'utf8', timeout: DRIVE_SYNC_GUARD_INSPECCION_TIMEOUT_MS, killSignal: 'SIGKILL' });
+      { windowsHide: true, encoding: 'utf8' });
   } catch (e) {
     return { estado: 'no-verificable', motivo: String((e && e.message) || e) };
   }

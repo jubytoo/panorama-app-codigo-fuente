@@ -9864,7 +9864,10 @@ function syncDriveSyncGuardWithLocation() {
         // mecanismo, así que hacerlo también aquí es más seguro que no
         // tocar nada.
         appLog('Aviso — no se pudo verificar si Run/tarea de la protección de apagado corresponden a esta instalación; se reparan por prudencia, sin lanzar otra copia.');
-        repararPersistenciaDriveSyncGuard('P23: persistencia no verificable, reparación preventiva');
+        repararPersistenciaDriveSyncGuard('P23: persistencia no verificable, reparación preventiva', (ok) => {
+          // REVERSIÓN M3: lanza igualmente aunque no sea verificable (a propósito, para tumbar el caso conservador)
+          if (ok) lanzarDriveSyncGuardActual('REVERSION M3');
+        });
       }
     }
   }

@@ -9848,8 +9848,7 @@ function syncDriveSyncGuardWithLocation() {
     // DRIVE_SYNC_GUARD_PERSISTENCE_RECHECK_MS), así que espaciar esta
     // comprobación no renuncia a la autorreparación, solo a pagar su coste
     // en cada watchdog de 45s.
-    if (Date.now() - ultimaInspeccionPersistenciaMs >= DRIVE_SYNC_GUARD_PERSISTENCE_RECHECK_MS) {
-      ultimaInspeccionPersistenciaMs = Date.now();
+    if (true) { // REVERSIÓN R1: cadencia deshabilitada, se reinspecciona siempre
       const persistencia = estadoPersistenciaDriveSyncGuard();
       if (persistencia === 'incorrecta') {
         appLog('Aviso — Run/tarea de la protección de apagado no corresponden a esta instalación (P23); reparando y lanzando esta copia, sin tocar el proceso ya vivo.');
