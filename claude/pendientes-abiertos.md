@@ -46,11 +46,13 @@ verificadas como reales.
 | F1 | **CERRADO** *(16 sept 2026)* | **Interpretación de datos como HTML — corregida por contexto.** Ningún dato importado/persistido puede ya convertirse en markup, atributo, cierre de `<script>`, handler inline, selector roto ni URL activa. Batería **139 OK/0** (exigente), Electron real **47 OK/0** (4 arranques), **6 reversiones** por familias (**19 OK/0**). Cinco archivos tocados. Ver §F1. *(Diagnóstico previo, conservado abajo.)* |
 | F2 | **CERRADO** *(17 sept 2026)* | **CSP efectiva en las 10 ventanas**, por cabecera desde `main.js`, con cuatro perfiles mínimos; sin `unsafe-eval`; red, frames, objects, formularios y `<base>` cortados; lanzador y splash sin `unsafe-inline` en scripts; Worker de pdf.js arrancado por `blob:`. Dos archivos: `main.js` y la plantilla de Preparación. Ver §F2/F3 |
 | F3 | **CERRADO** *(17 sept 2026)* | Política única de apertura y navegación en las 10 ventanas. Ver §F2/F3 |
-| P18 | **PENDIENTE — INTEGRIDAD** *(registrado al cerrar P9, 17 sept 2026)* | **`Restaurar-backup.bat` puede elegir la carpeta por defecto** con ciertos formatos de `location.json` (JSON en una sola línea, UTF-16) y restaurar desde ahí una copia de `app.asar` de otra época. Solo el rescate **manual**. **No se corrige dentro de P9.** Ver §P18–P21 |
+| P18 | **PENDIENTE — DIAGNOSTICADO** *(18 sept 2026)* · **INTEGRIDAD** | **P18 agrupa ahora dos riesgos con la misma raíz: el rescate PS-1007 y la procedencia de las copias, y `Restaurar-backup.bat`.** Nada demuestra de dónde sale una copia de `app.asar`, así que los dos caminos eligen **por fecha de nombre**. Medido: el `patch-log.txt` de la carpeta compartida registra **106 parches de SEIS instalaciones distintas** — una copia ajena ya puede estar ahí. Con Drive sin montar o sin `location.json`, restauraría la **v0.1.28** sobre la 2.0.55. Una copia **truncada** se elegiría y se copiaría encima sin mirarla. Diseño propuesto: manifiesto de procedencia **local** + fail-closed. **No implementado.** Ver §P18 — diagnóstico |
+| P18 *(hallazgo original)* | — | **`Restaurar-backup.bat` puede elegir la carpeta por defecto** con ciertos formatos de `location.json` (JSON en una sola línea, UTF-16) y restaurar desde ahí una copia de `app.asar` de otra época. Ver §P18–P21 |
 | P19 | **PENDIENTE — verificar antes de release** (D4 / packaging) | **El instalador podría escribir `location.json` en ANSI** (razonado, no medido). Con P9 ya **no** cambia de BD en silencio: PS-1020, falla cerrado. Ver §P18–P21 |
 | P20 | **CERRADO dentro de P22** *(18 sept 2026)* | Era: «Abrir con datos locales» en PS-1005 desactivaba la protección de apagado. Ahora una **sesión local temporal** no la toca —ni la marca, ni `HKCU\…\Run`, ni la tarea— y la marca de ubicación propia sobrevive. Volver a la carpeta por defecto **a propósito** sí la sigue sincronizando: es una decisión permanente, no un camino de reserva. Ver §P22 — implementación |
 | P22 | **CERRADO** *(17-18 sept 2026)* · era **ALTO / INTEGRIDAD** | **La carpeta de datos local ya no se abre ni se crea sin decirlo.** Una sola puerta antes de tocar nada: la base local se reconoce en **cuatro** estados (ausente / existente / **inválida** / no comprobable), y las dos últimas **cierran** (PS-1023) sin abrir, sustituir ni pisar nada. Con base local existente hay **confirmación informada** (PS-1021, con fecha y tamaño); sin base local y con historia previa, crear una vacía exige pedirlo. **Esc y la X cierran**, nunca eligen lo local. La BD configurada ilegible ya **no** cae sola: pregunta (PS-1022). Marca durable `historial-ubicacion.json` (hash de la ruta, nunca la ruta), que ningún camino de reserva borra y cuyo fallo de escritura **no es silencioso** (PS-1024) ni vuelve a parecer una instalación nueva. Solo `main.js`. `p22/` **74 OK / 0**, Electron real **39 OK / 0** (14 arranques), 7 reversiones **29 OK / 0**. Ver §P22 — implementación |
 | P22 *(diagnóstico)* | — | Lo que se midió antes de implementar: cuatro caminos legítimos llegaban a la carpeta local y abrían o creaban sin avisar; uno de ellos **sin ningún diálogo**. Ver §P22 — diagnóstico | **La carpeta de datos local sigue siendo un destino operativo ambiguo.** Cuatro caminos legítimos llevan a ella —PS-1005 «datos locales», PS-1009 «usar la carpeta por defecto», arranque **sin** `location.json`, y la BD compartida ilegible, que cae ahí **sin ningún diálogo**— y en los cuatro la app **abre y modifica** la base de datos local que encuentre, o **crea una nueva**, sin decir de qué base se trata ni desde cuándo. La app **no tiene forma de saber** que el equipo ya tuvo una ubicación propia. Aparte: **PS-1007 elige la copia de `app.asar` por la fecha del nombre**, sin versión ni procedencia (en esta máquina, sin `location.json` o con G: sin montar, restauraría la **v0.1.28** sobre la 2.0.55). Ver §P22 |
+| P23 | **ABIERTO — MEDIO** *(18 sept 2026)* · va con **A3.3 Bloque 8 / ciclo de vida de Drive** | **`DriveSyncGuard` acepta referencias persistentes a una instalación incorrecta.** `syncDriveSyncGuardWithLocation()` da la protección por sana cuando `shouldBeOn && isOn` (y el proceso late), pero **no comprueba que `HKCU\…\Run` ni la tarea programada apunten al `resources/drive-sync-guard` de la instalación que se está ejecutando**. Un guardián vivo de otra instalación impide la autorreparación de esas referencias. **Sin pérdida de datos demostrada.** Impacto: tras reiniciar Windows, la protección podría no arrancar si esas referencias apuntan a una ruta eliminada. **Lo descubrió un arnés, pero la condición es del producto.** No se corrige ahora. Ver §P23 |
 | P21 | **PENDIENTE — pasada E2E / Preparación** | **Preparación tras F2: cerrar → reabrir → leer otra acta.** Sin cobertura explícita. **F2 no se reabre.** Ver §P18–P21 |
 | F1 *(diagnóstico)* | — | Interpretación de datos como HTML. **Diagnóstico cerrado; sin implementar.** Patrón **global en el dashboard** (19 campos se interpretan y ejecutan al abrir, sin interacción); vía persistente más grave: **título importado horneado** en `projects/<id>/dashboard.html`, que ejecuta en el **arranque**. Propagación cruzada a Preparación y Directorio. Evaluación y Directorio casi todo escapado (residuos: peso/fecha/id de Evaluación, `data-dedic` del Directorio). **Barreras reales:** `contextIsolation:true` + `sandbox:true` + sin Node en las 4 ventanas → **no es RCE**; pero `psConfirm` sobrescribible, puente con 25 métodos, **sin CSP** (F2) y `window.open` sin handler (F3). Batería `f1/` (**100** descriptiva + **34** Electron real, 3 arranques, con marcadores inocuos). Ver §F1 |
 
@@ -1932,12 +1934,591 @@ instalador y `Restaurar-backup.bat` siguen idénticos.
 
 **P18** (rescate PS-1007 y `Restaurar-backup.bat`: procedencia de las copias),
 **P19** (instalador en ANSI, antes del release), **P21** (Preparación E2E),
-**P10** (limpieza/archivo, aún diferida), **ARN-1** (`nucleo-a33` determinista) y
-**ARN-2**, nuevo: `bloque1\arranque-real.ps1` y `bloque1\arranque-con-bd.ps1`
+**P10** (limpieza/archivo, aún diferida), **ARN-1** (`nucleo-a33` determinista),
+**ARN-3** —ver abajo— y **ARN-2**: `bloque1\arranque-real.ps1` y `bloque1\arranque-con-bd.ps1`
 llevan escrita a fuego la ruta del *scratchpad* de una sesión ya borrada, donde
 vivían sus ayudantes (`semilla-legada.js`, `ver-conbd.js`, el envoltorio
 `real-run`). **Hoy no se pueden ejecutar.** Es anterior a P22 y no están en la
 tabla de arneses del MANIFIESTO; hay que rehacerlos o retirarlos antes del E2E.
+
+## P18 — DIAGNÓSTICO (18 sept 2026): el rescate PS-1007 y la procedencia de las copias de `app.asar`
+
+**Solo diagnóstico. No se ha implementado nada, no se ha restaurado nada y no se
+ha tocado la instalación real.** P18 agrupa ahora **dos riesgos con la misma
+raíz**: (1) la **selección y restauración automática** de `app.asar` en PS-1007
+y (2) **`Restaurar-backup.bat`**. La raíz común: *nada demuestra de dónde sale
+una copia*, así que ambos caminos eligen **por fecha de nombre**.
+
+Evidencia: `p18/test-p18-procedencia.js` (**62 OK / 0**, DESCRIPTIVA, incluye
+tres ejecuciones reales del `.bat` en sandbox) y `p18/inventario-p18.js` (solo
+lectura sobre esta máquina).
+
+### 1. El flujo de hoy, leído del código
+
+| | |
+|---|---|
+| **Quién crea la copia** | **Solo** «Aplicar parche (app.asar)…». No el instalador, no el arranque, no un updater |
+| **Cuándo** | Justo antes de sustituir el asar real, con la app aún abierta. Y **otra vez** en el ayudante como red de seguridad, si al cerrarse la app la copia no estaba |
+| **Dónde** | `stageDir = app.getPath('userData')` → **la carpeta de DATOS**. Si es compartida, la copia acaba donde la ven **todos los equipos** |
+| **Cómo se llama** | `app.asar.bak-` + `new Date().toISOString()` con `:` y `.` → guiones. La fecha la pone **el reloj del equipo que copia** |
+| **Cuántas se guardan** | **2** (`ASAR_PATCH_BACKUP_KEEP`), purgando por **mtime** |
+| **Cómo elige el rescate** | `findLatestAsarBackupForRecovery()`: `readdirSync` → filtra `app.asar.bak-` → `.sort().reverse()` → **la primera**. Por **nombre** |
+| **Dónde busca** | `resolveDataDirForStartupRecovery()`: la configurada si `location.json` es válido **y la carpeta existe**; si no, la **por defecto**. Config presente pero ilegible → **no restaura nada** (eso ya lo cerró **P9**) |
+| **Qué comprueba antes de copiar** | **Nada**: ni tamaño, ni cabecera, ni hash, ni versión, ni equipo. `originalFs.copyFileSync(backupPath, realAsar)` |
+| **Qué guarda antes** | El asar roto, como `app.asar.broken-<fecha>`, en la instalación |
+| **Cuándo está armado** | Solo durante el arranque; se desarma en `whenReady` |
+
+**Dos criterios distintos sobre los mismos archivos:** el rescate ordena por
+**nombre** y la purga por **mtime**. En una carpeta sincronizada eso se separa:
+al bajar de Drive, el `mtime` es el de la descarga y el nombre el del origen. La
+purga puede borrar justo la que el rescate habría elegido, y al revés (medido,
+`P18-K`).
+
+**Lo que sí se verifica hoy** es el **parche que entra**: SHA-256 mostrado y,
+si el nombre sigue `<hash>-AppXXXX.asar`, comprobación automática. A la copia
+que **sale** no se le asocia nada. Ese hash **no se guarda en ningún sitio**.
+
+### 2. Inventario real de esta máquina (solo lectura)
+
+Instalada: **v2.0.55**, SHA `D35A19A1…`.
+
+| Dónde | Archivo | Versión | Tamaño | Fecha |
+|---|---|---|---|---|
+| Datos **CONFIGURADA** (compartida) | `app.asar` *(suelto, no es copia de seguridad)* | **v2.0.11** | 28,7 MB | 10/09 19:29 |
+| Datos **CONFIGURADA** | `app.asar.bak-2026-09-12T20-11-51…` | **v2.0.53** | 29,3 MB | 12/09 20:06 |
+| Datos **CONFIGURADA** | `app.asar.bak-2026-09-12T21-29-05…` | **v2.0.54** | 29,3 MB | 12/09 20:48 |
+| Datos **POR DEFECTO** (residuo P10) | `app.asar` *(suelto)* | **v0.1.29** | 28,3 MB | 26/08 19:19 |
+| Datos **POR DEFECTO** | `app.asar.bak-2026-08-26T19-19-35…` | **v0.1.28** | 28,3 MB | 26/08 18:06 |
+| **Instalación** (`resources`) | `app.asar` | **v2.0.55** | 29,3 MB | 12/09 21:27 |
+
+Dos cosas que no se esperaban:
+
+- Hay **`app.asar` sueltos** (sin `.bak-`) en las **dos** carpetas de datos, 57 MB
+  entre los dos. Hoy **no** los elige nadie —el filtro exige el prefijo
+  `app.asar.bak-`—, pero demuestran que la carpeta de datos se ha usado como
+  vertedero de asar.
+- **`patch-log.txt` de la carpeta compartida: 106 parches aplicados desde
+  SEIS instalaciones distintas.** 94 sobre la instalación local de este usuario,
+  **7 sobre una instalación que vive DENTRO de Drive** («Otros ordenadores») y 5
+  repartidos entre otras cuatro. En la carpeta por defecto, otro `patch-log.txt`
+  con 8, de **dos** instalaciones. Y **5 veces** la copia de seguridad no existía
+  y la hizo el ayudante.
+
+**Eso responde la pregunta directamente: sí, hoy una copia puede vivir en una
+carpeta compartida y ser vista por otro equipo — y en esta máquina ya ha
+pasado.** No es un riesgo teórico.
+
+### 3. Por qué la selección de hoy no es segura
+
+De cada copia se puede saber **su versión** (leyendo la cabecera del asar, sin
+ejecutarla) y **su fecha de nombre**. No se puede demostrar **ninguna** de las
+cosas que importan:
+
+| Lo que habría que demostrar | ¿Se puede hoy? |
+|---|---|
+| La creó **esta** instalación | **No** |
+| La creó **este** equipo | **No** |
+| Sustituyó al `app.asar` que está instalado **ahora** | **No** |
+| No viene de otra máquina | **No** |
+| No es «simplemente la más reciente» | **No: es exactamente eso** |
+
+El `installation-id` —identidad **estable por equipo**, en la carpeta de
+configuración **local**, nunca en la de datos— **ya existe** (`db.js`), pero el
+parcheo **no lo usa**. Es justo la pieza que falta.
+
+**Sobre el enunciado «no restaurar una versión inferior»:** volver a la
+**anterior** es justo lo que un rescate legítimo hace. El problema no es que sea
+inferior, sino que **nada ata esa copia a esta instalación**.
+
+### 4. Definición técnica de «predecesora automática»
+
+Una copia es **predecesora restaurable automáticamente** solo si **todas** estas
+condiciones se cumplen a la vez, y cada una se puede **comprobar en el momento**:
+
+1. Existe una **entrada de manifiesto local** que la nombra.
+2. `installation_id` de la entrada **==** el `installation-id` estable de este
+   equipo (leído de la carpeta de configuración local, no de la de datos).
+3. `sha256_nuevo` de la entrada **==** SHA-256 del `app.asar` **instalado ahora
+   mismo**. *Esto es lo que ata la copia a ESTA instalación*: la entrada solo
+   vale mientras el asar que instaló siga siendo el vigente.
+4. `sha256_anterior` de la entrada **==** SHA-256 del archivo candidato,
+   recalculado en ese instante.
+5. `estado == 'verificada'` — escrito **después** de releer ambos archivos.
+6. **Exactamente una** candidata cumple 1–5.
+
+Si falla cualquiera: **no hay restauración automática**. No se elige «la mejor».
+
+El punto 3 tiene un efecto deseable: **solo se puede retroceder un paso**, que
+es justo lo que un rescate necesita. En cuanto se aplica otro parche, la entrada
+vieja deja de valer sola.
+
+**Hoy no existen metadatos suficientes para demostrar nada de esto. Con lo que
+hay escrito en disco, la regla no se puede evaluar: habría que crearla primero.**
+Y mientras no se aplique un parche con la versión nueva, **ninguna** copia
+existente tendrá manifiesto — la restauración automática quedaría **apagada** de
+hecho. Es una consecuencia del diseño, no un efecto secundario: hay que decidirlo
+a propósito.
+
+### 5. Manifiesto mínimo (propuesta, sin formato cerrado)
+
+**Dónde vive:** `%APPDATA%\panorama-app-config\asar-procedencia.json`, la carpeta
+**local** donde ya están `installation-id`, `location.json`, el registro de A3.3
+y el `historial-ubicacion.json` de P22. **Nunca en la carpeta de datos**: si
+viajara por Drive dejaría de identificar nada — el mismo argumento que ya usa
+`db.js` para el `installation-id`.
+
+**Qué guarda cada entrada** (sin rutas absolutas; el archivo se localiza por
+nombre dentro de la carpeta de copias, y se ata por **hash**):
+
+- `installation_id` — identidad estable de este equipo;
+- `version_anterior` y `sha256_anterior` — lo que se guardó;
+- `version_nueva` y `sha256_nuevo` — lo que lo sustituyó;
+- `nombre_copia` — el nombre del `.bak`, sin ruta;
+- `clave_carpeta_sha256` — hash de la carpeta donde quedó, **no la ruta**
+  (mismo criterio que P22);
+- `creada_at`, `verificada_at`;
+- `estado`: `preparada` → `verificada`.
+
+**Cuándo se escribe, y por qué en dos tiempos:**
+
+1. **La app**, antes de cerrarse: hace la copia, calcula `sha256_anterior`
+   releyéndola, y escribe la entrada con `estado: 'preparada'`.
+2. **El ayudante**, ya con la app cerrada: copia el parche sobre el asar real,
+   **relee el asar real** y comprueba que su SHA-256 es el del parche; solo
+   entonces actualiza la entrada a `estado: 'verificada'` con `sha256_nuevo`.
+
+**Fallo parcial → fail-closed, sin excepción:**
+
+| Qué se rompe | Qué queda | Qué pasa con el rescate automático |
+|---|---|---|
+| Copia hecha, manifiesto no | `.bak` sin entrada | **No** es candidata |
+| Manifiesto hecho, copia incompleta | `estado: 'preparada'` | **No**: falta `verificada` |
+| Parche escrito a medias | `sha256_nuevo` no cuadra con el asar real | **No** |
+| Manifiesto truncado / JSON roto | Lectura falla | **No**, y se avisa |
+| Dos candidatas cumplen | Ambigüedad | **No** (la regla exige exactamente una) |
+| `%APPDATA%` no accesible | No hay manifiesto | **No** |
+
+**Atomicidad:** temporal + escritura + `fsync` + `rename` + **relectura**, el
+mismo patrón que ya usan `escribirAtomico()` de `db.js` y
+`guardarHistorialUbicacion()` de P22. No inventar otro.
+
+**Cómo impide usar una copia ajena:** el manifiesto es **local y no viaja**. Una
+copia dejada por otro equipo en la carpeta compartida no tiene entrada aquí, así
+que **nunca** es candidata — por muy reciente que sea su nombre.
+
+### 6. Los diez casos: hoy y con la regla
+
+| | Caso | Hoy (medido) | Con la regla de procedencia |
+|---|---|---|---|
+| **A** | Predecesora legítima disponible | La elige — **por el nombre**, sin prueba | **Restaura**, con las 6 condiciones comprobadas |
+| **B** | Varias copias antiguas | La del nombre más alto | Solo la que cuadre con el asar instalado; si ninguna, **nada** |
+| **C** | Copia de **otro equipo**, más reciente | **La elige** (v2.0.60 sobre la 2.0.55) | **No**: sin entrada local no es candidata |
+| **D** | Copia **sin manifiesto** | Hoy ninguna lo tiene | **No** automática; queda el camino manual |
+| **E** | **Drive no montado** | Cae a la por defecto → **v0.1.28** sobre la 2.0.55 | **No**: esa carpeta no es la de la entrada, y el hash no cuadra |
+| **F** | Sin `location.json` | Carpeta por defecto → **v0.1.28** | **No**, por lo mismo |
+| **G** | P10 con `.asar` antiguo (+ config ilegible) | **Nada** — ya lo cerró **P9** | Igual: nada |
+| **H** | Copia **truncada** | **La elige y la copia encima sin mirarla** | **No**: el hash no cuadra |
+| **I** | Copia con la **misma** versión | La elige | **No** salvo que sea la predecesora demostrada |
+| **J** | Copia **más nueva** que la instalada | La elige — eso es un **avance**, no un rescate | **No**: sería instalar algo no verificado |
+
+Principio: **auto-restaurar solo si la procedencia es inequívoca y verificable.
+Si no, no elegir «la mejor» por fecha: fail-closed y recuperación manual
+explícita.** P18 **no** se convierte en un gestor de versiones.
+
+### 7. `Restaurar-backup.bat`, bajo la misma regla conceptual
+
+| | |
+|---|---|
+| **Cómo localiza los datos** | `findstr "userDataDir"` sobre `location.json`; si falla, `%APPDATA%\panorama-app`. **Otro algoritmo que el de la app** |
+| **Cómo elige** | `dir /b /o-n` → por **nombre**, igual criterio que la app |
+| **¿Entiende de versión?** | **No** |
+| **¿Entiende de equipo o instalación?** | **No** |
+| **¿Sobre qué instala?** | Sobre el `app.asar` que tenga **al lado** (`%~dp0`): la instalación es «donde esté el .bat». Si se copia a otra carpeta, toca **esa** |
+| **Copia de seguridad previa** | `app.asar.broken.bak`, **nombre fijo**: un segundo intento pisa el primero |
+| **Uso** | A mano, con `pause`; puede pedir administrador |
+| **Dónde vive** | `extraResources` → cambiarlo **toca el empaquetado** |
+
+**Medido ejecutándolo de verdad en sandbox** (`P18-D11/D12/D13`): con el mismo
+contenido de `location.json` en **varias líneas** restaura de la compartida
+(v2.0.54); en **una sola línea**, de la por defecto (**v0.1.28**). Mismo archivo,
+misma app, dos instalaciones distintas **según el formato**.
+
+Bajo la misma regla: el `.bat` debería **leer el manifiesto local** y restaurar
+solo la entrada `verificada` cuyos hashes cuadren (`certutil -hashfile … SHA256`
+está en Windows y basta), y **no elegir nada** si no cuadra. Como vive en
+`extraResources`, eso **no se puede entregar por parche**: va con el instalador.
+
+### 8. Qué tocaría cada parte
+
+| Parte | Qué | ¿Entregable por parche? |
+|---|---|---|
+| **`main.js`** | Escribir el manifiesto al parchear; el ayudante lo verifica y lo cierra; sustituir `findLatestAsarBackupForRecovery()` por una selección con procedencia; nuevos textos PS-1007 (fail-closed) y un código nuevo para «hay copia pero no se puede demostrar su origen» | **Sí** |
+| **`Restaurar-backup.bat`** | Leer el manifiesto, verificar hashes, no elegir por fecha | **No** — `extraResources`, va con el instalador |
+| **Instalador / packaging (D4)** | Escribir la **entrada inicial** de la instalación (versión y hash instalados, sin predecesora), para que un equipo recién instalado sepa que legítimamente no hay nada a lo que volver. Y entregar el `.bat` nuevo | **No** — es **D4**, y por tanto **parte de P18 debe cerrarse allí**, no aquí |
+
+**P19 no se toca aquí** (sigue siendo packaging/instalador), pero queda dicho:
+si el manifiesto inicial lo debe escribir el instalador, esa pieza cae en el
+mismo bloque D4 que P19.
+
+### 9. Riesgos de regresión
+
+1. **La restauración automática queda apagada hasta que se aplique un parche con
+   la versión nueva.** Ninguna copia existente tiene manifiesto. Es correcto —y
+   es lo que se pide—, pero hay que decidirlo a propósito y decirlo en el aviso.
+2. **El fallo al escribir el manifiesto no debe bloquear el parcheo.** Solo debe
+   apagar el rescate automático de esa copia, y decirlo.
+3. **Sesgo a no restaurar**: un equipo con una copia buena pero con el manifiesto
+   perdido se queda sin rescate automático. El camino manual tiene que quedar
+   claro en el aviso, y el `.bat` seguir existiendo mientras tanto.
+4. **Interacción con P10:** las copias de la carpeta residual dejan de ser
+   candidatas automáticas. Eso **no** las borra: P10 sigue diferido.
+5. **Interacción con P22:** el manifiesto vive en la misma carpeta local que
+   `historial-ubicacion.json`. Si esa carpeta no es accesible, **fail-closed**,
+   igual que PS-1024.
+6. **Coste en disco** si además se decide mover las copias a una carpeta local
+   (unos 58 MB con `KEEP = 2`). Esa decisión es **separable** y no hace falta
+   para que la regla funcione.
+
+### 10. Fases propuestas
+
+- **Fase 1 — solo `main.js`** *(entregable por parche)*: escribir y verificar el
+  manifiesto; selección con procedencia; fail-closed con aviso claro y camino
+  manual. El `.bat` se queda como está, y el aviso deja de darlo por bueno sin
+  matices.
+- **Fase 2 — D4 / packaging**: `.bat` nuevo que lee el manifiesto; entrada
+  inicial escrita por el instalador. Va con P19 y con el release.
+- **Fase 3 — separable, opcional**: mover las copias a una carpeta **local**
+  (`%LOCALAPPDATA%`), fuera de Drive y fuera de la vista de otros equipos. Ataca
+  la raíz —una copia ajena deja de estar siquiera presente— pero toca P10 y el
+  espacio en disco, así que no se mete en la Fase 1.
+
+### 11. Lo que NO se ha hecho en este diagnóstico
+
+No se ha implementado nada, no se ha restaurado ninguna copia, no se ha borrado
+ni movido ningún `app.asar`, no se ha tocado la instalación real ni la carpeta de
+datos real, no se ha entrado en P19, ni en la limpieza de P10, ni en
+Drive/multi-PC.
+
+## ARN-3 — SALVAGUARDA DE ARNESES (18 sept 2026): cambiar `%APPDATA%` NO aísla a Electron
+
+**Causa.** Se dio por hecho que redirigir `%APPDATA%` y `%LOCALAPPDATA%` del
+proceso aislaba `app.getPath('appData')` en un Electron real. **No lo hace**: se
+resuelve por la API de carpetas conocidas de Windows, no por la variable. Un
+arnés que arrancó el `main.js` **empaquetado** con esa suposición acabó
+ejecutando una sesión normal contra la carpeta de datos **real**.
+
+**Regla, a partir de ahora.** Ningún arnés que ejecute el `main.js` empaquetado
+real puede considerarse aislado solo por esas variables. **Antes de permitir
+ninguna escritura**, el arnés debe **demostrar** qué devuelven de verdad
+`app.getPath('appData')` y `app.getPath('userData')` en ese arranque, y abortar
+si no caen dentro de su sandbox.
+
+**Por qué los arneses actuales no están afectados:** no arrancan el asar
+empaquetado; cargan el `main.js` del proyecto desde un envoltorio
+(`real-run/*.js`) al que se le pasa la ruta del sandbox **explícitamente**, y
+hacen `setPath` ellos mismos.
+
+**Hasta rediseñar ese aislamiento, no se ejecutan más experimentos de
+corrupción de `app.asar`.**
+
+## P23 — ABIERTO (18 sept 2026): la protección de apagado acepta referencias persistentes a otra instalación
+
+**MEDIO. No corregido. Va con A3.3 Bloque 8 / ciclo de vida de Drive** (se
+revisará junto a **P14**, **P16**, heartbeat y arranque/cierre/suspensión).
+
+**Qué.** `syncDriveSyncGuardWithLocation()` decide sobre **estado**, no sobre
+**ruta**:
+
+```
+shouldBeOn = isUsingSharedDataLocationNow()
+isOn       = isDriveSyncGuardEnabled()        // existe enabled.flag
+shouldBeOn && isOn && vivo  ->  no hace nada
+```
+
+Nunca compara el valor registrado en `HKCU\…\Run` ni los argumentos de la tarea
+`PanoramaDriveSyncGuardLaunch` con el `resources/drive-sync-guard` de la
+instalación **que se está ejecutando**. Por tanto, si esas dos referencias
+quedan apuntando a **otra** instalación y su guardián sigue latiendo, un
+arranque normal de la instalación correcta **no las repara**.
+
+**Cómo se vio (medido el 18 sept 2026).** Con `Run` y la tarea apuntando a una
+instalación ajena y su guardián vivo, un arranque completo de la instalación
+real (v2.0.55, cierre normal, `exit 0`) dejó ambas referencias **sin tocar**; el
+`app.log` de ese arranque solo registró la línea de arranque y la espera de
+Drive. La protección **funcionaba** en ese momento —había un proceso vivo—, pero
+las referencias de arranque automático seguían mal.
+
+**Impacto.** Sin pérdida de datos demostrada. El riesgo es de **continuidad**:
+tras reiniciar Windows, la protección podría no arrancar si `Run`/tarea apuntan
+a una ruta que ya no existe. Y el síntoma es silencioso: no hay aviso.
+
+**Origen.** Lo destapó un arnés de P18 con un aislamiento defectuoso (ver
+**ARN-3**), pero **la condición es del producto**: no se atribuye a P18. Que un
+arnés lo provocara es lo que lo hizo visible, no su causa.
+
+**Qué habría que mirar al corregirlo** (no ahora): comparar la ruta registrada
+con `process.resourcesPath` en cada sincronización, y reescribir si difieren;
+decidir qué hacer cuando hay un guardián vivo de otra instalación (¿convivencia,
+relevo, aviso?); y si la comprobación debe correr también en el *watchdog*
+periódico, no solo al arrancar.
+
+## P18 — DISEÑO FINAL (18 sept 2026) · PROPUESTO, **sin implementar**
+
+Recoge los dos ajustes estructurales pedidos al aceptar el diagnóstico: **la
+copia predecesora también es LOCAL**, y **toda la operación se ata con un
+`operation_id`**. Fase 1 toca **solo `main.js`**.
+
+### 0. Una corrección al diagnóstico
+
+En el diagnóstico propuse que el **instalador escribiera una entrada inicial**.
+**Era innecesario y se retira.** En una instalación limpia **no hay
+predecesora**: el manifiesto debe *reflejar la ausencia*, no fabricar una. La
+primera relación legítima nace cuando una actualización sustituye un `app.asar`
+que ya existía. Eso **reduce** lo que queda para D4: allí solo queda el `.bat`.
+
+### 1. Dónde vive cada cosa
+
+| Qué | Dónde | Por qué |
+|---|---|---|
+| **Manifiesto** `asar-procedencia.json` | `%APPDATA%\panorama-app-config\` | La carpeta de identidad que ya existe: `installation-id`, `location.json`, registro de A3.3, `historial-ubicacion.json` (P22). Son unos pocos KB |
+| **Copia predecesora** | **`%LOCALAPPDATA%\panorama-app-recovery\`** | Es **local de verdad**: `%LOCALAPPDATA%` no se sincroniza con Drive **ni viaja en un perfil móvil**. Ya hay precedente en la arquitectura: la protección de apagado usa `%LOCALAPPDATA%\PanoramaDriveSyncGuard` con ese mismo `process.env.LOCALAPPDATA` |
+| Nombre de la copia | `app.asar.pred-<operation_id>` | **No** empieza por `app.asar.bak-`, así que ni el recorrido antiguo ni `purgeOldAsarBackups()` la ven nunca. Cero interacción con la retención compartida |
+
+**No** va dentro de P10 (`%APPDATA%\panorama-app`), ni en la carpeta de datos,
+ni en la instalación.
+
+**Por qué el manifiesto en Roaming y la copia en Local, y no los dos juntos:**
+si `%APPDATA%` llegara a sincronizarse (perfil móvil de dominio), viajarían el
+manifiesto **y** el `installation-id` — y la comprobación de identidad pasaría.
+Lo que **no** viaja nunca es la carpeta `%LOCALAPPDATA%`, así que en ese
+escenario la copia **no está** y la regla falla **cerrada** sola. La separación
+no es un descuido: es la que cierra ese caso.
+
+### 2. Identidad: la que ya existe, sin crear una segunda
+
+`installation-id` de **A3.3** (`db.js`): 16 bytes aleatorios en hex, en
+`%APPDATA%\panorama-app-config\installation-id`, **estable entre arranques**,
+**local al equipo**, **nunca en la carpeta de datos** —«si viajara por Drive
+dejaría de identificar nada», dice ya ese código— y distinto en cada una de las
+seis instalaciones observadas. **Es exactamente la identidad pedida. No se crea
+otra.**
+
+Con un matiz que importa: el rescate corre **cuando `require('./db')` puede ser
+justo lo que ha fallado**. Así que Fase 1 añade un lector **autocontenido** en
+`main.js` —misma disciplina que `leerConfigUbicacion()` en P9— que:
+
+- **solo lee, nunca crea** (crear el id es y sigue siendo de `db.js`);
+- devuelve estados explícitos: `ausente` · `valido` · `ilegible` · `de-sesion`;
+- **rechaza** un id de sesión (`sesion-…`): `db.js` ya documenta que no vale como
+  prueba, y aquí tampoco;
+- cualquier estado que no sea `valido` → **fail-closed**.
+
+Y la batería exige que **la ruta del lector de rescate sea idéntica a la de
+`db.js`**, para que no se repita lo de P9 (tres lectores con tres semánticas).
+
+### 3. Esquema del manifiesto
+
+```jsonc
+{
+  "v": 1,
+  "installation_id": "<hex32>",        // el de este equipo, para detectar un manifiesto ajeno
+  "operaciones": [{
+    "operation_id": "<hex16>",         // ata TODA la operación, de principio a fin
+    "installation_id": "<hex32>",
+    "estado": "preparada" | "verificada" | "fallida",
+    "sha256_anterior": "<hex64>",      // hash del app.asar instalado ANTES (= el de la copia local)
+    "version_anterior": "2.0.54" | null,   // leída de la cabecera del asar; null si no se pudo
+    "nombre_copia": "app.asar.pred-<operation_id>",
+    "sha256_copia_local": "<hex64>",   // RELEÍDO del archivo copiado, no el de origen
+    "sha256_nuevo_esperado": "<hex64>",// el del parche elegido: ya se calcula hoy y se tiraba
+    "version_nueva_esperada": "2.0.55" | null,
+    "sha256_nuevo_real": "<hex64>" | null,  // releído del app.asar REAL tras sustituirlo
+    "creada_at": "<ISO>",
+    "verificada_at": "<ISO>" | null,
+    "motivo_fallo": "<texto corto>" | null
+  }]
+}
+```
+
+Sin rutas absolutas. La copia se localiza por **nombre** dentro de la carpeta de
+recuperación, y se ata por **hash**.
+
+### 4. PREPARADA → VERIFICADA
+
+**La app**, antes de cerrarse (todo esto ya ocurre hoy salvo lo marcado ⟵):
+
+1. genera `operation_id`;
+2. calcula el SHA-256 del parche elegido — **ya se hace hoy**, solo que se tiraba;
+3. copia `app.asar` real → `recovery\app.asar.pred-<operation_id>` ⟵ **nuevo**;
+4. **relee la copia** y calcula su hash ⟵ **nuevo** (releer, no fiarse del origen);
+5. lee la versión de las cabeceras de ambos asar, sin ejecutarlos ⟵ **nuevo**;
+6. escribe la entrada `preparada` de forma **atómica y verificada** ⟵ **nuevo**;
+7. sigue haciendo **también** la copia heredada `app.asar.bak-…` en la carpeta de
+   datos, igual que hoy: es el único camino manual que existe hasta D4;
+8. lanza el ayudante, pasándole el `operation_id` y la ruta del manifiesto.
+
+**El ayudante**, ya con la app cerrada:
+
+9. copia el parche sobre el `app.asar` real (igual que hoy);
+10. **relee el `app.asar` real** y calcula su hash ⟵ **nuevo**;
+11. **relee la copia local** y recalcula su hash ⟵ **nuevo**;
+12. si `hash(real) == sha256_nuevo_esperado` **y**
+    `hash(copia) == sha256_anterior` → escribe `estado: "verificada"`,
+    `sha256_nuevo_real`, `verificada_at`. Si no → `estado: "fallida"` con el
+    motivo. **Nunca deja la entrada a medias.**
+13. solo **después** de una verificación buena, retira la operación anterior y su
+    copia (ver §6). Relanza la app como hoy.
+
+**Atomicidad**: temporal + escritura + `fsync` + `rename` + **relectura**, el
+mismo primitivo que ya usan `escribirAtomico()` (`db.js`) y
+`guardarHistorialUbicacion()` (P22). No se inventa otro.
+
+### 5. Cada fallo parcial, resuelto
+
+| | Situación | Qué queda en disco | Decisión |
+|---|---|---|---|
+| **A** | Copia local hecha, manifiesto **no** escrito | Un `app.asar.pred-…` huérfano | **No auto-restaurar.** Sin entrada no hay candidata. El huérfano se recoge en la siguiente verificación buena, nunca durante un rescate |
+| **B** | Manifiesto `preparada`, parche **nunca aplicado** | Entrada `preparada` + copia | **No auto-restaurar.** `preparada` ≠ predecesora confirmada. Además su `sha256_nuevo_real` es `null`, así que ni siquiera puede cuadrar con el instalado |
+| **C** | Parche aplicado pero **no se pudo verificar** | Entrada `fallida` (o `preparada` si murió antes de escribir) | **Fail-closed.** Recuperación segura: **PS-1025**, la app **cierra**, y el registro anota `operation_id` y el motivo. La copia local **no se borra**: queda para una restauración manual asistida en Fase 2 |
+| **D** | Copia **truncada** | Entrada correcta, archivo corto | El hash recalculado no cuadra → **no candidata** |
+| **E** | Manifiesto **truncado** / JSON roto | No se puede leer | **PS-1026**, fail-closed. Se distingue a propósito de «no hay nada»: no es lo mismo para soporte |
+| **F** | **Dos** operaciones candidatas | Dos entradas | **Nunca «la más reciente».** Fail-closed. *Pero por construcción no debería pasar*: solo puede cuadrar la entrada cuyo `sha256_nuevo_real` sea el del asar instalado, y la retención deja una sola. Si sobreviven dos, es que una limpieza falló: justo cuando fallar cerrado es lo correcto |
+| **G** | Parche nuevo tras otro correcto | Entrada nueva `preparada`, la vieja aún `verificada` | La nueva **sustituye** a la vieja solo **después** de verificarse. **No se borra primero y se crea después** |
+
+Regla auxiliar que evita una ambigüedad tonta: se **descarta** toda entrada con
+`sha256_anterior == sha256_nuevo_real` (reaplicar el mismo parche). Restaurarla
+no cambiaría nada y solo sirve para crear empates.
+
+### 6. Retención local, con ciclo propio
+
+La copia de recuperación **no entra** en «conservar 2 por mtime»: ni está en esa
+carpeta, ni lleva ese prefijo, ni la ve `purgeOldAsarBackups()`.
+
+- Se mantiene **la predecesora VERIFICADA del `app.asar` instalado ahora**.
+- Durante una actualización conviven **dos** como mucho (la vigente y la
+  `preparada`): pico ≈ **58 MB** en `%LOCALAPPDATA%`.
+- Al verificarse la nueva: se retira la anterior — **en ese orden**.
+- Copias sin entrada (huérfanas) se recogen en la siguiente verificación buena.
+- **Nunca se borra nada durante el arranque ni durante un rescate.**
+
+### 7. Contrato de PS-1007 (nuevo)
+
+Entrada: fallo no capturado durante el arranque, con el rescate armado.
+
+1. Lee el `installation-id` (solo lectura). No `valido` → **PS-1025**.
+2. Lee el manifiesto. Ilegible/roto → **PS-1026**.
+3. Filtra: `estado == 'verificada'` · `installation_id` == el local ·
+   `sha256_anterior != sha256_nuevo_real`.
+4. Calcula el SHA-256 del `app.asar` **instalado ahora** y se queda con las
+   entradas cuyo `sha256_nuevo_real` coincida.
+5. **Exactamente una** → sigue. Cero o varias → **PS-1025** (el motivo, al log).
+6. La copia debe **existir** y su hash recalculado coincidir con
+   `sha256_copia_local`. Si no → **PS-1025**.
+7. Solo entonces: guarda el roto como `app.asar.broken-<fecha>` (igual que hoy) y
+   restaura. El aviso **nombra la versión y la fecha** de lo que ha restaurado.
+
+**Coste medido** (hoy, sobre el asar real de 29 325 777 B): **93 ms** por
+SHA-256 completo en Node. El rescate hace dos → ~0,2 s. Leer solo la cabecera
+para la versión: **0 ms**. No es un problema.
+
+**Se elimina del camino automático** «buscar cualquier `app.asar.bak-*` y tomar
+el primero». `findLatestAsarBackupForRecovery()` y
+`resolveDataDirForStartupRecovery()` **no se borran**: se **degradan a
+informativas** —anotan en el registro si existen copias heredadas, para
+soporte— y dejan de decidir nada. Así las garantías que **P9** mide sobre
+`resolveDataDirForStartupRecovery()` siguen siendo medibles y no se rompe su
+batería.
+
+**Una decisión que dejo abierta a propósito.** El punto 4 ata la entrada al asar
+instalado. Si el `app.asar` se corrompe **físicamente**, su hash no cuadrará con
+nada y el rescate se negará — justo cuando más falta hace. Dos opciones:
+
+- **(a) Estricta** *(la que recomiendo por defecto, y la que dice tu contrato)*:
+  si el hash no cuadra, fail-closed siempre.
+- **(b) Estricta + ofrecimiento**: si el asar instalado **no se puede leer**
+  (ENOENT/EIO/truncado — no «lee bien pero no cuadra»), se **ofrece** la
+  restauración con **confirmación explícita**, nombrando versión y fecha. Nunca
+  automática. «Lee bien pero no cuadra» significa que otro proceso cambió la
+  instalación: ahí la entrada está caduca y se rechaza sin matices.
+
+No la resuelvo yo: cambia el contrato que has fijado.
+
+### 8. El período sin copia verificable
+
+Tras Fase 1, y **hasta** que una actualización cree copia local + manifiesto +
+relación anterior→nueva + hashes:
+
+- la restauración automática está **DESACTIVADA**;
+- las copias actuales (v2.0.53, v2.0.54, v0.1.28 y las compartidas) **no se
+  tocan, no se borran y no se mueven**, conservan su valor histórico/manual, y
+  **nunca** son candidatas automáticas. Su limpieza es de P10/C1/Drive;
+- **no se inventa procedencia histórica**;
+- el aviso **no recomienda el `.bat` actual** —P18 ya demostró que tampoco tiene
+  procedencia—: dice que no hay copia automática verificable, que la app se
+  cierra, y remite a **reinstalación/parche soportado**. El registro sí anota que
+  existen copias heredadas, para soporte. *No se cambia una recuperación
+  automática insegura por otra acción insegura.*
+
+Este período **vuelve** cada vez que el instalador NSIS actualice la
+instalación: la entrada anterior deja de cuadrar y el rescate vuelve a estar
+apagado hasta el siguiente parche verificado. Es correcto, y es otra razón para
+que D4 lo mire.
+
+### 9. Qué toca Fase 1
+
+**Productivo: `main.js` y nada más.**
+
+| Bloque | Qué |
+|---|---|
+| Rescate temprano (≈ líneas 88–231) | Lector autocontenido del `installation-id`; lector del manifiesto; nueva selección con procedencia; PS-1007 reescrito; PS-1025/PS-1026 |
+| `ERROR_CODES` | **PS-1025** (no hay predecesora verificable) y **PS-1026** (manifiesto ilegible). El último dado de alta hoy es PS-1024 |
+| «Aplicar parche» (≈ 9186–9330) | `operation_id`, copia local, relectura y hashes, versiones de cabecera, entrada `preparada`. Se conserva la copia heredada |
+| `asarPatchHelperSource()` (≈ 8362–8469) | Releer el asar real y la copia, verificar, cerrar la entrada, retirar la anterior |
+| Manifiesto | Lectura/escritura atómica y verificada, con el patrón que ya existe |
+
+**No se toca:** `db.js` (el `installation-id` se lee, no se crea),
+`Restaurar-backup.bat`, el instalador, los preloads, `security.js`, P10,
+`purgeOldAsarBackups()` ni la retención heredada.
+
+### 10. Lo que queda necesariamente para D4
+
+1. **`Restaurar-backup.bat`**: que lea el mismo manifiesto, verifique hashes
+   (`certutil -hashfile … SHA256` basta en Windows) y **no elija por
+   fecha/nombre**. Vive en `extraResources` → **no se puede entregar por
+   parche**. Hasta entonces **no cuenta como mecanismo verificado**.
+2. **Opcional, no necesario para Fase 1**: que el instalador NSIS registre su
+   propia operación cuando **actualiza** una instalación existente (ahí sí hay
+   una relación anterior→nueva real), para que el rescate siga vivo tras una
+   actualización por instalador.
+3. **No** hace falta entrada inicial en una instalación limpia (§0).
+
+### 11. Pruebas exigidas (cuando se implemente)
+
+`p18/` pasa a **EXIGENTE** con los catorce casos del encargo:
+
+| # | Qué exige |
+|---|---|
+| P18-1 | Copia local + manifiesto correcto → **candidata válida** |
+| P18-2 | Copia en la carpeta **compartida**, aunque su versión sea la correcta → **no** candidata |
+| P18-3 | Copia con **otro `installation_id`** → **no** candidata |
+| P18-4 | `sha256_anterior` incorrecto → **no** candidata |
+| P18-5 | `sha256_nuevo_real` que no coincide con el instalado → **no** candidata |
+| P18-6 | `preparada` sin confirmar → **no** auto-restauración |
+| P18-7 | `verificada` → **sí** candidata |
+| P18-8 | Dos candidatas → **fail-closed**, y no gana la más reciente |
+| P18-9 | Copia truncada → **fail-closed** |
+| P18-10 | Manifiesto truncado → **fail-closed** (PS-1026, distinguible) |
+| P18-11 | Sin manifiesto → **no** se usan los `.bak` históricos |
+| P18-12 | **Drive ausente** → la predecesora local **sigue disponible** |
+| P18-13 | P10 con la v0.1.28 → **nunca** candidata automática |
+| P18-14 | Compartida con una copia **más nueva** → **nunca** candidata automática |
+
+Más: que el aviso **no** nombre el `.bat`; que nada se escriba durante un rescate
+fallido; que las copias heredadas queden **intactas** (hash idéntico); que la
+ruta del lector del `installation-id` sea **la misma** que la de `db.js`; y
+**reversiones** separadas —volver a elegir por nombre · aceptar `preparada` ·
+saltarse la identidad · saltarse el hash— cada una tumbando solo lo suyo.
+Electron real con `.asar` sintéticos, nunca con la instalación de verdad.
 
 ## B1 — CERRADO (15 sept 2026): el listado deja de repetirse, de escribir y de callarse
 
