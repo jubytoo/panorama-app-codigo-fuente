@@ -46,7 +46,7 @@ verificadas como reales.
 | F1 | **CERRADO** *(16 sept 2026)* | **Interpretación de datos como HTML — corregida por contexto.** Ningún dato importado/persistido puede ya convertirse en markup, atributo, cierre de `<script>`, handler inline, selector roto ni URL activa. Batería **139 OK/0** (exigente), Electron real **47 OK/0** (4 arranques), **6 reversiones** por familias (**19 OK/0**). Cinco archivos tocados. Ver §F1. *(Diagnóstico previo, conservado abajo.)* |
 | F2 | **CERRADO** *(17 sept 2026)* | **CSP efectiva en las 10 ventanas**, por cabecera desde `main.js`, con cuatro perfiles mínimos; sin `unsafe-eval`; red, frames, objects, formularios y `<base>` cortados; lanzador y splash sin `unsafe-inline` en scripts; Worker de pdf.js arrancado por `blob:`. Dos archivos: `main.js` y la plantilla de Preparación. Ver §F2/F3 |
 | F3 | **CERRADO** *(17 sept 2026)* | Política única de apertura y navegación en las 10 ventanas. Ver §F2/F3 |
-| P18 | **FASE 1 CERRADA** *(18 sept 2026)* · **FASE 2 ABIERTA / D4** · **INTEGRIDAD** | **El rescate automático solo restaura una copia con procedencia demostrada.** Copia **local** (`%LOCALAPPDATA%\panorama-app-recovery\app.asar.pred-<op>`) + registro local (`asar-procedencia.json`) + `operation_id` + `installation_id` de A3.3 + PREPARADA→VERIFICADA con hashes antes/después. Las `app.asar.bak-*` heredadas **no son candidatas nunca**. Si el asar instalado no coincide o no se lee: solo con **confirmación explícita** (Cerrar por defecto, Esc/X = Cerrar). Sin copia verificable: se informa y se cierra, **sin recomendar el `.bat`**. **Límite:** la Fase 1 vive en `main.js`, dentro del asar; con el asar truncado, sin cabecera, sin `main.js` o inexistente **no se ejecuta ni una línea de Panorama** — eso es la **Fase 2 / D4** (rescate externo, `.bat`, instalador). Solo `main.js`. `p18/` **@@P18NODE@@**, reversiones **@@P18REV@@**. Ver §P18 — Fase 1 implementada |
+| P18 | **FASE 1 CERRADA** *(18 sept 2026, tras la regresión completa)* · **FASE 2 ABIERTA / D4** · **P18 COMPLETO NO CERRADO** · **INTEGRIDAD** | **Cierre de la Fase 1, contra `main.js` = `486B803F…`:** Node **3707 OK / 0** (27 baterías; 3750 con `comun/`); **11** comprobadores de reversiones en verde (P18 A–K **45/0**); barrido Electron oficial completo, **22 arneses** con sus cifras históricas; custodia intacta; `SHA256SUMS.txt` verificado. Ver §P18 — Cierre de la Fase 1. *(Historia: el 18 sept se había declarado «CERRADA» con la evidencia sin rellenar y un falso verde; ver abajo.)* **Diseño de la Fase 1: el rescate automático solo restaura una copia con procedencia demostrada.** Copia **local** (`%LOCALAPPDATA%\panorama-app-recovery\app.asar.pred-<op>`) + registro local (`asar-procedencia.json`) + `operation_id` + `installation_id` de A3.3 + PREPARADA→VERIFICADA con hashes antes/después. Las `app.asar.bak-*` heredadas **no son candidatas nunca**. Si el asar instalado no coincide o no se lee: solo con **confirmación explícita** (Cerrar por defecto, Esc/X = Cerrar). Sin copia verificable: se informa y se cierra, **sin recomendar el `.bat`**. **Límite:** la Fase 1 vive en `main.js`, dentro del asar; con el asar truncado, sin cabecera, sin `main.js` o inexistente **no se ejecuta ni una línea de Panorama** — eso es la **Fase 2 / D4** (rescate externo, `.bat`, instalador). Solo `main.js`. **Por qué no se cerró antes:** el 102/0 de `p18/` del 18 sept fue un **falso verde** (dos `function sha256DeArchivo` de módulo; V8 ligaba la del rekey, así que en el módulo real el rescate nunca restauraba y «Aplicar parche» lanzaba siempre). Corregido y protegido con P18-S1/S2 y la reversión J. Además, «Aplicar parche» ya no crea ni purga copias heredadas en un intento que falla antes de lanzar el ayudante (orden C, reversión K), y se recuperó la cobertura de P9-14 y de P22-Z2. **Queda para la Fase 2 / D4:** rescate externo cuando Electron no puede cargar el asar, `.bat`, packaging con procedencia equivalente, y la purga heredada solo tras VERIFICADA (hoy, si el ayudante ya lanzado no aplica el parche, la purga ya ocurrió: comportamiento previo a P18). Ver §P18 — Fase 1 implementada |
 | P18 *(diagnóstico)* | — | **P18 agrupa dos riesgos con la misma raíz: el rescate PS-1007 y la procedencia de las copias, y `Restaurar-backup.bat`.** Nada demuestra de dónde sale una copia de `app.asar`, así que los dos caminos eligen **por fecha de nombre**. Medido: el `patch-log.txt` de la carpeta compartida registra **106 parches de SEIS instalaciones distintas** — una copia ajena ya puede estar ahí. Con Drive sin montar o sin `location.json`, restauraría la **v0.1.28** sobre la 2.0.55. Una copia **truncada** se elegiría y se copiaría encima sin mirarla. Diseño propuesto: manifiesto de procedencia **local** + fail-closed. **No implementado.** Ver §P18 — diagnóstico |
 | P18 *(hallazgo original)* | — | **`Restaurar-backup.bat` puede elegir la carpeta por defecto** con ciertos formatos de `location.json` (JSON en una sola línea, UTF-16) y restaurar desde ahí una copia de `app.asar` de otra época. Ver §P18–P21 |
 | P19 | **PENDIENTE — verificar antes de release** (D4 / packaging) | **El instalador podría escribir `location.json` en ANSI** (razonado, no medido). Con P9 ya **no** cambia de BD en silencio: PS-1020, falla cerrado. Ver §P18–P21 |
@@ -65,7 +65,9 @@ batería de pruebas.
 | # | Estado | Qué |
 |---|---|---|
 | ARN-1 | **PENDIENTE — antes del E2E / release final** *(registrado al cerrar P9, 17 sept 2026)* | **`nucleo-a33/test-nucleo.js` no es determinista: da 394 o 395 aserciones.** La rama «LOCAL, peor caso» (líneas ~561–590) solo se recorre si `fs.utimesSync` devuelve el `mtimeMs` **exactamente** igual (`===`). En NTFS unas veces ocurre y otras no. Si ocurre, se anotan **dos** OK (el atajo no lo detecta + la fila externa se pierde, límite conocido); si no, **uno** (el stat lo detecta). Medido el 17 sept: **7 × 394 y 1 × 395** en 8 tiradas. **No invalida la regresión:** la rama está identificada y las dos variantes pasan. Hay que hacerla determinista (p. ej. forzar o separar el peor caso) antes del E2E o del release final. **No se arregla ahora** |
-| ARN-2 | **OBSERVACIÓN NO RESUELTA** *(registrada al cerrar F2)* | La captura `6-directorio-ficha.png` de `f1/electron-f1-limpio.ps1` sale de 0 bytes. Ver §F2/F3 |
+| ARN-2 | **OBSERVACIÓN NO RESUELTA** *(registrada al cerrar F2)* | La captura `6-directorio-ficha.png` de `f1/electron-f1-limpio.ps1` sale de 0 bytes. Ver §F2/F3. *(Ojo: §P22 usó también «ARN-2» para otro pendiente: `bloque1\arranque-real.ps1` y `bloque1\arranque-con-bd.ps1` llevan a fuego la ruta de un scratchpad borrado y hoy no se pueden ejecutar. Son dos pendientes distintos con el mismo número; siguen abiertos los dos y ninguno invalida los arneses oficiales.)* |
+| ARN-4 | **PENDIENTE DE ARNÉS** *(registrado al cerrar P18 Fase 1, 18 sept 2026)* | **`a2/electron-real.ps1` · `RA-1 «el LevelDB CRECE al llamar al flush»` depende de la temporización.** Si Chromium ya volcó el dato por su cuenta antes del `flushStorageData()` explícito (~103 ms medidos en A2), no hay crecimiento aunque la barrera funcione. Medido: 1 fallo en 7 tiradas de `ra1` el 18 sept; la propiedad de fondo («la marca está en disco al confirmar») pasó en todas. Hacerla determinista antes del E2E/release, como ARN-1 |
+| ARN-5 | **EFECTO DE ARNÉS REGISTRADO** *(18 sept 2026)* | **La batería Node de P9, bajo su reversión C (sin validar ruta absoluta), crea `datos\relativa` vacía en el directorio de trabajo del proceso** (la raíz del proyecto si se lanza desde ahí). Existe desde el 17 sept; está fuera de `build.files` (lista blanca) y git no la registra. No se ha borrado. Conviene fijar el `cwd` de esa reversión dentro del sandbox |
 
 ## Aplazadas explícitamente por el usuario
 
@@ -2200,11 +2202,20 @@ ni movido ningún `app.asar`, no se ha tocado la instalación real ni la carpeta
 datos real, no se ha entrado en P19, ni en la limpieza de P10, ni en
 Drive/multi-PC.
 
-## P18 — FASE 1 IMPLEMENTADA (18 sept 2026) · **FASE 1 CERRADA**, **FASE 2 ABIERTA / D4**
+## P18 — FASE 1 IMPLEMENTADA (18 sept 2026) · **FASE 1 CERRADA** tras la regresión completa · **FASE 2 ABIERTA / D4** · P18 completo NO cerrado
 
-**El rescate automático de `app.asar` solo restaura una copia cuya procedencia
-se demuestra en el momento.** Único archivo productivo tocado: **`main.js`**
-(`C4C00809…` → **`@@HASH18@@`**). Instantánea previa:
+> **Historia del estado, sin maquillar.** Esta sección se escribió primero como
+> «FASE 1 CERRADA» con la evidencia sin rellenar (commit `9ada9a9`). Durante la
+> reconstrucción se demostró que **no lo estaba**: el 102/0 de la batería era un
+> falso verde (ver «Corrección de la colisión SHA»). Pasó a EN CURSO, se corrigió
+> la colisión y el orden de «Aplicar parche», y **solo se cierra ahora, con la
+> regresión completa ejecutada**: ver «Cierre de la Fase 1», al final de esta
+> sección.
+
+**Diseño: el rescate automático de `app.asar` solo restaura una copia cuya
+procedencia se demuestra en el momento.** Único archivo productivo tocado: **`main.js`**
+(`C4C00809…` → `3A0D7217…` en el commit `9ada9a9`, **con la colisión SHA**
+→ `19AAEB1F…` tras corregirla; **ninguno de los dos es un hash de cierre**). Instantánea previa:
 `claude/main.js.ANTES-P18-2026-09-18`. `db.js`, `security.js`, los preloads,
 el instalador y `Restaurar-backup.bat` siguen idénticos.
 
@@ -2265,19 +2276,344 @@ verificado, ayudante/lanzador externo o instalador).
 
 ### Evidencia
 
-- `p18/test-p18-procedencia.js` — **@@P18NODE@@**, EXIGENTE (nació descriptiva
-  con 63). Funciones REALES extraídas, sandbox **explícito** y asar sintéticos;
+- `p18/test-p18-procedencia.js` — EXIGENTE (nació descriptiva con 63). **Su
+  102/0 del 18 sept fue un FALSO VERDE**: probaba la primera `sha256DeArchivo`,
+  extraída por firma, mientras el módulo real ligaba la segunda. Funciones REALES extraídas, sandbox **explícito** y asar sintéticos;
   el **ayudante real** (generado con la plantilla de `main.js`) se ejecuta con el
   node del sistema: solo usa las rutas que recibe, así que su aislamiento es
   **por construcción**, no por variables (ARN-3). Cualquier escritura fuera del
   sandbox **lanza**.
-- `p18/comprobar-reversiones-p18.js` — **@@P18REV@@**: nueve familias, cada una
-  tumba exactamente lo que anuncia.
+- `p18/comprobar-reversiones-p18.js` — nueve familias (A–I) en `9ada9a9`; su
+  37/0 tampoco detectaba la colisión. Cifras vigentes, con J: ver «Corrección de
+  la colisión SHA».
 - **No se arrancó ningún `app.asar` empaquetado** en esta ronda (ARN-3).
+- **Regresión completa y barrido Electron: NO ejecutados.**
 
-### Arneses ajustados en la ronda
+### Arneses ajustados en la ronda (commit `9ada9a9`), pendientes de revisión
 
-@@ARNESES18@@
+- `p9/test-p9-location.js`: `env` del `process` doble redirigido al sandbox
+  (ARN-3: heredaba el `%LOCALAPPDATA%` real, que P18 lee); lista de extracción
+  ampliada con las funciones de P18; cuatro aserciones de P9-14 reescritas al
+  contrato de P18 (mismo número). **Revisión pendiente:** el aviso ya no dice
+  «la configuración no se puede leer»; decidir si ese matiz sigue siendo contrato.
+- `p22/test-p22-reserva.js` (`P22-Z2`): reescrita al contrato de P18. **Revisión
+  pendiente:** se retiró la comprobación negativa sobre la función heredada;
+  preferencia del usuario: conservar la nueva cobertura **y** la negativa.
+- `e1/test-inventario-e1.js` (`E1-M4`): hash anclado de `main.js`.
+
+### Corrección de la colisión SHA (18 sept 2026) — P18 sigue **EN CURSO**
+
+**Defecto, demostrado durante la reconstrucción.** `main.js` declaraba dos veces
+`function sha256DeArchivo` a nivel de módulo: la de P18 (hex, con `originalFs`)
+y la del rekey (objeto `{existe, sha, …}`, anterior a P18). V8 liga la
+**última**. En el módulo real el rescate no encontraba nunca candidata (`auto` y
+`confirmar` pasaban a `no`), `restaurarPredecesoraVerificada` habría lanzado
+tras copiar y `prepararOperacionAsar` lanzaba **siempre**: «Aplicar parche»
+habría rechazado cualquier parche con PS-1003. Fallaba hacia el lado seguro,
+pero la Fase 1 quedaba muerta y el canal de parches roto. **No llegó a
+instalarse** (la instalada sigue siendo `D35A19A1…`, v2.0.55).
+
+**Corrección (solo `main.js`, `3A0D7217…` → `19AAEB1F…`, +9 / −7).** La función
+de P18 pasa a llamarse `sha256HexArchivoP18` y se cambian sus **6** llamadas,
+todas en funciones nuevas de P18. La del rekey y sus **17** llamadas no se tocan.
+La clasificación se hizo por función contenedora y por contrato de uso, con el
+detector validado contra V8.
+
+**Protección nueva en `p18/`.**
+
+- `nombres-modulo.js`: detector léxico de declaraciones de **módulo**; distingue
+  las anidadas y el texto de plantillas, como el del ayudante.
+- `P18-S1a..e`: ningún nombre duplicado a nivel de módulo; una declaración de
+  cada hash; controles del propio detector (ve una `sha256DeArchivo` añadida; no
+  confunde anidadas ni plantillas) y coincidencia con lo que liga V8.
+- `P18-S2a..b5`: sonda de vínculos (V8 compila `main.js` en un contexto vacío con
+  `return` como primera sentencia, así que no se ejecuta ni una línea del
+  módulo) y el contrato central ejecutado con los cuerpos **efectivos**: hash en
+  hex, `auto`, `confirmar`, preparar la operación y rescate sin PS-1008.
+- `P18-O2` ya **no** exige «FASE 1 CERRADA»: solo que ningún documento de estado
+  lleve marcadores `@@…@@`. La sección O se cuenta **aparte** (documental, no
+  técnica).
+- Reversión **J — sombra de hash**: otra declaración de módulo posterior con el
+  nombre del hash de P18 y el contrato del rekey.
+
+**Evidencia focal (18 sept 2026, contra `19AAEB1F…`). No es regresión.**
+
+- `node --check main.js`: correcto.
+- `p18/test-p18-procedencia.js`: **113 OK / 0** (109 técnicas + 4 documentales).
+- `p18/comprobar-reversiones-p18.js`: **41 OK / 0**, diez familias (A–J).
+  - **J** tumba exactamente `S1a`, `S1b`, `S2a` y `S2b1..b5`, y deja en verde las
+    otras **101** técnicas: es el punto ciego que cubren S1 y S2.
+  - **E** arrastra además `P18-S2b3`, que es la misma propiedad en el contexto
+    real (medido y añadido a su lista).
+- Sonda del contexto real, fuera de la batería: el corregido da **6 / 0**; los
+  controles dan `9ada9a9` **0 / 6** y J **0 / 7**.
+- Solo lectura, sin cambios: BD viva `C26323D1…`; P10 con 634 archivos, 222
+  carpetas y 207 286 828 B, BD `F71F4140…`; `Run`, tarea y guardián en la
+  instalación real.
+- `comun/verificar-copia.js`: las mismas 5 diferencias que había antes de esta
+  corrección. `SHA256SUMS.txt` **no** se ha regenerado: eso va con el cierre.
+
+**Pendiente antes de poder cerrar** (en este orden, cada paso con autorización):
+
+1. **Revisiones de P9 y P22.** En P9, el matiz del aviso («la configuración no se
+   puede leer»). En `P22-Z2`, la comprobación negativa que se retiró.
+2. **Arneses que dependen del nombre o del hash de `main.js`.** Se actualizan en
+   su revisión, no aquí:
+   - `p9/test-p9-location.js` extrae `function sha256DeArchivo(ruta)`, que ya no
+     existe. **Hasta actualizar su lista no arrancará** (`NO SE ENCONTRO`). Es el
+     aviso previsto de la extracción por firma: razonado por lectura, no
+     ejecutado.
+   - `e1` (`E1-M4`) ancla `3A0D7217…`.
+3. **Regresión.** Node completa, reversiones de todas las rondas, barrido
+   Electron y `SHA256SUMS.txt`.
+4. **Subpunto de P18, registrado y SIN cambiar.** «Aplicar parche» hace la copia
+   heredada `app.asar.bak-*` **y su purga** (2 por mtime, en la carpeta de datos
+   compartida) **antes** de preparar la operación P18. Si la preparación falla no
+   se aplica nada, pero la rotación de copias heredadas ya ha ocurrido (razonado,
+   no medido). Cambiar el orden es un segundo cambio de comportamiento. Se
+   revisará aparte con el contrato de la creación heredada, la purga, el fallo de
+   esa copia y el fallo de la PREPARADA.
+5. **Nota para la línea base de la BD viva.** Su `LastWriteTime` era entonces
+   18/09 02:02:01, con el hash de entonces (`C26323D1…`) sin cambios. *(Más
+   tarde, sesiones reales del usuario cambiaron el contenido a `C7F6FC2F…`: ver
+   «Cierre de la Fase 1».)* Según `app.log`, arrancaron una v2.0.54 a las
+   01:54 (el experimento ARN-3) y la v2.0.55 real a las 02:01:57. Falta
+   registrarlo en `comun/baseline-bd-viva.json`.
+
+> *Actualización del mismo día:* los puntos 1, 2 (la parte de P9) y 4 quedan
+> resueltos en la sección siguiente. El 3 y el 5 siguen pendientes, igual que
+> `e1` (`E1-M4`).
+
+### Orden de «Aplicar parche» y contratos P9 / P22 (18 sept 2026) — P18 sigue **EN CURSO**
+
+**Qué pasaba (demostrado en sandbox con el `applyAsarPatch` real).** La copia
+heredada `app.asar.bak-*` y su purga (2 por mtime, en la carpeta de datos
+compartida) iban **antes** de preparar la operación P18. Un intento que fallaba
+en P18 (sin `installation-id`, copia local, hash, registro) no aplicaba nada,
+pero creaba un `.bak` y retiraba el más antiguo. **Dos intentos seguidos**
+dejaban `[v2.0.55, v2.0.55]`: se perdía la predecesora manual (v2.0.54).
+
+**Corrección (orden C, solo `main.js`, `19AAEB1F…` → `486B803F…`).**
+
+1. se copia el `patch-pending` (si falla, se retira aunque haya quedado a medias);
+2. `prepararOperacionAsar`;
+3. copia heredada y escritura del ayudante (si fallan, se retira **lo que creó
+   este intento**: su `patch-pending` y su `.bak`, también si quedó a medias);
+4. se lanza el ayudante (si falla, lo mismo);
+5. **solo entonces** la purga heredada, con la misma política de 2 copias.
+
+No se tocan el ayudante, el `.bat`, el instalador ni la política de retención.
+
+**Por qué retirar el `.bak` de un intento fallido.** Medido (`P18-PI2`): si se
+queda, la siguiente purga correcta lo cuenta como una de las 2 y vuelve a
+perderse la v2.0.54.
+
+**Límite que sigue abierto (decisión posterior, NO implementada).** Si el
+ayudante no llega a aplicar el parche (supera los 2 minutos, muere o falla al
+copiar), la purga ya se ha hecho: ocurría igual antes de P18. Cerrarlo exige
+purgar **dentro del ayudante tras VERIFICADA**, lo que cambia el ayudante, el
+ciclo de retención, el comportamiento ante un corte o un tiempo agotado y el
+contrato manual heredado.
+
+**Cobertura nueva en P18:** `P18-P0..PZ` (27 aserciones) ejecutan el
+`applyAsarPatch` real con fallos inyectados. El caso P0 comprueba que la
+función probada es la que liga V8; el resto:
+
+| Caso | Fallo | Resultado |
+|---|---|---|
+| PA, PB, PC1, PC2, PD1–PD3 | copia local, hash, registro, relectura, identidad | ni `.bak` ni purga; `patch-pending` retirado; nada candidato; PS-1003 |
+| PE | copia heredada **a medias** | no queda ningún `.bak` de este intento; lo PREPARADO no es candidato |
+| PF | ayudante | no hay purga |
+| PG | `spawn` (PS-1004) | no hay purga |
+| PH | ninguno (caso correcto) | `.bak` = instalado, ayudante lanzado una vez, purga normal |
+| PI | dos fallos seguidos | la retención no cambia |
+| PI2 | un fallo y después un éxito | la retención no cambia |
+| PZ | `patch-pending` a medias | se retira |
+
+La reversión **K** vuelve al orden antiguo y tumba **16** aserciones **por
+conducta**: con un fallo, 1 de las 2 históricas; con dos, **las dos** (`quedan:0`);
+restos de `patch-pending` y `.bak` a medias. El caso correcto (PH) no cae. A y B
+arrastran además, medido, las aserciones «nada candidato» de P18-P.
+
+**P9 — contrato recuperado (arnés; producto sin tocar).** Desde P18 el aviso del
+rescate es el mismo con configuración rota, válida o ausente, así que las
+aserciones antiguas de P9-14 ya no discriminaban: la reversión **P9-F** pasaba
+**sin ser detectada**. Ahora P9-14 exige, con las funciones reales:
+
+- con configuración inutilizable, `resolveDataDirForStartupRecovery()` = `null`,
+  la línea de soporte dice «carpeta de datos no resuelta» y el aviso no enseña
+  rutas ni nombres de copias;
+- con configuración válida, la carpeta se resuelve;
+- **configuración rota + operación P18 VERIFICADA local → se restaura desde la
+  copia local** (contrato confirmado por el usuario), sin tocar heredadas y sin
+  resolver la carpeta.
+
+El literal antiguo de PS-1007 **no** se recupera. `P9-S6` sigue exigiendo el de
+PS-1020. Además se corrige la lista de extracción (`sha256HexArchivoP18`).
+
+- `p9/` pasa de 282 a **298 OK / 0**; P9-F tumba **12**, todas nuevas.
+- **Discrepancia previa, corregida:** la reversión G de P9 no se generaba desde
+  el commit de P22 (`2952711`), porque su ancla dejó de existir, y el
+  comprobador de P9 **reventaba desde entonces**. Se actualizó el ancla con la
+  misma intención. Resultado: `comprobar-reversiones-p9` **29 OK / 0**.
+
+**P22-Z2 combinada.** `Z2a` exige que la función heredada siga siendo solo «por
+nombre», sin procedencia, registro ni promoción; `Z2b`, que el rescate no decida
+con ella. Las dos se comprueban por texto y **por conducta**, con las funciones
+reales en un sandbox con identidad y registro presentes. Reversiones nuevas:
+
+- **M1** (la heredada lee el registro): cae **solo Z2a**;
+- **M2** (el rescate restaura la heredada): cae **solo Z2b**.
+
+`p22/` pasa a **75 OK / 0**; `comprobar-reversiones-p22` da **37 OK / 0**.
+
+**Evidencia focal (18 sept 2026, contra `486B803F…`). No es regresión.**
+
+- P18: **140 OK / 0**; reversiones A–K: **45 OK / 0**.
+- P9: **298 OK / 0**; reversiones: **29 OK / 0**.
+- P22: **75 OK / 0**; reversiones: **37 OK / 0**.
+- `node --check main.js`: correcto.
+
+**Sigue pendiente:** `e1` (`E1-M4`), la regresión Node completa, el barrido
+Electron, `SHA256SUMS.txt` y la nota de la línea base de la BD viva. *(Todo
+resuelto en el apartado siguiente.)*
+
+### Cierre de la Fase 1 (18 sept 2026) — regresión completa, contra `main.js` = `486B803F…`
+
+**Producto.** Solo `main.js`, `3A0D7217…` (commit `9ada9a9`) → **`486B803FDEF772BECC542125B42675FC270137827F6CDDFFCFEC3A8C7F784491`**
+(668 791 B; +52 / −10 frente a `9ada9a9`). Cambian dos cosas:
+
+- el hash de P18 pasa a ser `sha256HexArchivoP18` (la colisión);
+- el orden C en `applyAsarPatch`.
+
+`db.js`, `security.js`, los preloads, el `.bat`, el instalador y `package.json`
+siguen idénticos.
+
+**Arneses ajustados en el cierre, cada uno con su clase y su nota en el propio archivo.**
+
+| Arnés | Clase | Qué | Cobertura |
+|---|---|---|---|
+| `e1/test-inventario-e1.js` (`E1-M4`) | C, ancla de hash | el hash de `main.js` pasa a `486B803F…`, con su historia | la misma: las otras 7 anclas (lanzador, preloads, `db.js`, `security.js`) no se mueven; 47/0 |
+| `c1/test-c1-residuos.js` (`C1-S17`) | B, contrato cambiado | era descriptiva: «el `patch-pending` NO se retira si falla la preparación o el `spawn`». **Invertida:** ahora exige la retirada en las cuatro ramas anteriores al ayudante | sube: contra el `main.js` de `9ada9a9` cae (control); la conducta la exige P18-P |
+| `p9/electron-p9-revertido.ps1` (EREV C) | B, contrato cambiado | con la reversión C, el aviso del rescate sin copia verificable es **PS-1025** (P18), no PS-1007; se sigue exigiendo el `mkdir` relativo | la misma: 14/0 |
+| `comun/baseline-bd-viva.json` | D, ambiental | reanclada a `C7F6FC2F…` por **sesiones reales del usuario** con la v2.0.55 instalada (18/09, 10:41–10:45 y 12:22–12:24 hora local, backups «manual-button»; ninguna batería en marcha); cadena histórica conservada | no aplica |
+
+**Nota sobre la BD viva: dos hechos distintos, que no deben mezclarse.**
+
+1. **Primero cambió solo el `mtime`, con el hash `C26323D1…` intacto.** Su
+   `LastWriteTime` pasó del 17/09 13:04:57 al 18/09 02:02:01 por los arranques
+   reales ligados al incidente ARN-3: una v2.0.54 a las 01:54 y la v2.0.55 real
+   a las 02:01:57. En ese episodio el contenido no cambió.
+2. **Después cambió el contenido.** Sesiones reales del usuario, fuera de las
+   pruebas (18/09, 10:41–10:45 y 12:22–12:24, con la v2.0.55 instalada),
+   modificaron legítimamente la BD y produjeron `C7F6FC2F…`. **`C26323D1…` y
+   `C7F6FC2F…` NO tienen el mismo contenido.** `C26323D1…` fue la línea base
+   anterior. Antes de iniciar la regresión final se reancló la nueva,
+   `C7F6FC2F…`, con su evidencia (`comun/baseline-bd-viva.json`).
+
+**Propiedad demostrada:** desde la línea base reanclada `C7F6FC2F…`, ninguna
+prueba (P18, Node, reversiones ni Electron) modificó la BD viva. **No** se
+afirma que el contenido siga siendo el de `C26323D1…`.
+
+**Node, 27 baterías del criterio + `comun/`: 3707 OK / 0 (3750 con `comun/`).**
+Cuadra exacto con la última cifra histórica, 3613 (diagnóstico de P18):
+
+| Batería | Antes | Ahora | Diferencia |
+|---|---|---|---|
+| `p18` | 63 | 140 | +77 |
+| `p9` | 282 | 298 | +16 |
+| `p22` | 74 | 75 | +1 |
+
+3613 + 94 = **3707**. `nucleo-a33` dio 394 (ARN-1). Los 6 sueltos de la raíz
+siguen fuera del criterio (ver MANIFIESTO §4).
+
+**Reversiones, 11 comprobadores; cada familia cae por lo que anuncia.**
+
+| Comprobador | Resultado |
+|---|---|
+| B3 | 7/7 |
+| B4 | 2/2 (reproduce `[null,null,null,null,0]`) |
+| B5 | 1/1 (reproduce 2/5/2) |
+| C1 | 7/7 (regeneradas antes) |
+| F1 | 19/0 |
+| F2 | 31/0 |
+| F3 | 5/0 |
+| P17 | 6/0 |
+| P9 | 29/0 |
+| P22 (con M1/M2) | 37/0 |
+| P18 A–K | 45/0 |
+
+**Electron, barrido oficial completo: 22 arneses, todos con su cifra histórica.**
+
+| Arnés | Resultado |
+|---|---|
+| A2 | 66 |
+| Bloque 5 | 71 |
+| CV | 12 |
+| E1 | 21 |
+| P12 | 32 |
+| E2 | 42 |
+| B1 | 24 |
+| B3 | 36 |
+| B4 | 17 |
+| B5 | 24 |
+| C1 | 31 |
+| F1 | 47 |
+| F1 limpio | 52 |
+| P17 | 16 |
+| F2/F3 | 36 |
+| F3 revertido | 4 |
+| F2 laboratorio | 41 |
+| F2 | 212 |
+| F2 revertido | 7 |
+| P9 | 111 |
+| P9 revertido | 14 |
+| P22 | 39 |
+
+Todo a 0 fallos, con la BD viva idéntica antes y después de cada arnés. Dos
+incidencias en la primera pasada, las dos resueltas sin tocar producto:
+
+- **A2 dio 65/1 una vez.** Falló `RA-1 «el LevelDB CRECE al llamar al flush»`:
+  Chromium ya había volcado el dato antes del flush explícito. La propiedad de
+  fondo, que el dato está en disco al confirmar, **pasó** en esa misma tirada.
+  `ra1` repetido **5/5 en verde** y A2 completo **66/0**. Es de temporización:
+  **ARN-4**.
+- **P9 revertido dio 13/1** hasta ajustar EREV C a PS-1025.
+
+**Aislamiento (ARN-3).** Ningún arnés arranca el asar empaquetado. Todos los
+envoltorios `real-run/` hacen `app.setPath('appData')` y `app.setPath('userData')`
+al sandbox antes de cargar el `main.js` del proyecto.
+
+**Custodia, antes y después de cada bloque, idéntica en todas las mediciones:**
+
+- BD viva: `C7F6FC2F…`, 77 824 B. Es la línea base **reanclada antes de la
+  regresión final**, distinta de `C26323D1…` por las sesiones reales del
+  usuario. Ninguna prueba la alteró a partir de ahí;
+- P10: 634 archivos, 222 carpetas, 207 286 828 B, BD `F71F4140…`;
+- asar instalado: `D35A19A1…`;
+- `location.json`: `72140A16…`;
+- `Run`, tarea y guardián: en la instalación real;
+- ningún artefacto P18 real.
+
+**Efectos de arnés registrados, no corregidos.**
+
+- **ARN-4:** `RA-1` de A2 depende de la temporización.
+- **ARN-5:** la batería Node de P9, bajo su reversión C, crea `datos\relativa`
+  (vacía) en el directorio de trabajo del proceso, la raíz del proyecto si se
+  lanza desde ahí. Existía desde el 17/09. Está fuera de `build.files` y git no
+  la registra. No se ha borrado.
+
+**P18 Fase 1 → CERRADA. P18 Fase 2 → ABIERTA / D4. P18 completo → NO cerrado.**
+
+La Fase 2 debe cubrir al menos:
+
+1. el rescate externo cuando Electron no puede cargar `app.asar` (truncado, sin
+   cabecera, sin `main.js`, inexistente);
+2. `Restaurar-backup.bat` con la misma procedencia y verificación;
+3. packaging e instalador (incluida la operación de una actualización por NSIS);
+4. **la decisión pendiente de purgar la retención heredada solo tras VERIFICADA**
+   dentro del ayudante. Hoy, si el ayudante ya lanzado no llega a aplicar el
+   parche (supera el tiempo, muere o falla al copiar), la purga ya ocurrió.
 
 ## P10 — LÍNEA BASE DE TAMAÑO REANCLADA (18 sept 2026)
 

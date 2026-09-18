@@ -234,7 +234,9 @@ function leerManifiestoProcedencia() {
 
 // originalFs: la ruta puede terminar en «.asar», y el fs parcheado de Electron
 // la trataría como un archivo DE DENTRO de ese asar.
-function sha256DeArchivo(ruta) {
+// Nombre propio a propósito: el hash del rekey (sha256DeArchivo, más abajo)
+// devuelve un objeto, y otra declaración de módulo con este nombre la sustituiría.
+function sha256HexArchivoP18(ruta) {
   return crypto.createHash('sha256').update(originalFs.readFileSync(ruta)).digest('hex');
 }
 
@@ -316,7 +318,7 @@ function analizarRecuperacionAsar(asarInstalado) {
     const rutaCopia = path.join(dir, op.nombre_copia);
     let shaCopia;
     try {
-      shaCopia = sha256DeArchivo(rutaCopia);
+      shaCopia = sha256HexArchivoP18(rutaCopia);
     } catch (e) {
       continue; // copia local ausente o ilegible
     }
@@ -329,7 +331,7 @@ function analizarRecuperacionAsar(asarInstalado) {
   }
   let shaInstalado = null;
   try {
-    shaInstalado = sha256DeArchivo(asarInstalado);
+    shaInstalado = sha256HexArchivoP18(asarInstalado);
   } catch (e) {
     shaInstalado = null;
   }
@@ -367,7 +369,7 @@ function restaurarPredecesoraVerificada(a, asarInstalado) {
     );
   }
   originalFs.copyFileSync(a.rutaCopia, asarInstalado);
-  if (sha256DeArchivo(asarInstalado) !== a.operacion.sha256_anterior) {
+  if (sha256HexArchivoP18(asarInstalado) !== a.operacion.sha256_anterior) {
     throw new Error('el app.asar restaurado no tiene el hash de la copia verificada');
   }
 }
@@ -8992,9 +8994,9 @@ function prepararOperacionAsar({ realAsar, stagedAsar, shaParcheElegido }) {
   const operationId = crypto.randomBytes(8).toString('hex'); // 1
   const nombreCopia = `app.asar.pred-${operationId}`;
   const copia = path.join(dir, nombreCopia);
-  const shaAnterior = sha256DeArchivo(realAsar); // 2
+  const shaAnterior = sha256HexArchivoP18(realAsar); // 2
   // 7: lo que el ayudante va a instalar es EXACTAMENTE lo que se verificó al elegirlo.
-  const shaNuevoEsperado = sha256DeArchivo(stagedAsar);
+  const shaNuevoEsperado = sha256HexArchivoP18(stagedAsar);
   if (shaNuevoEsperado !== shaParcheElegido) throw new Error('la copia preparada del parche no coincide con el archivo elegido');
   // Reaplicar exactamente lo instalado no crea ninguna relación útil de rescate.
   if (shaNuevoEsperado === shaAnterior) {
@@ -9005,7 +9007,7 @@ function prepararOperacionAsar({ realAsar, stagedAsar, shaParcheElegido }) {
   originalFs.mkdirSync(dir, { recursive: true });
   try {
     originalFs.copyFileSync(realAsar, copia); // 3
-    const shaCopia = sha256DeArchivo(copia); // 4: RELEÍDA, no el hash de origen
+    const shaCopia = sha256HexArchivoP18(copia); // 4: RELEÍDA, no el hash de origen
     if (shaCopia !== shaAnterior) throw new Error('la copia local de recuperación no coincide con el app.asar instalado'); // 5
     j.operaciones.push({
       operation_id: operationId,
@@ -9871,10 +9873,12 @@ async function applyAsarPatch(parentWin) {
 
   try {
     originalFs.copyFileSync(chosenPath, stagedAsar);
-    originalFs.copyFileSync(realAsar, backupAsar);
-    purgeOldAsarBackups(stageDir);
-    fs.writeFileSync(helperPath, asarPatchHelperSource(), 'utf8');
   } catch (e) {
+    try {
+      originalFs.unlinkSync(stagedAsar);
+    } catch (e2) {
+      /* no llegó a crearse */
+    }
     await modalAlert(
       parentWin,
       'No se tocó el archivo real de la aplicación. Detalle: ' + String((e && e.message) || e) + errorCodeSuffix('PS-1003'),
@@ -9887,6 +9891,8 @@ async function applyAsarPatch(parentWin) {
   // real — copia LOCAL de la versión actual, releída y verificada, y entrada
   // 'preparada' en el registro. Si cualquier paso falla, el parche NO se
   // aplica: no se lanza el ayudante y no queda nada utilizable para un rescate.
+  // Va ANTES de la copia heredada y de su purga: un intento que falla aquí no
+  // deja un .bak nuevo ni rota los de la carpeta de datos (compartida).
   let operacion;
   try {
     operacion = prepararOperacionAsar({ realAsar, stagedAsar, shaParcheElegido: hash });
@@ -9909,6 +9915,37 @@ async function applyAsarPatch(parentWin) {
         'ha conseguido. Detalle: ' +
         String((e && e.message) || e) +
         errorCodeSuffix('PS-1003'),
+      { title: 'No se pudo preparar el parche', danger: true }
+    );
+    return;
+  }
+
+  // Copia heredada (camino manual transitorio, hasta D4) y ayudante. Si algo
+  // falla antes de que el ayudante quede lanzado, se retira lo que creó ESTE
+  // intento: un .bak de más desplazaría a los históricos en la próxima purga.
+  const bakYaExistia = originalFs.existsSync(backupAsar);
+  const deshacerIntento = () => {
+    try {
+      originalFs.unlinkSync(stagedAsar);
+    } catch (e) {
+      /* ya no estaba */
+    }
+    if (!bakYaExistia) {
+      try {
+        originalFs.unlinkSync(backupAsar);
+      } catch (e) {
+        /* no llegó a crearse */
+      }
+    }
+  };
+  try {
+    originalFs.copyFileSync(realAsar, backupAsar);
+    fs.writeFileSync(helperPath, asarPatchHelperSource(), 'utf8');
+  } catch (e) {
+    deshacerIntento();
+    await modalAlert(
+      parentWin,
+      'No se tocó el archivo real de la aplicación. Detalle: ' + String((e && e.message) || e) + errorCodeSuffix('PS-1003'),
       { title: 'No se pudo preparar el parche', danger: true }
     );
     return;
@@ -9937,6 +9974,7 @@ async function applyAsarPatch(parentWin) {
     );
     child.unref();
   } catch (e) {
+    deshacerIntento();
     await modalAlert(
       parentWin,
       'No se tocó el archivo real de la aplicación. Detalle: ' + String((e && e.message) || e) + errorCodeSuffix('PS-1004'),
@@ -9944,6 +9982,10 @@ async function applyAsarPatch(parentWin) {
     );
     return;
   }
+
+  // La retención heredada (2 copias por mtime) solo se aplica con el ayudante
+  // ya lanzado: un intento que no llegó hasta aquí no rota los .bak compartidos.
+  purgeOldAsarBackups(stageDir);
 
   await modalAlert(
     parentWin,

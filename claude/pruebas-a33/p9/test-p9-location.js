@@ -182,7 +182,8 @@ const FUENTE_BASE = [
     // P18: el rescate decide ahora con estas (las REALES, no dobles).
     'function rutaInstallationIdParaRescate()', 'function leerInstallationIdParaRescate()',
     'function carpetaRecuperacionAsar()', 'function rutaManifiestoProcedencia()', 'function leerManifiestoProcedencia()',
-    'function sha256DeArchivo(ruta)', 'function versionDeAsar(ruta)', 'function analizarRecuperacionAsar(asarInstalado)',
+    // 18 sept 2026: el hash de P18 se llama sha256HexArchivoP18 (el nombre anterior colisionaba con el del rekey).
+    'function sha256HexArchivoP18(ruta)', 'function versionDeAsar(ruta)', 'function analizarRecuperacionAsar(asarInstalado)',
     'function restaurarPredecesoraVerificada(a, asarInstalado)', 'function describirCopiasHeredadasParaSoporte()',
     'function handleFatalStartupError(err)', 'function syncDriveSyncGuardWithLocation()',
     'function detenerArranquePorConfigUbicacion()'].map((f) => extraerDe(MAIN, f)),
@@ -617,14 +618,26 @@ const BAK_DEF = 'app.asar.bak-2026-08-26T10-00-00-000Z';
 const BAK_G = 'app.asar.bak-2026-09-12T10-00-00-000Z';
 fs.writeFileSync(path.join(DEFECTO_C, BAK_DEF), 'ASAR ANTIGUO (carpeta por defecto)');
 fs.writeFileSync(path.join(CUSTOM_C, BAK_G), 'ASAR RECIENTE (carpeta configurada)');
+// 18 sept 2026 — desde P18 la carpeta de datos (y por tanto location.json) ya no
+// decide el rescate: las copias heredadas no se usan nunca. Lo que P9 sigue
+// custodiando aquí se mide por separado y con las funciones REALES: qué carpeta
+// resuelve resolveDataDirForStartupRecovery() (null con config inutilizable,
+// nunca la por defecto) y qué dice la línea de soporte de app.log.
+// La ruta vuelve tal como está en location.json (con /): se compara normalizada.
+const mismaRuta = (a, b) => typeof a === 'string' && path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
 function rescatar(bytes, extra) {
   for (const f of ofs.readdirSync(RECURSOS)) ofs.rmSync(path.join(RECURSOS, f), { force: true });
   ofs.writeFileSync(path.join(RECURSOS, 'app.asar'), 'ASAR ROTO');
   escribirLoc(bytes);
   const m = construir(Object.assign({ appData: APPDATA_C, userData: DEFECTO_C, recursos: RECURSOS }, extra || {}));
   const copias = () => m.traza.escrituras.filter((e) => /^copyFileSync /.test(e));
+  const dataDir = m.resolveDataDirForStartupRecovery();
+  const LOG_D = path.join(DEFECTO_C, 'app.log');
+  const previo = fs.existsSync(LOG_D) ? fs.readFileSync(LOG_D, 'utf8').length : 0;
   m.handleFatalStartupError(new Error('fallo simulado al cargar ./db'));
-  return { m, copias: copias(), asar: ofs.readFileSync(path.join(RECURSOS, 'app.asar'), 'utf8'), recursos: ofs.readdirSync(RECURSOS) };
+  const nuevo = fs.existsSync(LOG_D) ? fs.readFileSync(LOG_D, 'utf8').slice(previo) : '';
+  const soporte = (nuevo.match(/PS-1007 — recuperación:[^\n]*/) || [''])[0];
+  return { m, copias: copias(), asar: ofs.readFileSync(path.join(RECURSOS, 'app.asar'), 'utf8'), recursos: ofs.readdirSync(RECURSOS), dataDir, soporte };
 }
 for (const [id, bytes, extra] of [
   ['BOM duplicado', ROTO],
@@ -643,9 +656,15 @@ for (const [id, bytes, extra] of [
   // verificable (PS-1025). Lo que P9 custodia —que con la config rota no se
   // restaura NADA, se dice, y no se enseñan rutas— se sigue exigiendo igual.
   const eb = r.m.traza.errorBox[0] || {};
-  ok(`P9-14 ${id}: avisa de que NO se restauró nada (PS-1025 desde P18), y sale con 1, sin rutas`,
+  ok(`P9-14 ${id}: avisa de que NO se restauró nada (PS-1025 desde P18), y sale con 1, sin rutas ni nombres de copias`,
     r.m.traza.errorBox.length === 1 && /PS-1025/.test(eb.c) && /NO se ha restaurado nada/.test(eb.c)
-    && r.m.traza.exit.join() === '1' && !eb.c.includes(SB), JSON.stringify(r.m.traza.errorBox));
+    && r.m.traza.exit.join() === '1' && !eb.c.includes(SB) && !eb.c.includes(BAK_DEF) && !eb.c.includes(BAK_G), JSON.stringify(r.m.traza.errorBox));
+  // 18 sept 2026 — lo que devuelve a P9-14 su poder de discriminar (con P18 el
+  // aviso y las copias son iguales con config rota, válida o ausente). Estas dos
+  // son las que caen con la reversión P9-F.
+  ok(`P9-14 ${id}: la carpeta de datos del rescate queda NO RESUELTA (null): nunca la por defecto`, r.dataDir === null, String(r.dataDir));
+  ok(`P9-14 ${id}: la línea de soporte dice que la carpeta de datos no se resolvió y no nombra ninguna copia heredada`,
+    /copias heredadas: carpeta de datos no resuelta/.test(r.soporte) && !r.soporte.includes(BAK_DEF) && !r.soporte.includes(BAK_G), r.soporte);
 }
 // 18 sept 2026 — ACTUALIZADAS POR P18. Las tres siguientes exigían (o
 // [REGISTRA]ban) que el rescate usara una copia `app.asar.bak-*` de la carpeta
@@ -656,16 +675,56 @@ for (const [id, bytes, extra] of [
   const r = rescatar(Buffer.concat([BOM, u8(instalador(G))]));
   ok('P9-14 con BOM (válido): desde P18 el rescate NO usa ninguna copia heredada, tampoco la de la carpeta configurada',
     r.copias.length === 0 && r.asar === 'ASAR ROTO', JSON.stringify(r.copias));
+  ok('P9-14 con BOM (válido): la carpeta del rescate SÍ se resuelve (la configurada) y su copia heredada solo se CUENTA para soporte',
+    mismaRuta(r.dataDir, CUSTOM_C) && r.soporte.includes(`copias heredadas app.asar.bak-*: 1 (la de nombre más alto es ${BAK_G})`)
+    && /NO se usan/.test(r.soporte), JSON.stringify({ d: r.dataDir, s: r.soporte }));
+}
+{
+  const r = rescatar(u8(instalador(G)));
+  ok('P9-14 válido (formato del instalador): la carpeta del rescate se resuelve a la configurada y no se usa ninguna copia heredada',
+    mismaRuta(r.dataDir, CUSTOM_C) && r.copias.length === 0 && r.asar === 'ASAR ROTO' && r.soporte.includes(BAK_G) && /NO se usan/.test(r.soporte),
+    JSON.stringify({ d: r.dataDir, c: r.copias, s: r.soporte }));
 }
 {
   const r = rescatar(null);
-  ok('P9-14 sin archivo: desde P18 el rescate NO usa la copia antigua de la carpeta por defecto',
-    r.copias.length === 0 && r.asar === 'ASAR ROTO', r.asar);
+  ok('P9-14 sin archivo: la carpeta del rescate es la por defecto (legítimo) y aun así NO se usa su copia antigua',
+    r.copias.length === 0 && r.asar === 'ASAR ROTO' && mismaRuta(r.dataDir, DEFECTO_C), JSON.stringify({ a: r.asar, d: r.dataDir }));
 }
 {
   const r = rescatar(u8(`{"userDataDir":"${G}/no-existe-rescate"}`));
-  ok('P9-14 válido pero la carpeta configurada no existe: desde P18 tampoco se usa la de la carpeta por defecto',
-    r.copias.length === 0 && r.asar === 'ASAR ROTO', r.asar);
+  ok('P9-14 [REGISTRA] válido pero la carpeta configurada no existe: la del rescate cae a la por defecto (no es P9) y no se usa ninguna copia heredada',
+    r.copias.length === 0 && r.asar === 'ASAR ROTO' && mismaRuta(r.dataDir, DEFECTO_C), JSON.stringify({ a: r.asar, d: r.dataDir }));
+}
+// P9 × P18 — contrato confirmado por el usuario (18 sept 2026): con location.json
+// inutilizable, una operación P18 LOCAL y VERIFICADA sigue pudiendo restaurarse.
+// No depende de Drive, ni de la carpeta de datos, ni de las copias heredadas:
+// está atada a esta instalación por identidad + hashes.
+{
+  const REC_C = path.join(SB, 'Local', 'panorama-app-recovery');
+  const CFG_C = path.join(APPDATA_C, 'panorama-app-config');
+  for (const [id, bytes] of [['BOM duplicado', ROTO], ['JSON truncado', u8(`{"userDataDir":"${G}"`)]]) {
+    const ID18 = 'a1'.repeat(16);
+    const OP18 = 'c'.repeat(16);
+    const PRED = Buffer.from('ASAR PREDECESORA VERIFICADA (copia local)');
+    const ROTO_ASAR = Buffer.from('ASAR ROTO');
+    fs.mkdirSync(REC_C, { recursive: true });
+    fs.writeFileSync(path.join(REC_C, 'app.asar.pred-' + OP18), PRED);
+    fs.writeFileSync(path.join(CFG_C, 'installation-id'), ID18);
+    fs.writeFileSync(path.join(CFG_C, 'asar-procedencia.json'), JSON.stringify({ v: 1, installation_id: ID18, operaciones: [{
+      operation_id: OP18, installation_id: ID18, estado: 'verificada', sha256_anterior: sha(PRED), version_anterior: '2.0.54',
+      nombre_copia: 'app.asar.pred-' + OP18, sha256_copia_local: sha(PRED), sha256_nuevo_esperado: sha(ROTO_ASAR),
+      version_nueva_esperada: '2.0.55', sha256_nuevo_real: sha(ROTO_ASAR), creada_at: '2026-09-18T10:00:00.000Z',
+      verificada_at: '2026-09-18T10:00:05.000Z', motivo_fallo: null }] }));
+    const r = rescatar(bytes);
+    for (const f of ['installation-id', 'asar-procedencia.json']) fs.rmSync(path.join(CFG_C, f), { force: true });
+    fs.rmSync(REC_C, { recursive: true, force: true });
+    const eb = r.m.traza.errorBox[0] || {};
+    ok(`P9-14 ${id} + operación P18 VERIFICADA local: restaura desde la copia LOCAL y no toca ninguna copia heredada`,
+      r.asar === PRED.toString() && r.copias.some((c) => c.includes('app.asar.pred-' + OP18)) && !r.copias.some((c) => /app\.asar\.bak-/.test(c)),
+      JSON.stringify({ a: r.asar, c: r.copias }));
+    ok(`P9-14 ${id} + operación P18 VERIFICADA local: no necesita resolver la carpeta de datos (sigue null) y el aviso no enseña rutas`,
+      r.dataDir === null && /PS-1007/.test(eb.c || '') && !String(eb.c || '').includes(SB), JSON.stringify({ d: r.dataDir, t: eb.t }));
+  }
 }
 for (const f of [path.join(DEFECTO_C, BAK_DEF), path.join(CUSTOM_C, BAK_G)]) fs.rmSync(f, { force: true });
 fs.rmSync(path.join(DEFECTO_C, 'app.log'), { force: true });

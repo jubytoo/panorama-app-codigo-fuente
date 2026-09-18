@@ -310,7 +310,7 @@ function analizarRecuperacionAsar(asarInstalado) {
   for (const op of man.manifiesto.operaciones) {
     if (!op || typeof op !== 'object') continue;
     if (op.estado !== 'verificada') continue; // ni 'preparada' ni 'fallida'
-    // REVERSIÓN P18-C: ya no se mira de qué equipo es
+    if (op.installation_id !== ident.id) continue; // de otro equipo
     if (!HEX64.test(op.sha256_anterior) || !HEX64.test(op.sha256_nuevo_real) || !HEX64.test(op.sha256_copia_local)) continue;
     if (op.sha256_anterior === op.sha256_nuevo_real) continue; // reaplicar lo mismo: no aporta rescate
     if (op.sha256_copia_local !== op.sha256_anterior) continue;
@@ -489,7 +489,11 @@ function handleFatalStartupError(err) {
         logRescate('PS-1027 — cerrado sin restaurar (elegido «Cerrar», o Esc/X).');
       }
     } else {
-      sinRecuperacion(analisis.manifiesto === 'ilegible' ? 'PS-1026' : 'PS-1025');
+      // REVERSIÓN P22-M2: sin procedencia, vuelve a decidir la copia heredada
+      const dirH = resolveDataDirForStartupRecovery();
+      const nomH = dirH ? findLatestAsarBackupForRecovery(dirH) : null;
+      if (nomH) originalFs.copyFileSync(path.join(dirH, nomH), realAsar);
+      else sinRecuperacion(analisis.manifiesto === 'ilegible' ? 'PS-1026' : 'PS-1025');
     }
   } catch (recoveryError) {
     const recoveryDetail = String((recoveryError && recoveryError.message) || recoveryError);

@@ -448,14 +448,101 @@ ok('P22-Z1 solo main.js: db.js, security.js, preload.js, el instalador y el .bat
   HASH('db.js') === 'B03C81FF5FC300009DC315E4B20F9BF88DCC6902B18C2EF434B251A022EDD830'
   && HASH('security.js').startsWith('0BF1CAD061B2D9E7') && HASH('preload.js').startsWith('AA77316F3FDB384D')
   && HASH('build/installer.nsh').startsWith('C032D0D7D59208DC') && HASH('claude/Restaurar-backup.bat').startsWith('0E947548DF868DBB'));
-// 18 sept 2026 — actualizada por P18. Decía «el rescate sigue eligiendo por la
-// fecha del nombre (es P18)». P18 Fase 1 ya lo cambió: la función heredada
-// sigue igual, pero solo informa; el rescate decide con procedencia. Lo que
-// P22 custodia —que P22 no tocó el rescate— sigue siendo cierto.
-ok('P22-Z2 [REGISTRA] P22 no tocó el rescate: la función heredada sigue igual y, desde P18, ya no decide nada',
-  /\.filter\(\(f\) => f\.startsWith\('app\.asar\.bak-'\)\)\s*\.sort\(\)\s*\.reverse\(\)/.test(cuerpo('function findLatestAsarBackupForRecovery(dir)'))
-  && !/findLatestAsarBackupForRecovery\(/.test(cuerpo('function handleFatalStartupError(err)'))
-  && /analizarRecuperacionAsar\(realAsar\)/.test(cuerpo('function handleFatalStartupError(err)')));
+// 18 sept 2026 — Z2 COMBINADA. En 9ada9a9 se reescribió para P18 y se perdió la
+// comprobación NEGATIVA original (la función heredada no sabe nada de
+// procedencia). Las dos propiedades son distintas y complementarias —la
+// reversión M1 solo la ve Z2a y la M2 solo Z2b—, y cada una se exige por texto
+// Y por conducta, con las funciones REALES (las que liga V8: la última
+// declaración) en un sandbox con identidad y registro de procedencia presentes.
+const DETECTOR = require('../p18/nombres-modulo.js');
+function ambitoRescate() {
+  const ultima = new Map();
+  for (const d of DETECTOR.declaracionesDeModulo(MAIN)) if (d.tipo === 'function') ultima.set(d.nombre, d);
+  const texto = (x) => DETECTOR.textoDeclaracion(MAIN, ultima.get(x).pos);
+  const cierre = new Set(['handleFatalStartupError', 'findLatestAsarBackupForRecovery']);
+  for (let c = true; c;) {
+    c = false;
+    for (const x of [...cierre]) for (const m of texto(x).matchAll(/([\p{L}_$][\p{L}\p{N}_$]*)\s*\(/gu)) if (ultima.has(m[1]) && !cierre.has(m[1])) { cierre.add(m[1]); c = true; }
+  }
+  return { fuente: [...cierre].map(texto).join('\n') + '\nlet startupRecoveryArmed = true;', nombres: [...cierre] };
+}
+function mundoZ2(conOperacion) {
+  const raiz = path.join(SB, 'z2-' + (++n));
+  const w = { appData: path.join(raiz, 'Roaming'), datos: path.join(raiz, 'Roaming', 'panorama-app'), local: path.join(raiz, 'Local'), res: path.join(raiz, 'resources') };
+  w.cfg = path.join(w.appData, 'panorama-app-config');
+  w.rec = path.join(w.local, 'panorama-app-recovery');
+  [w.cfg, w.datos, w.res].forEach((d) => fs.mkdirSync(d, { recursive: true }));
+  const INST = Buffer.from('ASAR INSTALADO 2.0.55');
+  const PRED = Buffer.from('PREDECESORA VERIFICADA 2.0.54');
+  fs.writeFileSync(path.join(w.res, 'app.asar'), INST);
+  // Heredadas sin procedencia; la de nombre más alto es de OTRO equipo y más nueva.
+  fs.writeFileSync(path.join(w.datos, 'app.asar.bak-2026-08-26T19-19-35-247Z'), 'HEREDADA 0.1.28');
+  fs.writeFileSync(path.join(w.datos, 'app.asar.bak-2026-09-30T08-00-00-000Z'), 'HEREDADA 9.9.9 (otro equipo)');
+  const IDZ = 'a1'.repeat(16);
+  fs.writeFileSync(path.join(w.cfg, 'installation-id'), IDZ);
+  const ops = [];
+  if (conOperacion) {
+    const op = 'c'.repeat(16);
+    fs.mkdirSync(w.rec, { recursive: true });
+    fs.writeFileSync(path.join(w.rec, 'app.asar.pred-' + op), PRED);
+    ops.push({ operation_id: op, installation_id: IDZ, estado: 'verificada', sha256_anterior: sha(PRED), version_anterior: '2.0.54',
+      nombre_copia: 'app.asar.pred-' + op, sha256_copia_local: sha(PRED), sha256_nuevo_esperado: sha(INST), version_nueva_esperada: '2.0.55',
+      sha256_nuevo_real: sha(INST), creada_at: '2026-09-18T10:00:00.000Z', verificada_at: '2026-09-18T10:00:05.000Z', motivo_fallo: null });
+  }
+  fs.writeFileSync(path.join(w.cfg, 'asar-procedencia.json'), JSON.stringify({ v: 1, installation_id: IDZ, operaciones: ops }));
+  return w;
+}
+function construirZ2(w) {
+  const z = { lecturas: [], escrituras: [], cajas: [] };
+  const sbL = path.resolve(SB).toLowerCase();
+  const espia = new Proxy(fs, { get(t, k) {
+    const v = t[k];
+    if (typeof v !== 'function') return v;
+    return (...a) => {
+      if (['readFileSync', 'statSync', 'existsSync', 'readdirSync'].includes(k) || (k === 'openSync' && (a[1] === undefined || a[1] === 'r'))) {
+        z.lecturas.push(`${k} ${path.basename(String(a[0]))}`);
+      } else if (ESCRITURAS.includes(k)) {
+        const d = k === 'copyFileSync' || k === 'renameSync' ? a[1] : a[0];
+        if (!path.resolve(String(d)).toLowerCase().startsWith(sbL)) throw new Error('P22-Z2: escritura FUERA del sandbox: ' + d);
+        z.escrituras.push(`${k} ${path.basename(String(d))}`);
+      }
+      return v.apply(t, a);
+    };
+  } });
+  const A = ambitoRescate();
+  z.m = new Function('app', 'fs', 'originalFs', 'path', 'crypto', 'dialog', 'process', A.fuente + '\nreturn { ' + A.nombres.join(', ') + ' };')(
+    { getPath: (k) => (k === 'appData' ? w.appData : k === 'userData' ? w.datos : os.tmpdir()), exit() {} },
+    espia, espia, path, crypto, { showErrorBox: (tt, c) => z.cajas.push(c), showMessageBoxSync: (o) => o.cancelId },
+    { platform: 'win32', pid: process.pid, env: { LOCALAPPDATA: w.local }, resourcesPath: w.res });
+  return z;
+}
+{
+  const wH = mundoZ2(true);
+  const z = construirZ2(wH);
+  const cuerpoH = cuerpo('function findLatestAsarBackupForRecovery(dir)');
+  z.lecturas.length = 0;
+  let elegida;
+  try { elegida = z.m.findLatestAsarBackupForRecovery(wH.datos); } catch (e) { elegida = 'LANZA: ' + e.message; }
+  ok('P22-Z2a la función heredada sigue siendo SOLO «por nombre»: ni procedencia, ni registro, ni promoción (texto y conducta: con registro presente solo lista su carpeta)',
+    /\.filter\(\(f\) => f\.startsWith\('app\.asar\.bak-'\)\)\s*\.sort\(\)\s*\.reverse\(\)/.test(cuerpoH) && !/manifiesto|procedencia|installation/i.test(cuerpoH)
+    && elegida === 'app.asar.bak-2026-09-30T08-00-00-000Z' && z.lecturas.length === 1 && /^readdirSync /.test(z.lecturas[0]) && z.escrituras.length === 0,
+    JSON.stringify({ elegida, lecturas: z.lecturas, escrituras: z.escrituras }));
+}
+{
+  const cuerpoR = cuerpo('function handleFatalStartupError(err)');
+  const wSin = mundoZ2(false);
+  const zSin = construirZ2(wSin);
+  try { zSin.m.handleFatalStartupError(new Error('P22-Z2 arranque roto (sandbox)')); } catch (e) { /* se mide abajo */ }
+  const sinProcedencia = fs.readFileSync(path.join(wSin.res, 'app.asar'), 'utf8');
+  const wCon = mundoZ2(true);
+  const zCon = construirZ2(wCon);
+  try { zCon.m.handleFatalStartupError(new Error('P22-Z2 arranque roto (sandbox)')); } catch (e) { /* se mide abajo */ }
+  const conProcedencia = fs.readFileSync(path.join(wCon.res, 'app.asar'), 'utf8');
+  ok('P22-Z2b el rescate automático NO decide con la función heredada: sin procedencia no restaura nada; con ella, la copia P18 y nunca la heredada (texto y conducta)',
+    !/findLatestAsarBackupForRecovery\(/.test(cuerpoR) && /analizarRecuperacionAsar\(realAsar\)/.test(cuerpoR)
+    && sinProcedencia === 'ASAR INSTALADO 2.0.55' && conProcedencia === 'PREDECESORA VERIFICADA 2.0.54',
+    JSON.stringify({ sinProcedencia, conProcedencia }));
+}
 ok('P22-Z3 la batería no ha escrito fuera de su sandbox', guardia.REAL !== null && !guardia.dentroDe(SB, path.join(process.env.APPDATA || '', 'panorama-app')));
 nota('P22-4 (PS-1009 con base local) y los Esc/X de verdad se miden en la app real: electron-p22.ps1.');
 

@@ -1,18 +1,24 @@
 {
     "archivo":  "G:\\Mi unidad\\BD-PanoramaServicio\\panorama.sqlite3",
-    "sha256":  "C26323D15535949653AC035E13EBBBD084997CCC2AE54AE2119685B8A885AAB0",
+    "sha256":  "C7F6FC2F640ECE8CFC231B29AAEAF64A18CFEB67E00E61776FF66BE804D9C27E",
     "bytes":  77824,
-    "lastWriteTime":  "2026-09-17T13:04:57+02:00",
-    "capturado":  "2026-09-17T14:32:06+02:00",
+    "lastWriteTime":  "2026-09-18T12:23:59+02:00",
+    "capturado":  "2026-09-18T14:23:38+02:00",
     "anterior":  {
+                     "sha256":  "C26323D15535949653AC035E13EBBBD084997CCC2AE54AE2119685B8A885AAB0",
+                     "capturado":  "2026-09-17T14:32:06+02:00",
+                     "motivoDelCambio":  "sesiones reales del usuario con la v2.0.55 INSTALADA el 18 sept 2026, registradas en el app.log de G: -- 08:41-08:45Z (10:41-10:45 local; proyectos 11, 5, 14 y 15, backups 'manual-button', 'closing') y 10:22-10:24Z (12:22-12:24 local; arranque con PS-1012 de bloqueo multi-PC y backups 'manual-button'/'closing' del proyecto 11); panorama.sqlite3 escrito a las 12:23:59 local. La regresion Node de la ronda de cierre de P18 Fase 1 termino hacia las 10:37 local con P18-Z5 en verde contra C26323D1, y ninguna bateria ni arnes estaba en ejecucion en esas franjas. Los arneses redirigen appData/userData a %TEMP%.",
+                     "notaMtime":  "Con este mismo hash C26323D1, el LastWriteTime paso de 2026-09-17T13:04:57 a 2026-09-18T02:02:01 (contenido IDENTICO): arranques reales de una v2.0.54 a las 01:54 local (experimento accidental ARN-3) y de la v2.0.55 real a las 02:01:57 (reparacion), segun el app.log de G:. La propiedad que importa es el contenido/hash, no el mtime."
+                 },
+    "anteriorAun":  {
                      "sha256":  "D5C3FF53D09925B6C8258F5EFFF84DA44F949EBCE609A1276887BD30D21F46C8",
                      "capturado":  "2026-09-15T13:24:29.4121207+02:00",
                      "motivoDelCambio":  "sesion real del usuario (17 sept 2026): app.log de G: con actividad 11:02-11:04Z (13:02-13:04 local) de los proyectos 14 y 15, un backup 'manual-button' y cierres 'closing/beforeunload'; panorama.sqlite3 escrito a las 13:04:57 local; ningun proceso de Panorama abierto despues. Cae ENTRE dos tiradas del arnes P9 (la anterior termino hacia las 12:33 con D5C3FF53 identica; la siguiente empezo a las 14:22 con C26323D1). Los arneses redirigen APPDATA/userData a %TEMP% y sus proyectos son id 1."
                  },
-    "anteriorAun":  {
+    "historico":  {
                      "sha256":  "52394C7A0CB83D8B170F514C10522BF74FCA01D6D3F54160544B7D1375A01F16",
                      "capturado":  "2026-09-15T00:00:17.7299478+02:00",
                      "motivoDelCambio":  "sesion real del usuario: panorama.sqlite3 y app.log con la misma marca 2026-09-15 11:26:45, y cache de Chromium a las 12:39. Ninguna bateria toca esa carpeta."
                  },
-    "nota":  "BD VIVA. La copia de %APPDATA%\\panorama-app\\panorama.sqlite3 es residual y NO es produccion."
+    "nota":  "BD VIVA. La copia de %APPDATA%\\panorama-app\\panorama.sqlite3 es residual y NO es produccion. Cada tirada se compara consigo misma (inicio/fin); esta linea base solo la lee P18-Z5."
 }

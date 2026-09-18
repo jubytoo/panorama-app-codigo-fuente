@@ -10,6 +10,8 @@
 //   E  la sesión local temporal vuelve a desactivar la protección de apagado
 //   F  un archivo local inválido (0 bytes, no-SQLite) vuelve a contar como ausente
 //   G  el fallo al persistir la marca vuelve a ser silencioso
+//   M1 la función heredada consulta el registro de procedencia y «promociona» (P22-Z2a)
+//   M2 el rescate automático vuelve a decidir con la copia heredada (P22-Z2b)
 //
 // Escribe las copias en `p22/revertidos/<familia>/main.js`. NO toca producción.
 // ---------------------------------------------------------------------------
@@ -106,6 +108,32 @@ const FAMILIAS = [
     hacer: () => cambiar(MAIN,
       '  const g = guardarHistorialUbicacion(j);\n  if (!g.ok) {\n    historialUbicacionDegradado = { motivo: g.motivo };\n    appLog(`ERROR PS-1024 — no se pudo dejar constancia de la ubicación de datos propia: ${g.motivo}`);\n    return g;\n  }',
       '  const g = guardarHistorialUbicacion(j); // REVERSIÓN P22-G: si falla, no se dice nada', 1),
+  },
+  {
+    id: 'M1-heredada-con-procedencia',
+    que: 'la función heredada consulta el registro de procedencia y «promociona» la copia que figure en él (procedencia retroactiva)',
+    tumba: [/^P22-Z2a /],
+    electron: [],
+    hacer: () => cambiar(MAIN,
+      '      .reverse(); // el timestamp ISO-8601 del nombre ordena igual que la fecha real\n    return files.length ? files[0] : null;\n',
+      '      .reverse(); // el timestamp ISO-8601 del nombre ordena igual que la fecha real\n'
+      + '    // REVERSIÓN P22-M1: la heredada consulta el registro de procedencia y «promociona»\n'
+      + '    const man = leerManifiestoProcedencia();\n'
+      + "    const promovida = man.estado === 'valido' ? files.find((f) => man.manifiesto.operaciones.some((o) => o.nombre_copia === f)) : null;\n"
+      + '    return promovida || (files.length ? files[0] : null);\n', 1),
+  },
+  {
+    id: 'M2-rescate-depende-de-heredada',
+    que: 'sin procedencia verificable, el rescate automático vuelve a restaurar la copia heredada de nombre más alto',
+    tumba: [/^P22-Z2b /],
+    electron: [],
+    hacer: () => cambiar(MAIN,
+      "      sinRecuperacion(analisis.manifiesto === 'ilegible' ? 'PS-1026' : 'PS-1025');\n",
+      '      // REVERSIÓN P22-M2: sin procedencia, vuelve a decidir la copia heredada\n'
+      + '      const dirH = resolveDataDirForStartupRecovery();\n'
+      + '      const nomH = dirH ? findLatestAsarBackupForRecovery(dirH) : null;\n'
+      + '      if (nomH) originalFs.copyFileSync(path.join(dirH, nomH), realAsar);\n'
+      + "      else sinRecuperacion(analisis.manifiesto === 'ilegible' ? 'PS-1026' : 'PS-1025');\n", 1),
   },
 ];
 

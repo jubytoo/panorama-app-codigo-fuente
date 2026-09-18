@@ -310,7 +310,7 @@ function analizarRecuperacionAsar(asarInstalado) {
   for (const op of man.manifiesto.operaciones) {
     if (!op || typeof op !== 'object') continue;
     if (op.estado !== 'verificada') continue; // ni 'preparada' ni 'fallida'
-    // REVERSIÓN P18-C: ya no se mira de qué equipo es
+    if (op.installation_id !== ident.id) continue; // de otro equipo
     if (!HEX64.test(op.sha256_anterior) || !HEX64.test(op.sha256_nuevo_real) || !HEX64.test(op.sha256_copia_local)) continue;
     if (op.sha256_anterior === op.sha256_nuevo_real) continue; // reaplicar lo mismo: no aporta rescate
     if (op.sha256_copia_local !== op.sha256_anterior) continue;
@@ -9871,14 +9871,12 @@ async function applyAsarPatch(parentWin) {
   const logPath = path.join(stageDir, 'patch-log.txt');
   const helperPath = path.join(stageDir, 'apply-patch-helper.js');
 
-  try {
+  try { // REVERSIÓN P18-K: orden antiguo
     originalFs.copyFileSync(chosenPath, stagedAsar);
+    originalFs.copyFileSync(realAsar, backupAsar);
+    purgeOldAsarBackups(stageDir);
+    fs.writeFileSync(helperPath, asarPatchHelperSource(), 'utf8');
   } catch (e) {
-    try {
-      originalFs.unlinkSync(stagedAsar);
-    } catch (e2) {
-      /* no llegó a crearse */
-    }
     await modalAlert(
       parentWin,
       'No se tocó el archivo real de la aplicación. Detalle: ' + String((e && e.message) || e) + errorCodeSuffix('PS-1003'),
@@ -9920,37 +9918,6 @@ async function applyAsarPatch(parentWin) {
     return;
   }
 
-  // Copia heredada (camino manual transitorio, hasta D4) y ayudante. Si algo
-  // falla antes de que el ayudante quede lanzado, se retira lo que creó ESTE
-  // intento: un .bak de más desplazaría a los históricos en la próxima purga.
-  const bakYaExistia = originalFs.existsSync(backupAsar);
-  const deshacerIntento = () => {
-    try {
-      originalFs.unlinkSync(stagedAsar);
-    } catch (e) {
-      /* ya no estaba */
-    }
-    if (!bakYaExistia) {
-      try {
-        originalFs.unlinkSync(backupAsar);
-      } catch (e) {
-        /* no llegó a crearse */
-      }
-    }
-  };
-  try {
-    originalFs.copyFileSync(realAsar, backupAsar);
-    fs.writeFileSync(helperPath, asarPatchHelperSource(), 'utf8');
-  } catch (e) {
-    deshacerIntento();
-    await modalAlert(
-      parentWin,
-      'No se tocó el archivo real de la aplicación. Detalle: ' + String((e && e.message) || e) + errorCodeSuffix('PS-1003'),
-      { title: 'No se pudo preparar el parche', danger: true }
-    );
-    return;
-  }
-
   try {
     const child = spawn(
       process.execPath,
@@ -9974,7 +9941,6 @@ async function applyAsarPatch(parentWin) {
     );
     child.unref();
   } catch (e) {
-    deshacerIntento();
     await modalAlert(
       parentWin,
       'No se tocó el archivo real de la aplicación. Detalle: ' + String((e && e.message) || e) + errorCodeSuffix('PS-1004'),
@@ -9982,10 +9948,6 @@ async function applyAsarPatch(parentWin) {
     );
     return;
   }
-
-  // La retención heredada (2 copias por mtime) solo se aplica con el ayudante
-  // ya lanzado: un intento que no llegó hasta aquí no rota los .bak compartidos.
-  purgeOldAsarBackups(stageDir);
 
   await modalAlert(
     parentWin,

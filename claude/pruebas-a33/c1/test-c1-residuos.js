@@ -420,12 +420,23 @@ const shaBuf = (b) => crypto.createHash('sha256').update(b).digest('hex');
   S('16', '`.panorama-write-check-<pid>`: se borra justo tras escribirse; un corte en medio lo deja para siempre (C1-A solo lo cuenta)',
     /\.panorama-write-check-\$\{process\.pid\}/.test(SRC) &&
     (COD.match(/startsWith\('\.panorama-write-check/g) || []).length === 1 && /r\.sondas\+\+/.test(INV));
-  S('17', '`patch-pending-*.asar`: si falla la preparación o el lanzamiento del ayudante, NO se retira',
+  // 18 sept 2026 — INVERTIDA por P18 (orden C de «Aplicar parche», autorizado).
+  // Era descriptiva: «si falla la preparación o el lanzamiento del ayudante, el
+  // patch-pending NO se retira». El orden C lo retira en TODA rama de fallo
+  // anterior a lanzar el ayudante; ahora se exige en las cuatro. La conducta la
+  // demuestran p18 (P18-PZ, PA–PD, PE, PF, PG, con el applyAsarPatch real) y la
+  // reversión K de p18. Queda solo si el ayudante, ya lanzado, no llega a correr.
+  S('17', '`patch-pending-*.asar`: desde el orden C de P18 SÍ se retira en cada fallo anterior a lanzar el ayudante (copia, P18, heredada/ayudante, spawn)',
     (() => {
       const f = cuerpo('async function applyAsarPatch(parentWin)');
-      const c1 = f.slice(f.indexOf('originalFs.copyFileSync(chosenPath, stagedAsar);'), f.indexOf("errorCodeSuffix('PS-1003')"));
-      const c2 = f.slice(f.indexOf('const child = spawn('), f.indexOf("errorCodeSuffix('PS-1004')"));
-      return c1.length > 0 && c2.length > 0 && !/unlink/.test(c1) && !/unlink/.test(c2);
+      const tramo = (desde, hasta) => { const a = f.indexOf(desde); const b = a < 0 ? -1 : f.indexOf(hasta, a); return a >= 0 && b > a ? f.slice(a, b) : ''; };
+      const copia = tramo('originalFs.copyFileSync(chosenPath, stagedAsar);', "errorCodeSuffix('PS-1003')");
+      const p18 = tramo('operacion = prepararOperacionAsar(', "errorCodeSuffix('PS-1003')");
+      const deshacer = tramo('const deshacerIntento = () => {', '\n  };');
+      const heredada = tramo('originalFs.copyFileSync(realAsar, backupAsar);', "errorCodeSuffix('PS-1003')");
+      const lanzar = tramo('const child = spawn(', "errorCodeSuffix('PS-1004')");
+      return /unlinkSync\(stagedAsar\)/.test(copia) && /unlinkSync\(stagedAsar\)/.test(p18) && /unlinkSync\(stagedAsar\)/.test(deshacer)
+        && /deshacerIntento\(\);/.test(heredada) && /deshacerIntento\(\);/.test(lanzar);
     })());
   S('18', '`app.asar.bak-*`: se podan a 2, pero SOLO al aplicar un parche nuevo', /const ASAR_PATCH_BACKUP_KEEP = 2;/.test(SRC) &&
     (COD.match(/purgeOldAsarBackups\(/g) || []).length === 2);

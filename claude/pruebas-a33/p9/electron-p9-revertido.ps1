@@ -6,7 +6,7 @@
 #   A  archivo con BOM -> cae (PS-1020) en vez de abrir la compartida
 #   B  JSON invalido -> vuelve la carpeta local en silencio: residuo abierto y
 #      MODIFICADO, BD nueva en una carpeta limpia, proteccion desactivada
-#   C  ruta relativa -> vuelve el mkdir relativo (y PS-1007)
+#   C  ruta relativa -> vuelve el mkdir relativo (y el rescate: PS-1025 desde P18)
 #   D  BD nueva en una carpeta limpia; el residuo sigue protegido
 #   E  residuo abierto y modificado (hash cambia); la carpeta limpia sigue sin BD
 # Regenera las copias con revertir-p9.js. Sin caracteres acentuados (ANSI).
@@ -63,7 +63,10 @@ Ok 'P9-EREV B: config invalida -> la proteccion de apagado YA NO se desactiva: l
 
 Revertida 'C-sin-ruta-absoluta' @('residuo/relativa'); $c = $script:ultimo
 $x = $c.'residuo/relativa'
-Ok 'P9-EREV C: ruta relativa -> vuelve a crearse datos\relativa en el directorio de trabajo, y la app no arranca (PS-1007)' ($x.nuevos -match '(^|, )datos\\relativa' -and $x.dialogos -match 'PS-1007') ($x | ConvertTo-Json -Compress)
+# 18 sept 2026 (P18 Fase 1): el rescate de arranque sin copia de procedencia
+# verificable avisa con PS-1025 (PS-1007 queda para cuando restaura). Se sigue
+# exigiendo lo mismo: el mkdir relativo vuelve y el arranque acaba en el rescate.
+Ok 'P9-EREV C: ruta relativa -> vuelve a crearse datos\relativa en el directorio de trabajo, y la app no arranca (rescate sin copia verificable, PS-1025)' ($x.nuevos -match '(^|, )datos\\relativa' -and $x.dialogos -match 'PS-1025') ($x | ConvertTo-Json -Compress)
 
 Revertida 'D-crea-local' @('limpia/bom-doble', 'residuoreal/bom-doble'); $d = $script:ultimo
 $x = $d.'limpia/bom-doble'

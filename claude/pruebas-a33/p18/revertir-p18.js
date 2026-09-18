@@ -12,6 +12,14 @@
 //   G  el ayudante marca VERIFICADA sin comprobar los hashes
 //   H  preparar una operación nueva borra antes las anteriores
 //   I  el aviso vuelve a recomendar Restaurar-backup.bat
+//   K  ORDEN ANTIGUO de «Aplicar parche»: copia heredada + purga ANTES de
+//      preparar P18 (y sin retirar lo que deja un intento fallido)
+//   J  SOMBRA DE HASH: una declaración de módulo POSTERIOR con el nombre del hash
+//      de P18 lo sustituye por el contrato del rekey (objeto). Es el mecanismo
+//      exacto del falso verde del 18 sept 2026 (entonces el nombre repetido era
+//      sha256DeArchivo). Se sombrea el nombre ACTUAL, y no se deshace el
+//      renombrado, para que el resto de la batería siga extrayendo por firma y
+//      se vea qué detecta cada parte; P18-S1c cubre el nombre literal antiguo.
 //
 // Escribe las copias en `p18/revertidos/<familia>/main.js`. NO toca producción.
 // ---------------------------------------------------------------------------
@@ -21,6 +29,15 @@ const path = require('path');
 const PROJ = 'C:\\Codigo Fuente PS\\panorama-app-codigo-fuente_1';
 const SALIDA = path.join(__dirname, 'revertidos');
 const MAIN = fs.readFileSync(path.join(PROJ, 'main.js'), 'utf8');
+
+// Quita el tramo [desde, hasta) —`hasta` se conserva—; cada ancla debe ser única.
+function cortar(src, desde, hasta) {
+  const i = src.indexOf(desde);
+  const j = src.indexOf(hasta);
+  if (i < 0 || src.indexOf(desde, i + 1) >= 0) throw new Error('ancla de inicio no única: ' + desde.slice(0, 60));
+  if (j < 0 || src.indexOf(hasta, j + 1) >= 0 || j < i) throw new Error('ancla de fin no única: ' + hasta.slice(0, 60));
+  return src.slice(0, i) + src.slice(j);
+}
 
 function cambiar(src, busca, pone, veces) {
   const n = src.split(busca).length - 1;
@@ -39,15 +56,20 @@ const FAMILIAS = [
     // Arrastra P18-F6b: el mundo del ayudante tiene una copia heredada y la
     // conducta antigua la prefiere aunque exista una predecesora verificada.
     // No tumba P18-19c: el aviso de «restaurado» nunca nombró el .bat.
-    tumba: [/^P18-A2 /, /^P18-2 /, /^P18-11 /, /^P18-13 /, /^P18-14 /, /^P18-19 /, /^P18-19b /, /^P18-F6b /],
+    // Y (medido al añadir P18-P) todo «nada candidato» de los intentos de parche
+    // fallidos: allí la carpeta de datos tiene .bak y la conducta antigua los elige.
+    tumba: [/^P18-A2 /, /^P18-2 /, /^P18-11 /, /^P18-13 /, /^P18-14 /, /^P18-19 /, /^P18-19b /, /^P18-F6b /,
+      /^P18-P[A-D]\d?\.2 /, /^P18-PE2 /, /^P18-PF2 /, /^P18-PG2 /],
     hacer: () => cambiar(MAIN,
       "function analizarRecuperacionAsar(asarInstalado) {\n",
-      "function analizarRecuperacionAsar(asarInstalado) {\n  { // REVERSIÓN P18-A: vuelve la copia heredada, por nombre\n    const dH = resolveDataDirForStartupRecovery();\n    const nH = dH ? findLatestAsarBackupForRecovery(dH) : null;\n    if (nH) {\n      const rH = path.join(dH, nH);\n      return { decision: 'auto', motivo: 'heredada', manifiesto: null, rutaCopia: rH, operacion: { operation_id: 'heredada', sha256_anterior: sha256DeArchivo(rH), version_anterior: null } };\n    }\n  }\n", 1),
+      "function analizarRecuperacionAsar(asarInstalado) {\n  { // REVERSIÓN P18-A: vuelve la copia heredada, por nombre\n    const dH = resolveDataDirForStartupRecovery();\n    const nH = dH ? findLatestAsarBackupForRecovery(dH) : null;\n    if (nH) {\n      const rH = path.join(dH, nH);\n      return { decision: 'auto', motivo: 'heredada', manifiesto: null, rutaCopia: rH, operacion: { operation_id: 'heredada', sha256_anterior: sha256HexArchivoP18(rH), version_anterior: null } };\n    }\n  }\n", 1),
   },
   {
     id: 'B-acepta-preparada',
     que: 'una operación PREPARADA (nunca confirmada) vuelve a valer como predecesora',
-    tumba: [/^P18-6 /, /^P18-15 /],
+    // Y (medido al añadir P18-P) la PREPARADA que dejan los intentos de parche
+    // fallidos después de preparar (copia heredada, ayudante, spawn) pasa a ser candidata.
+    tumba: [/^P18-6 /, /^P18-15 /, /^P18-PE2 /, /^P18-PF2 /, /^P18-PG2 /],
     hacer: () => cambiar(MAIN,
       "    if (op.estado !== 'verificada') continue; // ni 'preparada' ni 'fallida'",
       "    if (op.estado !== 'verificada' && op.estado !== 'preparada') continue; // REVERSIÓN P18-B\n    if (op.estado === 'preparada' && !op.sha256_nuevo_real) op.sha256_nuevo_real = op.sha256_nuevo_esperado;", 1),
@@ -72,7 +94,8 @@ const FAMILIAS = [
   {
     id: 'E-restaura-sin-preguntar',
     que: 'si el app.asar instalado no coincide (o no se lee), se restaura la predecesora SIN preguntar',
-    tumba: [/^P18-5 /, /^P18-17 /, /^P18-17b /, /^P18-17d /, /^P18-18 /, /^P18-18b /, /^P18-F6b /],
+    // Y P18-S2b3 (medido al añadir S2): es la misma propiedad, en el contexto real del módulo.
+    tumba: [/^P18-5 /, /^P18-17 /, /^P18-17b /, /^P18-17d /, /^P18-18 /, /^P18-18b /, /^P18-F6b /, /^P18-S2b3 /],
     hacer: () => cambiar(MAIN,
       "  Object.assign(r, { decision: 'confirmar', operacion: candidatas[0].op, rutaCopia: candidatas[0].rutaCopia });",
       "  Object.assign(r, { decision: 'auto', operacion: candidatas[0].op, rutaCopia: candidatas[0].rutaCopia }); // REVERSIÓN P18-E", 1),
@@ -112,6 +135,35 @@ const FAMILIAS = [
     hacer: () => cambiar(MAIN,
       "        ').\\n\\nReinstala Panorama del Servicio con su instalador, o aplica un parche soportado. Tus datos no ' +\n        'se han tocado.\\n\\n(código ' +",
       "        ').\\n\\nEjecuta Restaurar-backup.bat (junto a app.asar). Tus datos no ' + // REVERSIÓN P18-I\n        'se han tocado.\\n\\n(código ' +", 1),
+  },
+  {
+    id: 'J-sombra-de-hash',
+    que: 'una declaración de módulo POSTERIOR con el nombre del hash de P18 lo sustituye por el contrato del rekey (el defecto del 18 sept)',
+    // El resto de la batería NO cae: extrae la primera declaración por firma. Es
+    // exactamente el punto ciego que S1/S2 existen para cubrir.
+    tumba: [/^P18-S1a /, /^P18-S1b /, /^P18-S2a /, /^P18-S2b1 /, /^P18-S2b2 /, /^P18-S2b3 /, /^P18-S2b4 /, /^P18-S2b5 /],
+    hacer: () => cambiar(MAIN,
+      '// Clasifica lo que hay en la carpeta de trabajo, SIN deducir nada por fechas.\nfunction leerJournalRekey() {',
+      '// REVERSIÓN P18-J: sombra del hash de P18 con el contrato del rekey\nfunction sha256HexArchivoP18(p) {\n  return sha256DeArchivo(p);\n}\n\n'
+      + '// Clasifica lo que hay en la carpeta de trabajo, SIN deducir nada por fechas.\nfunction leerJournalRekey() {', 1),
+  },
+  {
+    id: 'K-purga-antes-de-preparar',
+    que: 'orden antiguo de «Aplicar parche»: copia heredada + purga ANTES de preparar P18, y sin retirar lo que deja un intento fallido',
+    // Es el código exacto de 9ada9a9 en esa zona (salvo dos líneas de comentario).
+    // No tumba P18-PH*: con todo bien, el orden antiguo da el mismo resultado.
+    tumba: [/^P18-P[A-D]\d?\.1 /, /^P18-PE[12] /, /^P18-PF[12] /, /^P18-PG[12] /, /^P18-PI /, /^P18-PI2 /, /^P18-PZ /],
+    hacer: () => {
+      let s = cambiar(MAIN,
+        '  try {\n    originalFs.copyFileSync(chosenPath, stagedAsar);\n  } catch (e) {\n    try {\n      originalFs.unlinkSync(stagedAsar);\n'
+        + '    } catch (e2) {\n      /* no llegó a crearse */\n    }\n    await modalAlert(',
+        '  try { // REVERSIÓN P18-K: orden antiguo\n    originalFs.copyFileSync(chosenPath, stagedAsar);\n    originalFs.copyFileSync(realAsar, backupAsar);\n'
+        + "    purgeOldAsarBackups(stageDir);\n    fs.writeFileSync(helperPath, asarPatchHelperSource(), 'utf8');\n  } catch (e) {\n    await modalAlert(", 1);
+      s = cortar(s, '  // Copia heredada (camino manual transitorio, hasta D4) y ayudante. Si algo\n', '  try {\n    const child = spawn(\n');
+      s = cambiar(s, '  } catch (e) {\n    deshacerIntento();\n    await modalAlert(', '  } catch (e) {\n    await modalAlert(', 1);
+      return cambiar(s, '  // La retención heredada (2 copias por mtime) solo se aplica con el ayudante\n'
+        + '  // ya lanzado: un intento que no llegó hasta aquí no rota los .bak compartidos.\n  purgeOldAsarBackups(stageDir);\n\n', '', 1);
+    },
   },
 ];
 

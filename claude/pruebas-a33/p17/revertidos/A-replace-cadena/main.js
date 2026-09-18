@@ -88,11 +88,11 @@ app.on('second-instance', () => {
 // Se registra un manejador de 'uncaughtException' ANTES de los dos
 // requires más frágiles del arranque (los que dependen de que el propio
 // código del parche esté completo: './db' y './security'). Si cualquiera
-// de los dos revienta, el manejador hace EXACTAMENTE lo mismo que
-// Restaurar-backup.bat: localizar el `app.asar.bak-*` más reciente
-// (mirando primero si hay una carpeta de datos personalizada configurada)
-// y restaurarlo sobre el `app.asar` real, dejando un mensaje claro y
-// pidiendo reabrir — sin reabrirse sola (mismo criterio que "Aplicar
+// de los dos revienta, el manejador intenta volver a la versión anterior
+// de app.asar — pero, desde P18 (18 sept 2026), SOLO a una cuya procedencia
+// se pueda demostrar (ver el bloque P18 más abajo): ya no elige «el
+// `app.asar.bak-*` más reciente» de la carpeta de datos. Deja un mensaje
+// claro y pide reabrir, sin reabrirse sola (mismo criterio que "Aplicar
 // parche": nunca reabrir automáticamente, para no arriesgar un bucle).
 //
 // Deliberadamente limitado a la ventana de arranque: en cuanto
@@ -144,6 +144,249 @@ function resolveDataDirForStartupRecovery() {
   }
 }
 
+// ------------------------------------------------------------------
+// P18 (18 sept 2026) — PROCEDENCIA DE LA COPIA DE app.asar QUE SE RESTAURA.
+//
+// Antes, el rescate restauraba «el app.asar.bak-* de nombre más alto» de la
+// carpeta de DATOS, sin saber de qué equipo, de qué instalación ni de qué
+// parche venía: en esta máquina, SEIS instalaciones distintas habían dejado
+// copias en la carpeta compartida, y con Drive sin montar habría puesto la
+// v0.1.28 sobre la 2.0.55. Ahora solo se restaura AUTOMÁTICAMENTE una copia
+// cuya procedencia se demuestra en el momento:
+//   · vive en la carpeta de recuperación LOCAL (%LOCALAPPDATA%, que ni Drive
+//     ni un perfil móvil sincronizan), con nombre `app.asar.pred-<op>` — que
+//     la retención heredada (`app.asar.bak-*`, 2 por mtime) no ve nunca;
+//   · la nombra una operación VERIFICADA del manifiesto local
+//     (asar-procedencia.json), escrita por ESTE equipo (installation-id de
+//     A3.3, que aquí solo se LEE);
+//   · su hash sigue siendo el que se guardó, y el app.asar instalado es
+//     EXACTAMENTE el que dejó esa operación;
+//   · y es la ÚNICA que cumple todo eso.
+// Si el app.asar instalado no se puede leer o no coincide, NO se restaura
+// sola: se pregunta (Cerrar por defecto; Esc/X = Cerrar). Las copias
+// `app.asar.bak-*` heredadas no son candidatas NUNCA: no hay forma de
+// demostrar de dónde salen. Se siguen creando (camino manual transitorio,
+// hasta D4) y el registro dice cuántas hay, pero ya no deciden nada.
+//
+// LÍMITE, dicho sin adornos: todo esto vive en main.js, DENTRO de app.asar.
+// Solo existe si Electron consigue montar el asar y cargar main.js. Con el
+// asar truncado, con la cabecera rota, sin main.js dentro o sin archivo, no
+// se ejecuta NI UNA línea de Panorama (medido el 18 sept 2026 con el build
+// empaquetado). Ese rescate es de la Fase 2 / D4 (mecanismo externo).
+//
+// Autocontenidas A PROPÓSITO, como leerConfigUbicacion(): el rescate las
+// llama antes de que existan las constantes de módulo, y justo cuando
+// require('./db') puede ser lo que ha fallado.
+// ------------------------------------------------------------------
+function rutaInstallationIdParaRescate() {
+  // La MISMA ubicación que cargarInstallationId() de db.js. Aquí solo se lee:
+  // crear el id es, y sigue siendo, cosa de db.js.
+  return path.join(app.getPath('appData'), 'panorama-app-config', 'installation-id');
+}
+
+function leerInstallationIdParaRescate() {
+  let v;
+  try {
+    v = fs.readFileSync(rutaInstallationIdParaRescate(), 'utf8');
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return { estado: 'ausente' };
+    return { estado: 'ilegible', motivo: String((e && e.code) || 'error de lectura') };
+  }
+  v = String(v).trim();
+  // Un id de sesión es el que db.js improvisa cuando NO pudo persistir el
+  // suyo: allí ya no vale como prueba de identidad, y aquí tampoco.
+  if (/^sesion-/.test(v)) return { estado: 'de-sesion' };
+  if (!/^[0-9a-f]{32}$/.test(v)) return { estado: 'ilegible', motivo: 'formato inesperado' };
+  return { estado: 'valido', id: v };
+}
+
+function carpetaRecuperacionAsar() {
+  // LOCAL de verdad: %LOCALAPPDATA% no lo sincroniza Drive ni viaja en un
+  // perfil móvil (%APPDATA% sí puede). Sin él no hay dónde guardar una copia
+  // fiable: null, y entonces no hay recuperación automática.
+  const base = process.platform === 'win32' ? process.env.LOCALAPPDATA : null;
+  return base ? path.join(base, 'panorama-app-recovery') : null;
+}
+
+function rutaManifiestoProcedencia() {
+  return path.join(app.getPath('appData'), 'panorama-app-config', 'asar-procedencia.json');
+}
+
+function leerManifiestoProcedencia() {
+  let txt;
+  try {
+    txt = fs.readFileSync(rutaManifiestoProcedencia(), 'utf8');
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return { estado: 'ausente' };
+    return { estado: 'ilegible', motivo: String((e && e.code) || 'error de lectura') };
+  }
+  let j;
+  try {
+    j = JSON.parse(txt);
+  } catch (e) {
+    return { estado: 'ilegible', motivo: 'JSON roto o truncado' };
+  }
+  if (!j || typeof j !== 'object' || j.v !== 1 || !Array.isArray(j.operaciones)) {
+    return { estado: 'ilegible', motivo: 'estructura inesperada' };
+  }
+  return { estado: 'valido', manifiesto: j };
+}
+
+// originalFs: la ruta puede terminar en «.asar», y el fs parcheado de Electron
+// la trataría como un archivo DE DENTRO de ese asar.
+// Nombre propio a propósito: el hash del rekey (sha256DeArchivo, más abajo)
+// devuelve un objeto, y otra declaración de módulo con este nombre la sustituiría.
+function sha256HexArchivoP18(ruta) {
+  return crypto.createHash('sha256').update(originalFs.readFileSync(ruta)).digest('hex');
+}
+
+// Versión leída de la CABECERA del asar (su package.json), sin ejecutar ni
+// extraer nada. null si no es un asar legible.
+function versionDeAsar(ruta) {
+  let fd;
+  try {
+    fd = originalFs.openSync(ruta, 'r');
+    const h = Buffer.alloc(16);
+    if (originalFs.readSync(fd, h, 0, 16, 0) !== 16) return null;
+    const S = h.readUInt32LE(4);
+    const L = h.readUInt32LE(12);
+    if (!S || !L || L > 64 * 1024 * 1024) return null;
+    const hb = Buffer.alloc(L);
+    if (originalFs.readSync(fd, hb, 0, L, 16) !== L) return null;
+    const pj = JSON.parse(hb.toString('utf8')).files['package.json'];
+    if (!pj || !(pj.size > 0) || pj.size > 1024 * 1024) return null;
+    const pb = Buffer.alloc(pj.size);
+    if (originalFs.readSync(fd, pb, 0, pj.size, 8 + S + Number(pj.offset)) !== pj.size) return null;
+    const v = JSON.parse(pb.toString('utf8')).version;
+    return typeof v === 'string' && /^\d+\.\d+\.\d+/.test(v) ? v : null;
+  } catch (e) {
+    return null;
+  } finally {
+    if (fd !== undefined) {
+      try {
+        originalFs.closeSync(fd);
+      } catch (e) {
+        /* da igual */
+      }
+    }
+  }
+}
+
+// Qué se puede hacer para recuperar. NO escribe nada.
+//   'auto'      → exactamente UNA predecesora demostrada, y el app.asar
+//                  instalado es EXACTAMENTE el que dejó su operación.
+//   'confirmar' → exactamente UNA predecesora demostrada, pero el app.asar
+//                  instalado no se puede leer o no coincide con lo verificado:
+//                  puede ser corrupción, un instalador, otro proceso o un
+//                  estado que el manifiesto ya no representa. No se distingue
+//                  sola: decide una persona.
+//   'no'        → no hay recuperación verificable (sin identidad, sin
+//                  manifiesto, manifiesto ilegible, sin copia, hash de la copia
+//                  que no cuadra, o AMBIGÜEDAD: más de una candidata).
+function analizarRecuperacionAsar(asarInstalado) {
+  const r = { decision: 'no', motivo: '', manifiesto: null, operacion: null, rutaCopia: null };
+  const ident = leerInstallationIdParaRescate();
+  if (ident.estado !== 'valido') {
+    r.motivo = `la identidad de este equipo (installation-id) está ${ident.estado}`;
+    return r;
+  }
+  const dir = carpetaRecuperacionAsar();
+  if (!dir) {
+    r.motivo = 'no hay carpeta de recuperación local';
+    return r;
+  }
+  const man = leerManifiestoProcedencia();
+  r.manifiesto = man.estado;
+  if (man.estado === 'ausente') {
+    r.motivo = 'no hay ninguna operación de parcheo registrada en este equipo';
+    return r;
+  }
+  if (man.estado !== 'valido') {
+    r.motivo = `el registro de procedencia no se puede leer (${man.motivo})`;
+    return r;
+  }
+  const HEX64 = /^[0-9a-f]{64}$/;
+  const candidatas = [];
+  for (const op of man.manifiesto.operaciones) {
+    if (!op || typeof op !== 'object') continue;
+    if (op.estado !== 'verificada') continue; // ni 'preparada' ni 'fallida'
+    if (op.installation_id !== ident.id) continue; // de otro equipo
+    if (!HEX64.test(op.sha256_anterior) || !HEX64.test(op.sha256_nuevo_real) || !HEX64.test(op.sha256_copia_local)) continue;
+    if (op.sha256_anterior === op.sha256_nuevo_real) continue; // reaplicar lo mismo: no aporta rescate
+    if (op.sha256_copia_local !== op.sha256_anterior) continue;
+    if (typeof op.nombre_copia !== 'string' || !/^app\.asar\.pred-[0-9a-f]{16}$/.test(op.nombre_copia)) continue;
+    const rutaCopia = path.join(dir, op.nombre_copia);
+    let shaCopia;
+    try {
+      shaCopia = sha256HexArchivoP18(rutaCopia);
+    } catch (e) {
+      continue; // copia local ausente o ilegible
+    }
+    if (shaCopia !== op.sha256_anterior) continue; // truncada o alterada
+    candidatas.push({ op, rutaCopia });
+  }
+  if (!candidatas.length) {
+    r.motivo = 'ninguna operación verificada de este equipo tiene su copia local intacta';
+    return r;
+  }
+  let shaInstalado = null;
+  try {
+    shaInstalado = sha256HexArchivoP18(asarInstalado);
+  } catch (e) {
+    shaInstalado = null;
+  }
+  const exactas = shaInstalado ? candidatas.filter((c) => c.op.sha256_nuevo_real === shaInstalado) : [];
+  if (exactas.length > 1) {
+    r.motivo = `hay ${exactas.length} operaciones que corresponden al app.asar instalado: ambigüedad`;
+    return r;
+  }
+  if (exactas.length === 1) {
+    Object.assign(r, { decision: 'auto', operacion: exactas[0].op, rutaCopia: exactas[0].rutaCopia });
+    r.motivo = 'predecesora verificada del app.asar instalado';
+    return r;
+  }
+  if (candidatas.length > 1) {
+    r.motivo = `hay ${candidatas.length} predecesoras verificadas y ninguna corresponde al app.asar instalado: ambigüedad`;
+    return r;
+  }
+  Object.assign(r, { decision: 'confirmar', operacion: candidatas[0].op, rutaCopia: candidatas[0].rutaCopia });
+  r.motivo = shaInstalado
+    ? 'el app.asar instalado no coincide con la instalación verificada'
+    : 'el app.asar instalado no se puede leer';
+  return r;
+}
+
+// Guarda el asar actual (como antes) y pone encima la predecesora, y RELEE el
+// resultado: si lo restaurado no tiene el hash de la copia, se dice, no se da
+// por bueno. Se usa copyFileSync sobre el archivo real a propósito: es lo que
+// ya estaba probado con la app en marcha (renombrar encima de un asar montado
+// puede no estar permitido en Windows).
+function restaurarPredecesoraVerificada(a, asarInstalado) {
+  if (originalFs.existsSync(asarInstalado)) {
+    originalFs.copyFileSync(
+      asarInstalado,
+      path.join(process.resourcesPath, 'app.asar.broken-' + new Date().toISOString().replace(/[:.]/g, '-'))
+    );
+  }
+  originalFs.copyFileSync(a.rutaCopia, asarInstalado);
+  if (sha256HexArchivoP18(asarInstalado) !== a.operacion.sha256_anterior) {
+    throw new Error('el app.asar restaurado no tiene el hash de la copia verificada');
+  }
+}
+
+// Solo para SOPORTE: qué copias heredadas hay. No decide nada.
+function describirCopiasHeredadasParaSoporte() {
+  try {
+    const dir = resolveDataDirForStartupRecovery();
+    if (!dir) return 'copias heredadas: carpeta de datos no resuelta';
+    const n = originalFs.readdirSync(dir).filter((f) => f.startsWith('app.asar.bak-')).length;
+    const mayor = findLatestAsarBackupForRecovery(dir);
+    return `copias heredadas app.asar.bak-*: ${n}${mayor ? ` (la de nombre más alto es ${mayor})` : ''} — NO se usan: no tienen procedencia verificable`;
+  } catch (e) {
+    return 'copias heredadas: no se pudieron contar';
+  }
+}
+
 let startupRecoveryArmed = true;
 function handleFatalStartupError(err) {
   if (!startupRecoveryArmed) return; // ya pasado el arranque: comportamiento normal de Electron
@@ -158,54 +401,96 @@ function handleFatalStartupError(err) {
   } catch (e) {
     /* si ni el log se puede escribir, se sigue igualmente con la recuperación */
   }
+  // P18: qué se puede hacer, y por qué. Nada de esto escribe.
+  const realAsar = path.join(process.resourcesPath, 'app.asar');
+  const logRescate = (linea) => {
+    try {
+      fs.appendFileSync(path.join(app.getPath('userData'), 'app.log'), `[${new Date().toISOString()}] ${linea}\n`, 'utf8');
+    } catch (e) {
+      /* no crítico */
+    }
+  };
+  let analisis;
   try {
-    const dataDir = resolveDataDirForStartupRecovery();
-    if (!dataDir) {
-      // P9: location.json existe pero no se puede usar. No se restaura nada:
-      // no se sabe cuál es la carpeta de datos buena, y elegir la de por
-      // defecto podría instalar una copia de app.asar de otra época.
-      dialog.showErrorBox(
-        'Panorama del Servicio no pudo iniciar',
-        'Ha ocurrido un error al arrancar.\n\nDetalle técnico:\n' +
-          detail +
-          '\n\nAdemás, la configuración de ubicación de datos no puede leerse, así que NO se ha restaurado ' +
-          'automáticamente ninguna copia de seguridad de app.asar.\n\nPide un parche o instalador nuevo.\n\n(código PS-1007)'
-      );
-      app.exit(1);
-      return;
-    }
-    const backupName = findLatestAsarBackupForRecovery(dataDir);
-    const realAsar = path.join(process.resourcesPath, 'app.asar');
-    if (!backupName) {
-      dialog.showErrorBox(
-        'Panorama del Servicio no pudo iniciar',
-        'Ha ocurrido un error al arrancar y no se ha encontrado ninguna copia de seguridad de ' +
-          'app.asar para restaurarla automáticamente.\n\nDetalle técnico:\n' +
-          detail +
-          '\n\nSi tienes "Restaurar-backup.bat" (junto a app.asar, en la carpeta "resources"), ' +
-          'ejecútalo. Si no, pide un parche o instalador nuevo.\n\n(código PS-1007)'
-      );
-      app.exit(1);
-      return;
-    }
-    const backupPath = path.join(dataDir, backupName);
-    if (originalFs.existsSync(realAsar)) {
-      const brokenCopy = path.join(
-        process.resourcesPath,
-        'app.asar.broken-' + new Date().toISOString().replace(/[:.]/g, '-')
-      );
-      originalFs.copyFileSync(realAsar, brokenCopy);
-    }
-    originalFs.copyFileSync(backupPath, realAsar);
+    analisis = analizarRecuperacionAsar(realAsar);
+  } catch (e) {
+    analisis = { decision: 'no', motivo: `no se pudo analizar la recuperación: ${String((e && e.message) || e)}`, manifiesto: null };
+  }
+  logRescate(`PS-1007 — recuperación: ${analisis.decision} (${analisis.motivo}). ${describirCopiasHeredadasParaSoporte()}.`);
+  const queSeRestaura = (op) =>
+    `la versión ${op.version_anterior || 'anterior'} que había en este equipo antes del parche del ` +
+    `${String(op.verificada_at || op.creada_at || '').slice(0, 10) || '(fecha desconocida)'}`;
+  // Sin procedencia verificable: se informa y se cierra. NO se ofrece
+  // Restaurar-backup.bat: P18 demostró que tampoco sabe de dónde sale la copia.
+  const sinRecuperacion = (codigo) => {
     dialog.showErrorBox(
-      'Panorama del Servicio no pudo iniciar — restaurado automáticamente',
+      'Panorama del Servicio no pudo iniciar',
       'Ha ocurrido un error al arrancar.\n\nDetalle técnico:\n' +
         detail +
-        '\n\nSe ha restaurado automáticamente la última copia de seguridad que sí funcionaba (' +
-        backupName +
-        ').\n\nCierra este mensaje y vuelve a abrir "Panorama del Servicio" tú mismo — no se reabre ' +
-        'sola.\n\n(código PS-1007)'
+        '\n\nNo hay ninguna copia de app.asar cuya procedencia se pueda verificar en este equipo, así que NO ' +
+        'se ha restaurado nada automáticamente (motivo: ' +
+        analisis.motivo +
+        ').\n\nReinstala Panorama del Servicio con su instalador, o aplica un parche soportado. Tus datos no ' +
+        'se han tocado.\n\n(código ' +
+        codigo +
+        ')'
     );
+  };
+  try {
+    if (analisis.decision === 'auto') {
+      restaurarPredecesoraVerificada(analisis, realAsar);
+      logRescate(`PS-1007 — restaurada automáticamente la predecesora verificada de la operación ${analisis.operacion.operation_id}.`);
+      dialog.showErrorBox(
+        'Panorama del Servicio no pudo iniciar — restaurado automáticamente',
+        'Ha ocurrido un error al arrancar.\n\nDetalle técnico:\n' +
+          detail +
+          '\n\nSe ha restaurado automáticamente ' +
+          queSeRestaura(analisis.operacion) +
+          '. Es la copia verificada que guardó este mismo equipo al aplicar ese parche.\n\nCierra este ' +
+          'mensaje y vuelve a abrir "Panorama del Servicio" tú mismo — no se reabre sola.\n\n(código PS-1007)'
+      );
+    } else if (analisis.decision === 'confirmar') {
+      let eleccion = 0;
+      try {
+        eleccion = dialog.showMessageBoxSync({
+          type: 'warning',
+          title: 'Panorama del Servicio no pudo iniciar',
+          message: 'El archivo actual no coincide con la instalación verificada.',
+          detail:
+            'Ha ocurrido un error al arrancar, y el app.asar instalado ' +
+            (analisis.motivo === 'el app.asar instalado no se puede leer' ? 'no se puede leer' : 'no es el que dejó el último parche verificado') +
+            '. Puede ser una corrupción, un instalador, otro programa, o un estado que este equipo ya no tiene ' +
+            'registrado — no se puede distinguir solo, así que no se restaura nada sin preguntar.\n\n' +
+            'Sí hay una copia verificada: ' +
+            queSeRestaura(analisis.operacion) +
+            '.\n\nDetalle técnico:\n' +
+            detail +
+            '\n\n(código PS-1027)',
+          buttons: ['Cerrar', 'Restaurar la versión anterior verificada'],
+          defaultId: 0,
+          cancelId: 0,
+          noLink: true,
+        });
+      } catch (e) {
+        // Si no se puede preguntar, no se restaura: preguntar es la condición.
+        eleccion = 0;
+        logRescate(`PS-1027 — no se pudo mostrar la confirmación (${String((e && e.message) || e)}); no se restaura nada.`);
+      }
+      if (eleccion === 1) {
+        restaurarPredecesoraVerificada(analisis, realAsar);
+        logRescate(`PS-1027 — restaurada POR CONFIRMACIÓN EXPLÍCITA la predecesora de la operación ${analisis.operacion.operation_id}.`);
+        dialog.showErrorBox(
+          'Panorama del Servicio — versión anterior restaurada',
+          'Se ha restaurado ' +
+            queSeRestaura(analisis.operacion) +
+            '.\n\nVuelve a abrir "Panorama del Servicio" tú mismo — no se reabre sola.\n\n(código PS-1027)'
+        );
+      } else {
+        logRescate('PS-1027 — cerrado sin restaurar (elegido «Cerrar», o Esc/X).');
+      }
+    } else {
+      sinRecuperacion(analisis.manifiesto === 'ilegible' ? 'PS-1026' : 'PS-1025');
+    }
   } catch (recoveryError) {
     const recoveryDetail = String((recoveryError && recoveryError.message) || recoveryError);
     try {
@@ -217,14 +502,17 @@ function handleFatalStartupError(err) {
     } catch (e) {
       /* no crítico */
     }
+    // P18: no se recomienda Restaurar-backup.bat — tampoco verifica la
+    // procedencia de la copia que restaura. Hasta D4, la salida soportada es
+    // reinstalar o aplicar un parche.
     dialog.showErrorBox(
       'Panorama del Servicio no pudo iniciar, y la recuperación automática también falló',
       'Error original:\n' +
         detail +
         '\n\nError al intentar recuperar:\n' +
         recoveryDetail +
-        '\n\nSi tienes "Restaurar-backup.bat" (junto a app.asar, en la carpeta "resources"), ' +
-        'ejecútalo. Si no, pide un parche o instalador nuevo.\n\n(código PS-1008)'
+        '\n\nReinstala Panorama del Servicio con su instalador, o aplica un parche soportado. Tus datos no se ' +
+        'han tocado.\n\n(código PS-1008)'
     );
   }
   app.exit(1);
@@ -422,17 +710,19 @@ const ERROR_CODES = {
     titulo: 'Fallo no capturado durante el arranque — recuperado automáticamente',
     explicacion:
       'Algo rompió el arranque muy pronto (por ejemplo, un parche mal empaquetado) y la app lo ' +
-      'detectó antes de mostrar el diálogo genérico de Electron. Se restauró sola la última copia ' +
-      'de seguridad de app.asar que sí funcionaba — hay que volver a abrir la app a mano, no se ' +
-      'reabre sola.',
+      'detectó antes de mostrar el diálogo genérico de Electron. Se restauró sola la versión anterior ' +
+      'VERIFICADA: la copia que guardó este mismo equipo al aplicar el último parche, y solo porque el ' +
+      'app.asar instalado era exactamente el que dejó ese parche. Hay que volver a abrir la app a mano, no ' +
+      'se reabre sola. OJO: esto solo puede ocurrir si Electron consigue cargar el app.asar; si el archivo ' +
+      'está truncado, sin cabecera o no existe, la app no llega a ejecutarse y no hay recuperación posible ' +
+      'desde dentro.',
   },
   'PS-1008': {
     titulo: 'Fallo no capturado durante el arranque — la recuperación automática también falló',
     explicacion:
-      'Además de fallar el arranque, no se pudo restaurar ningún backup de app.asar automáticamente ' +
-      '(sin copias de seguridad disponibles, o sin permisos para escribir en la carpeta de ' +
-      'instalación). Usa "Restaurar-backup.bat" (junto a app.asar, en la carpeta "resources") si lo ' +
-      'tienes, o pide un parche/instalador nuevo.',
+      'Había una copia verificada que restaurar, pero la restauración falló (por ejemplo, sin permisos ' +
+      'para escribir en la carpeta de instalación, o el resultado no tenía el hash esperado). Reinstala la ' +
+      'app con su instalador, o aplica un parche soportado. Tus datos no se tocan.',
   },
   'PS-1009': {
     titulo: 'No se encontró la base de datos en la carpeta de datos personalizada',
@@ -541,6 +831,69 @@ const ERROR_CODES = {
       'con otra base de datos o creando una vacía. Ahora se cierra sin abrir, crear ni modificar ninguna base ' +
       'de datos y sin tocar la protección de apagado. Hay que corregir ese archivo. No lo borres: sin él, la ' +
       'app usaría la carpeta de datos por defecto.',
+  },
+  'PS-1021': {
+    titulo: 'Se iba a usar la carpeta de datos LOCAL de este equipo',
+    explicacion:
+      'La app llegó a la carpeta de datos por defecto por un camino de reserva: la carpeta configurada no ' +
+      'estaba disponible (PS-1005), no tenía base de datos (PS-1009), no se pudo comprobar (PS-1022), o ya ' +
+      'no hay ninguna configurada. Antes de abrir —o de crear— nada ahí, la app pregunta y enseña qué ' +
+      'encontró: fecha y tamaño de esa base de datos local, que puede ser mucho más antigua que la de ' +
+      'verdad. Cerrar es lo que se hace por defecto; usarla o crear una vacía exige elegirlo expresamente. ' +
+      'Mientras no se elige, no se abre, no se crea y no se toca nada.',
+  },
+  'PS-1022': {
+    titulo: 'La base de datos de la carpeta configurada no se puede comprobar',
+    explicacion:
+      'El archivo está donde debe, pero no se pudo leer ni verificar en el tiempo de espera (bloqueado por ' +
+      'otro programa, permisos, disco o red con problemas, sincronización a medias). Antes, la app se ' +
+      'pasaba a la carpeta de datos local en silencio; ahora se para y pregunta: reintentar, usar los datos ' +
+      'locales de este equipo a sabiendas, o cerrar. No se abre ninguna base de datos hasta que se elija.',
+  },
+  'PS-1023': {
+    titulo: 'La base de datos local no es utilizable',
+    explicacion:
+      'En la carpeta de datos por defecto hay un "panorama.sqlite3" que existe pero no es una base de datos ' +
+      'reconocible: está vacío (0 bytes), no empieza por la cabecera de SQLite, o no se puede comprobar. La ' +
+      'app se cierra sin tocarlo: NO lo abre, NO lo sustituye, NO lo vacía y NO crea otra base encima. Un ' +
+      'archivo así puede ser una copia a medias o un resto de un fallo anterior, y borrarlo o pisarlo sería ' +
+      'destruir la única pista de lo que pasó.',
+  },
+  'PS-1024': {
+    titulo: 'No se pudo dejar constancia de la ubicación de datos de este equipo',
+    explicacion:
+      'La app usa una carpeta de datos configurada, pero no pudo guardar (y releer) la constancia de ello en ' +
+      'la configuración local de Windows. Esa constancia es la que impide que, más adelante y sin ' +
+      'location.json, un arranque confunda este equipo con una instalación nueva. La app sigue funcionando ' +
+      'con normalidad, pero esa defensa queda degradada hasta que se pueda escribir: revisa los permisos de ' +
+      'la carpeta de configuración. El registro local de ubicaciones de A3.3 sigue guardando la misma ' +
+      'información por su cuenta.',
+  },
+  'PS-1025': {
+    titulo: 'Fallo al arrancar sin ninguna copia de app.asar verificable',
+    explicacion:
+      'El arranque falló y no hay ninguna copia de app.asar cuya procedencia se pueda demostrar en este ' +
+      'equipo, así que no se restaura nada. Solo cuenta una copia que este equipo guardó en su carpeta ' +
+      'LOCAL de recuperación al aplicar un parche y que quedó verificada. Las copias antiguas ' +
+      '(app.asar.bak-…) de la carpeta de datos no cuentan: pueden venir de otro equipo, de otra instalación ' +
+      'o de otra época. Es lo normal hasta que se aplique el primer parche con esta versión. Reinstala la ' +
+      'app con su instalador, o aplica un parche soportado.',
+  },
+  'PS-1026': {
+    titulo: 'El registro de procedencia de app.asar no se puede leer',
+    explicacion:
+      'El arranque falló, y el archivo local que registra de dónde sale cada copia de app.asar ' +
+      '(asar-procedencia.json) existe pero está dañado o incompleto. Sin él no se puede demostrar nada, así ' +
+      'que no se restaura ninguna copia. No lo borres: es la pista de lo que pasó. Reinstala la app con su ' +
+      'instalador, o aplica un parche soportado.',
+  },
+  'PS-1027': {
+    titulo: 'El app.asar instalado no coincide con la instalación verificada',
+    explicacion:
+      'El arranque falló y el app.asar instalado no es el que dejó el último parche verificado (o no se ' +
+      'puede leer). Puede ser una corrupción, un instalador, otro programa o un estado que este equipo ya no ' +
+      'tiene registrado, y eso no se puede distinguir solo. Por eso no se restaura nada sin preguntar: la app ' +
+      'ofrece volver a la versión anterior verificada, y "Cerrar" (o Esc) no toca nada.',
   },
   'PS-2001': {
     titulo: 'Datos del proyecto no encontrados al abrirlo',
@@ -1199,6 +1552,233 @@ function marcarUbicacionInicializada(dir, commitId) {
 }
 
 // ------------------------------------------------------------------
+// P22 (17 sept 2026) — «ESTE EQUIPO YA USÓ UNA UBICACIÓN DE DATOS PROPIA»
+//
+// Sin esta constancia, un arranque sin `location.json` no puede distinguir una
+// instalación nueva de verdad de un equipo que se quedó sin su configuración:
+// los dos ven la carpeta por defecto vacía o con restos, y hoy los dos
+// terminaban creando o abriendo una base de datos local sin preguntar.
+//
+// Vive en la carpeta de configuración LOCAL (la misma que location.json, el
+// registro de A3.3 y el installation-id) porque su función es recordar algo que
+// la carpeta de datos ya no puede demostrar por sí sola.
+//
+//   { "v":1,
+//     "personalizada": { "clave_sha256": "<sha256 de la ruta normalizada>",
+//                        "compartida": true|false,
+//                        "primera_vez": "<ISO>", "ultima_vez": "<ISO>" },
+//     "decisiones": [ { "que": "volver-a-por-defecto", "at": "<ISO>" } ] }
+//
+// La RUTA NO se guarda: solo su hash. Con eso basta para responder «¿hubo
+// alguna vez una ubicación propia?» y para saber si la de ahora es la misma,
+// sin dejar escrita una ruta que puede identificar a una persona o un cliente.
+//
+// NADIE la borra: ni PS-1005, ni PS-1009, ni un fallo de Drive, ni una sesión
+// local temporal. «Volver a la carpeta por defecto» AÑADE su decisión, con
+// fecha, en vez de borrar la historia.
+// ------------------------------------------------------------------
+function rutaHistorialUbicacion() {
+  return path.join(app.getPath('appData'), 'panorama-app-config', 'historial-ubicacion.json');
+}
+function claveHashUbicacion(dir) {
+  return crypto.createHash('sha256').update(claveUbicacion(dir), 'utf8').digest('hex');
+}
+
+// Estados explícitos, igual que el registro de ubicaciones: un archivo que
+// existe y no se entiende NO es «no hay historial».
+function leerHistorialUbicacion() {
+  let txt;
+  try {
+    txt = fs.readFileSync(rutaHistorialUbicacion(), 'utf8');
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return { ok: true, historial: null };
+    return { ok: false, motivo: `no se pudo leer el historial de ubicación (${(e && e.code) || e})` };
+  }
+  try {
+    const j = JSON.parse(txt.replace(/^﻿/, ''));
+    if (!j || j.v !== 1 || typeof j !== 'object') return { ok: false, motivo: 'el historial de ubicación tiene un formato no reconocido' };
+    return { ok: true, historial: j };
+  } catch (e) {
+    return { ok: false, motivo: 'el historial de ubicación no es JSON válido' };
+  }
+}
+
+// Escritura atómica (tmp + fsync + rename) y VERIFICADA releyendo, igual que el
+// registro de ubicaciones: esto es evidencia de integridad, no una preferencia.
+// Devuelve { ok } o { ok:false, motivo } — nunca falla en silencio.
+function guardarHistorialUbicacion(j) {
+  const ruta = rutaHistorialUbicacion();
+  const tmp = `${ruta}.tmp-${process.pid}-${Date.now()}`;
+  const FSYNC_NO_SOPORTADO = new Set(['EINVAL', 'ENOSYS', 'ENOTSUP', 'EOPNOTSUPP']);
+  try {
+    fs.mkdirSync(path.dirname(ruta), { recursive: true });
+    const fd = fs.openSync(tmp, 'w');
+    try {
+      const buf = Buffer.from(JSON.stringify(j), 'utf8');
+      let escritos = 0;
+      while (escritos < buf.length) {
+        const n = fs.writeSync(fd, buf, escritos, buf.length - escritos, escritos);
+        if (!(n > 0)) throw new Error('writeSync sin progreso');
+        escritos += n;
+      }
+      try {
+        fs.fsyncSync(fd);
+      } catch (e) {
+        if (!FSYNC_NO_SOPORTADO.has(e && e.code)) throw new Error(`fsync falló (${(e && e.code) || '?'}): ${e && e.message}`);
+      }
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(tmp, ruta);
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch (e2) {}
+    return { ok: false, motivo: String((e && e.message) || e) };
+  }
+  const r = leerHistorialUbicacion();
+  if (!r.ok || !r.historial) return { ok: false, motivo: `tras escribir no se pudo releer: ${r.motivo || 'quedó vacío'}` };
+  return { ok: true, historial: r.historial };
+}
+
+// P22: mientras esta sesión no haya podido dejar la constancia, la ausencia de
+// historial NO puede leerse como «instalación nueva» (ver huboUbicacionPersonalizada).
+let historialUbicacionDegradado = null;   // { motivo } si no se pudo persistir
+
+function registrarUbicacionPersonalizada(dir, compartida) {
+  const ahora = new Date().toISOString();
+  const r = leerHistorialUbicacion();
+  if (!r.ok) {
+    historialUbicacionDegradado = { motivo: r.motivo };
+    appLog(`ERROR PS-1024 — ${r.motivo}; la constancia de ubicación propia queda degradada esta sesión.`);
+    return { ok: false, motivo: r.motivo };
+  }
+  const j = r.historial && typeof r.historial === 'object' ? r.historial : { v: 1 };
+  j.v = 1;
+  const clave = claveHashUbicacion(dir);
+  const antes = j.personalizada && j.personalizada.clave_sha256 === clave ? j.personalizada : null;
+  j.personalizada = {
+    clave_sha256: clave,
+    compartida: !!compartida,
+    primera_vez: (antes && antes.primera_vez) || (j.personalizada && j.personalizada.primera_vez) || ahora,
+    ultima_vez: ahora,
+  };
+  if (!Array.isArray(j.decisiones)) j.decisiones = [];
+  const g = guardarHistorialUbicacion(j);
+  if (!g.ok) {
+    historialUbicacionDegradado = { motivo: g.motivo };
+    appLog(`ERROR PS-1024 — no se pudo dejar constancia de la ubicación de datos propia: ${g.motivo}`);
+    return g;
+  }
+  historialUbicacionDegradado = null;
+  return g;
+}
+
+function registrarDecisionUbicacion(que) {
+  const r = leerHistorialUbicacion();
+  if (!r.ok) { appLog(`ERROR PS-1024 — no se pudo anotar la decisión «${que}»: ${r.motivo}`); return { ok: false, motivo: r.motivo }; }
+  const j = r.historial && typeof r.historial === 'object' ? r.historial : { v: 1 };
+  j.v = 1;
+  if (!Array.isArray(j.decisiones)) j.decisiones = [];
+  j.decisiones.push({ que, at: new Date().toISOString() });
+  const g = guardarHistorialUbicacion(j);
+  if (!g.ok) appLog(`ERROR PS-1024 — no se pudo anotar la decisión «${que}»: ${g.motivo}`);
+  return g;
+}
+
+// ¿Este equipo ha usado alguna vez una carpeta de datos propia?
+//
+// El historial es la señal principal, pero NO la única: un equipo que venga de
+// una versión anterior puede no tenerlo todavía. Se aceptan como equivalentes
+// dos señales que ya existían —el registro de ubicaciones de A3.3 con una clave
+// que NO es la carpeta por defecto, y la marca de la protección de apagado— y la
+// propia configuración válida de esta sesión. Y ante cualquier duda (historial
+// ilegible, o esta sesión no pudo escribirlo) se responde que SÍ: no poder
+// demostrar que hubo ubicación propia nunca puede valer como prueba de que no
+// la hubo.
+function huboUbicacionPersonalizada() {
+  if (customUserDataDirTarget) return { si: true, fuente: 'location.json de esta sesión' };
+  const r = leerHistorialUbicacion();
+  if (!r.ok) return { si: true, fuente: 'historial de ubicación ilegible (se supone que sí)', degradado: true };
+  if (r.historial && r.historial.personalizada && r.historial.personalizada.clave_sha256) {
+    return { si: true, fuente: 'historial de ubicación', desde: r.historial.personalizada.primera_vez, compartida: !!r.historial.personalizada.compartida };
+  }
+  if (historialUbicacionDegradado) return { si: true, fuente: 'no se pudo dejar constancia en esta sesión (se supone que sí)', degradado: true };
+  const reg = leerRegistroUbicaciones();
+  if (!reg.ok) return { si: true, fuente: 'registro de ubicaciones ilegible (se supone que sí)', degradado: true };
+  const claveDefecto = claveUbicacion(defaultUserDataDir);
+  const otras = Object.keys(reg.ubicaciones).filter((k) => k !== claveDefecto);
+  if (otras.length) return { si: true, fuente: 'registro de ubicaciones de A3.3' };
+  try {
+    if (isDriveSyncGuardEnabled()) return { si: true, fuente: 'protección de apagado activa' };
+  } catch (e) { /* si no se puede mirar, no aporta */ }
+  return { si: false };
+}
+
+// ------------------------------------------------------------------
+// P22 — ¿QUÉ HAY EN LA CARPETA DE DATOS LOCAL? CUATRO ESTADOS, NO DOS.
+//
+//   'ausente'         ENOENT DEMOSTRADO: de verdad no hay base de datos.
+//   'existente'       hay un archivo con la cabecera de SQLite.
+//   'invalida'        el archivo ESTÁ, pero no es utilizable: 0 bytes, o no
+//                     empieza por "SQLite format 3\0", o no es un archivo.
+//   'no-comprobable'  existe o no, pero no se puede determinar (EACCES, EBUSY,
+//                     EIO, unidad a medio montar...).
+//
+// 'invalida' NO es «no hay base de datos»: un archivo así puede ser una copia a
+// medias o el resto de un fallo, y tratarlo como ausencia llevaría a crear una
+// base nueva ENCIMA. Los dos últimos estados se cierran en falso (PS-1023).
+//
+// Solo se leen 16 bytes y el `stat`: NUNCA se abre la base de datos.
+// ------------------------------------------------------------------
+const CABECERA_SQLITE = Buffer.from('SQLite format 3\0', 'latin1');
+
+function estadoBaseDeDatosLocal(dir) {
+  const ruta = path.join(dir, 'panorama.sqlite3');
+  const visible = estadoDeArchivoEnRuta(ruta);
+  if (visible.estado === 'no-visible') return { estado: 'ausente' };
+  if (visible.estado === 'no-accesible') return { estado: 'no-comprobable', codigo: visible.codigo, motivo: 'no se puede comprobar si hay una base de datos' };
+  let st;
+  try {
+    st = fs.statSync(ruta);
+  } catch (e) {
+    return { estado: 'no-comprobable', codigo: (e && e.code) || '?', motivo: 'no se pudo consultar el archivo' };
+  }
+  if (!st.isFile()) return { estado: 'invalida', motivo: 'en su sitio hay algo que no es un archivo', size: st.size, mtime: st.mtimeMs };
+  if (st.size === 0) return { estado: 'invalida', motivo: 'el archivo está vacío (0 bytes)', size: 0, mtime: st.mtimeMs };
+  let cabecera = null;
+  let fd = null;
+  try {
+    fd = fs.openSync(ruta, 'r');
+    const buf = Buffer.alloc(CABECERA_SQLITE.length);
+    const n = fs.readSync(fd, buf, 0, buf.length, 0);
+    cabecera = buf.slice(0, n);
+  } catch (e) {
+    return { estado: 'no-comprobable', codigo: (e && e.code) || '?', motivo: 'no se pudo leer la cabecera del archivo', size: st.size, mtime: st.mtimeMs };
+  } finally {
+    if (fd !== null) { try { fs.closeSync(fd); } catch (e) {} }
+  }
+  if (!cabecera.equals(CABECERA_SQLITE)) {
+    return { estado: 'invalida', motivo: 'el archivo no empieza por la cabecera de una base de datos SQLite', size: st.size, mtime: st.mtimeMs };
+  }
+  let gen = false;
+  try { gen = fs.existsSync(ruta + '.gen'); } catch (e) { /* no crítico */ }
+  return { estado: 'existente', size: st.size, mtime: st.mtimeMs, gen };
+}
+
+// Texto para los diálogos: fecha, tamaño y si lleva el testigo de A3.3. Nunca
+// la ruta, y nunca nada que obligue a abrir la base de datos.
+function descripcionBaseDeDatosLocal(bd) {
+  if (bd.estado === 'ausente') return 'En este equipo no hay ninguna base de datos local.';
+  if (bd.estado === 'no-comprobable') return `Hay algo en su sitio, pero no se puede comprobar (${bd.codigo}).`;
+  if (bd.estado === 'invalida') return `Hay un archivo de base de datos local, pero no es utilizable: ${bd.motivo}.`;
+  const fecha = new Date(bd.mtime);
+  const dias = Math.floor((Date.now() - bd.mtime) / 86400000);
+  return 'En este equipo HAY datos locales:\n' +
+    `  · última modificación: ${fecha.toLocaleString()}${Number.isFinite(dias) && dias >= 1 ? ` (hace ${dias} día${dias === 1 ? '' : 's'})` : ''}\n` +
+    `  · tamaño: ${(bd.size / 1024).toFixed(0)} KB\n` +
+    `  · ${bd.gen ? 'con el testigo de integridad de A3.3' : 'sin el testigo de integridad de A3.3 (la escribió una versión anterior)'}`;
+}
+
+// ------------------------------------------------------------------
 // A3.3 BLOQUE 2 — POLÍTICA DE UBICACIÓN
 //
 // Regla de fondo: una carpeta PERSONALIZADA nunca se clasifica como 'local'.
@@ -1403,6 +1983,22 @@ function decidirCrearSiAusente() {
   // (sin registro) Primera vez de verdad: no consta la ubicación Y se ha
   // comprobado que la base de datos no está.
   if (!isUsingCustomDataLocationNow()) {
+    // P22: «carpeta por defecto vacía» solo es una primera ejecución si este
+    // equipo NO ha usado nunca una ubicación de datos propia. Si la ha usado
+    // —o si no se puede demostrar que no—, crear aquí una base vacía es
+    // justamente el error: hace falta que el usuario lo pida expresamente.
+    if (usuarioAutorizaCrearLocal) {
+      return { crear: true, motivo: 'el usuario autorizó expresamente crear una base de datos local vacía (PS-1021)' };
+    }
+    const hist = huboUbicacionPersonalizada();
+    if (hist.si) {
+      return {
+        crear: false,
+        historicaConocida: true,
+        motivo: `este equipo ya ha usado una carpeta de datos propia (${hist.fuente}): no se crea una base de ` +
+          'datos local vacía sin autorización expresa',
+      };
+    }
     return {
       crear: true,
       motivo: 'carpeta por defecto sin registro local y con la base de datos demostrablemente ausente ' +
@@ -8067,8 +8663,12 @@ function asarPatchHelperSource() {
 // igual bajo ELECTRON_RUN_AS_NODE que en el proceso principal normal.
 const fs = require('original-fs');
 const { spawn } = require('child_process');
+const crypto = require('crypto');
+const path = require('path');
 
-const [, , pidStr, backupAsar, realAsar, stagedAsar, logPath, exePath] = process.argv;
+// P18: los tres últimos argumentos atan este parche a su operación de
+// procedencia (registro local + copia local de la versión que se sustituye).
+const [, , pidStr, backupAsar, realAsar, stagedAsar, logPath, exePath, manifiestoPath, operationId, copiaLocal] = process.argv;
 const pid = parseInt(pidStr, 10);
 const MAX_WAIT_MS = 2 * 60 * 1000;
 const started = Date.now();
@@ -8101,7 +8701,132 @@ function cleanupStaged() {
   try { fs.unlinkSync(stagedAsar); } catch (e) { /* ya no estaba */ }
 }
 
+// ---- P18: registro de procedencia ----------------------------------------
+const NOMBRE_COPIA = /^app\\.asar\\.pred-[0-9a-f]{16}$/;
+
+function sha256(p) {
+  return crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+}
+
+function leerManifiesto() {
+  try {
+    const j = JSON.parse(fs.readFileSync(manifiestoPath, 'utf8'));
+    if (j && j.v === 1 && Array.isArray(j.operaciones)) return j;
+  } catch (e) { /* ausente o roto */ }
+  return null;
+}
+
+// Temporal + escritura completa + fsync + rename + RELECTURA.
+function guardarManifiesto(j) {
+  const txt = JSON.stringify(j, null, 2);
+  const tmp = manifiestoPath + '.tmp-' + process.pid + '-' + Date.now();
+  const buf = Buffer.from(txt, 'utf8');
+  try {
+    const fd = fs.openSync(tmp, 'w');
+    try {
+      let escritos = 0;
+      while (escritos < buf.length) {
+        const n = fs.writeSync(fd, buf, escritos, buf.length - escritos, escritos);
+        if (!(n > 0)) throw new Error('writeSync sin progreso');
+        escritos += n;
+      }
+      try { fs.fsyncSync(fd); } catch (e) {
+        if (['EINVAL', 'ENOSYS', 'ENOTSUP', 'EOPNOTSUPP'].indexOf(e && e.code) < 0) throw e;
+      }
+    } finally { fs.closeSync(fd); }
+    fs.renameSync(tmp, manifiestoPath);
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch (e2) { /* ya no estaba */ }
+    throw e;
+  }
+  if (fs.readFileSync(manifiestoPath, 'utf8') !== txt) throw new Error('la relectura del registro de procedencia no coincide');
+}
+
+function operacionDe(j) {
+  return j ? j.operaciones.find(function (o) { return o && o.operation_id === operationId; }) : null;
+}
+
+// Relee el app.asar REAL y la copia local. VERIFICADA solo si el instalado es
+// EXACTAMENTE el parche esperado y la copia conserva EXACTAMENTE la versión
+// anterior. OJO: eso prueba que el archivo instalado es el esperado, NO que la
+// app vaya a arrancar bien después — son cosas distintas.
+// Devuelve true si el app.asar instalado es el esperado.
+function verificarOperacion() {
+  let shaReal = null;
+  let shaCopia = null;
+  let motivo = null;
+  try { shaReal = sha256(realAsar); } catch (e) { motivo = 'no se pudo releer el app.asar instalado'; }
+  try { shaCopia = sha256(copiaLocal); } catch (e) { motivo = motivo || 'no se pudo releer la copia local de recuperación'; }
+  const j = leerManifiesto();
+  const op = operacionDe(j);
+  if (!op) {
+    log('ERROR P18: la operación ' + operationId + ' ya no está en el registro de procedencia; no se marca nada.');
+    return false; // sin la operación no se sabe qué hash esperar: no se reabre
+  }
+  if (!motivo && shaReal !== op.sha256_nuevo_esperado) motivo = 'el app.asar instalado no tiene el hash esperado';
+  if (!motivo && shaCopia !== op.sha256_anterior) motivo = 'la copia local ya no tiene el hash del app.asar anterior';
+  op.sha256_nuevo_real = shaReal;
+  const instaladoCorrecto = shaReal !== null && shaReal === op.sha256_nuevo_esperado;
+  if (motivo) {
+    op.estado = 'fallida';
+    op.motivo_fallo = motivo;
+    guardarManifiesto(j);
+    log('P18: operación ' + operationId + ' FALLIDA (' + motivo + '). La copia local se conserva, pero NO es candidata a restauración automática.');
+    return instaladoCorrecto;
+  }
+  op.estado = 'verificada';
+  op.verificada_at = new Date().toISOString();
+  op.motivo_fallo = null;
+  guardarManifiesto(j); // PRIMERO se confirma la nueva...
+  log('P18: operación ' + operationId + ' VERIFICADA: el app.asar instalado es exactamente el esperado y la copia local conserva la versión anterior. (Eso no prueba que la app vaya a arrancar bien.)');
+  retirarAnteriores(); // ...y SOLO DESPUÉS se retiran las viejas.
+  return instaladoCorrecto;
+}
+
+// Tras CONFIRMAR la nueva operación, queda solo ella: la predecesora del
+// app.asar instalado. Nunca al revés (borrar lo viejo y luego intentar lo nuevo).
+function retirarAnteriores() {
+  const dir = path.dirname(copiaLocal);
+  const j = leerManifiesto();
+  const nueva = operacionDe(j);
+  if (!nueva || nueva.estado !== 'verificada') {
+    log('P18: la nueva operación no aparece confirmada al releer; no se retira nada.');
+    return;
+  }
+  const viejas = j.operaciones.filter(function (o) { return o !== nueva; });
+  for (const o of viejas) {
+    if (o && typeof o.nombre_copia === 'string' && NOMBRE_COPIA.test(o.nombre_copia)) {
+      try { fs.unlinkSync(path.join(dir, o.nombre_copia)); } catch (e) { /* queda huérfana: sin entrada nunca es candidata */ }
+    }
+  }
+  j.operaciones = [nueva];
+  guardarManifiesto(j);
+  // Copias sin entrada (por ejemplo, de una preparación interrumpida).
+  let huerfanas = 0;
+  try {
+    for (const f of fs.readdirSync(dir)) {
+      if (NOMBRE_COPIA.test(f) && f !== nueva.nombre_copia) {
+        try { fs.unlinkSync(path.join(dir, f)); huerfanas++; } catch (e) { /* se intentará la próxima vez */ }
+      }
+    }
+  } catch (e) { /* no crítico */ }
+  log('P18: retiradas ' + viejas.length + ' operación(es) anterior(es) y ' + huerfanas + ' copia(s) huérfana(s); queda solo la predecesora del app.asar instalado.');
+}
+
 function applyPatch() {
+  // P18: sin su operación PREPARADA en el registro, no se toca nada.
+  if (!manifiestoPath || !operationId || !copiaLocal) {
+    log('ERROR P18: faltan los datos de la operación de procedencia. Parche NO aplicado, no se tocó nada.');
+    cleanupStaged();
+    return;
+  }
+  const previa = operacionDe(leerManifiesto());
+  if (!previa || previa.estado !== 'preparada') {
+    log('ERROR P18: la operación ' + operationId + ' no está PREPARADA en el registro de procedencia. Parche NO aplicado, no se tocó nada.');
+    cleanupStaged();
+    return;
+  }
+  let aplicado = false;
   try {
     if (!fs.existsSync(backupAsar)) {
       // Red de seguridad extra: si por lo que sea la copia previa no se
@@ -8111,13 +8836,35 @@ function applyPatch() {
       log('Aviso: la copia de seguridad no existía, se hizo aquí antes de aplicar.');
     }
     fs.copyFileSync(stagedAsar, realAsar);
+    aplicado = true;
     log('Parche aplicado correctamente sobre: ' + realAsar);
-    relaunchApp();
   } catch (e) {
     log('ERROR aplicando el parche: ' + (e && e.message ? e.message : String(e)));
+    try {
+      const j = leerManifiesto();
+      const op = operacionDe(j);
+      if (op) {
+        op.estado = 'fallida';
+        op.motivo_fallo = 'no se pudo aplicar el parche';
+        guardarManifiesto(j);
+      }
+    } catch (e2) {
+      log('ERROR P18: no se pudo marcar la operación como FALLIDA: ' + (e2 && e2.message ? e2.message : String(e2)));
+    }
   } finally {
     cleanupStaged();
   }
+  if (!aplicado) return;
+  let instaladoCorrecto = false;
+  try {
+    instaladoCorrecto = verificarOperacion();
+  } catch (e) {
+    log('ERROR P18: no se pudo cerrar la operación de procedencia (' + (e && e.message ? e.message : String(e)) + '); queda PREPARADA y NO es candidata a restauración automática.');
+    try { instaladoCorrecto = sha256(realAsar) === previa.sha256_nuevo_esperado; } catch (e2) { instaladoCorrecto = false; }
+  }
+  // Igual que antes: nunca reabrir un app.asar que pueda haber quedado a medias.
+  if (instaladoCorrecto) relaunchApp();
+  else log('No se reabre la app: el app.asar instalado no es exactamente el parche esperado.');
 }
 
 // v2.0.42: reabrir sola tras aplicar el parche -- pedido explícito del
@@ -8165,6 +8912,106 @@ function tick() {
 log('Ayudante de parche iniciado, esperando a que cierre el pid ' + pid + '...');
 tick();
 `;
+}
+
+// P18: escritura del registro de procedencia — temporal, escritura completa,
+// fsync, rename y RELECTURA. El mismo patrón que guardarHistorialUbicacion()
+// (P22) y escribirAtomico() (db.js). Lanza si no queda demostrado escrito.
+function guardarManifiestoProcedencia(j) {
+  const ruta = rutaManifiestoProcedencia();
+  const tmp = `${ruta}.tmp-${process.pid}-${Date.now()}`;
+  const FSYNC_NO_SOPORTADO = new Set(['EINVAL', 'ENOSYS', 'ENOTSUP', 'EOPNOTSUPP']);
+  const txt = JSON.stringify(j, null, 2);
+  try {
+    fs.mkdirSync(path.dirname(ruta), { recursive: true });
+    const fd = fs.openSync(tmp, 'w');
+    try {
+      const buf = Buffer.from(txt, 'utf8');
+      let escritos = 0;
+      while (escritos < buf.length) {
+        const n = fs.writeSync(fd, buf, escritos, buf.length - escritos, escritos);
+        if (!(n > 0)) throw new Error('writeSync sin progreso');
+        escritos += n;
+      }
+      try {
+        fs.fsyncSync(fd);
+      } catch (e) {
+        if (!FSYNC_NO_SOPORTADO.has(e && e.code)) throw new Error(`fsync falló (${(e && e.code) || '?'})`);
+      }
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(tmp, ruta);
+  } catch (e) {
+    try {
+      fs.unlinkSync(tmp);
+    } catch (e2) {
+      /* ya no estaba */
+    }
+    throw new Error(`no se pudo guardar el registro de procedencia: ${String((e && e.message) || e)}`);
+  }
+  if (fs.readFileSync(ruta, 'utf8') !== txt) {
+    throw new Error('la relectura del registro de procedencia no coincide con lo escrito');
+  }
+}
+
+// P18: prepara la operación ANTES de tocar el app.asar real. Si cualquier paso
+// falla, lanza: quien llama NO debe aplicar el parche. Y no deja nada que
+// pueda usarse para un rescate automático (la copia a medias se quita; una
+// entrada 'preparada' tampoco vale nunca como predecesora).
+function prepararOperacionAsar({ realAsar, stagedAsar, shaParcheElegido }) {
+  const ident = leerInstallationIdParaRescate();
+  if (ident.estado !== 'valido') throw new Error(`la identidad de este equipo (installation-id) está ${ident.estado}`);
+  const dir = carpetaRecuperacionAsar();
+  if (!dir) throw new Error('no hay carpeta de recuperación local (%LOCALAPPDATA%)');
+  const man = leerManifiestoProcedencia();
+  // Un registro que existe pero no se lee NO se pisa: es la pista de lo que pasó.
+  if (man.estado === 'ilegible') throw new Error(`el registro de procedencia existe pero no se puede leer (${man.motivo})`);
+  const j = man.estado === 'valido' ? man.manifiesto : { v: 1, installation_id: ident.id, operaciones: [] };
+
+  const operationId = crypto.randomBytes(8).toString('hex'); // 1
+  const nombreCopia = `app.asar.pred-${operationId}`;
+  const copia = path.join(dir, nombreCopia);
+  const shaAnterior = sha256HexArchivoP18(realAsar); // 2
+  // 7: lo que el ayudante va a instalar es EXACTAMENTE lo que se verificó al elegirlo.
+  const shaNuevoEsperado = sha256HexArchivoP18(stagedAsar);
+  if (shaNuevoEsperado !== shaParcheElegido) throw new Error('la copia preparada del parche no coincide con el archivo elegido');
+  // Reaplicar exactamente lo instalado no crea ninguna relación útil de rescate.
+  if (shaNuevoEsperado === shaAnterior) {
+    const e = new Error('el parche elegido es exactamente el app.asar que ya está instalado');
+    e.p18Identico = true;
+    throw e;
+  }
+  originalFs.mkdirSync(dir, { recursive: true });
+  try {
+    originalFs.copyFileSync(realAsar, copia); // 3
+    const shaCopia = sha256HexArchivoP18(copia); // 4: RELEÍDA, no el hash de origen
+    if (shaCopia !== shaAnterior) throw new Error('la copia local de recuperación no coincide con el app.asar instalado'); // 5
+    j.operaciones.push({
+      operation_id: operationId,
+      installation_id: ident.id,
+      estado: 'preparada',
+      sha256_anterior: shaAnterior,
+      version_anterior: versionDeAsar(copia), // 6: sin ejecutar nada
+      nombre_copia: nombreCopia,
+      sha256_copia_local: shaCopia,
+      sha256_nuevo_esperado: shaNuevoEsperado,
+      version_nueva_esperada: versionDeAsar(stagedAsar),
+      sha256_nuevo_real: null,
+      creada_at: new Date().toISOString(),
+      verificada_at: null,
+      motivo_fallo: null,
+    });
+    guardarManifiestoProcedencia(j); // 8
+    return { operationId, copia };
+  } catch (e) {
+    try {
+      originalFs.unlinkSync(copia);
+    } catch (e2) {
+      /* no llegó a crearse */
+    }
+    throw e;
+  }
 }
 
 function purgeOldAsarBackups(dir) {
@@ -8310,6 +9157,10 @@ async function changeUserDataLocation(parentWin) {
     return;
   }
 
+  // P22: constancia durable de que este equipo usa una carpeta de datos propia,
+  // en cuanto se guarda la elección (no al siguiente arranque).
+  registrarUbicacionPersonalizada(target, isShared);
+
   await modalAlert(
     parentWin,
     'La aplicación se va a reiniciar para usar la nueva carpeta de datos.\n\n' +
@@ -8333,6 +9184,10 @@ async function resetUserDataLocationToDefault(parentWin) {
     { title: 'Volver a la carpeta de datos por defecto', confirmLabel: 'Volver a la de por defecto' }
   );
   if (!confirmed) return;
+  // P22: la historia NO se borra. Se anota la decisión (con su fecha) y se
+  // quita solo location.json: así, si mañana aparece una base de datos local
+  // rara, la app sigue sabiendo que este equipo tuvo una ubicación propia.
+  registrarDecisionUbicacion('volver-a-por-defecto');
   try {
     fs.unlinkSync(configFile);
   } catch (e) {
@@ -8766,6 +9621,13 @@ function syncDriveSyncGuardWithLocation() {
   // P9: con location.json inutilizable no está demostrado que la ubicación
   // "no sea compartida", así que la protección se deja exactamente como está.
   if (configUbicacionNoResuelta) return;
+  // P22: una sesión LOCAL TEMPORAL (el usuario aceptó usar la carpeta local
+  // porque la suya no estaba disponible, o porque falta la configuración) no es
+  // un cambio de ubicación: no se desactiva la protección, no se borra su marca
+  // y no se pierde la señal de que este equipo usa una carpeta compartida.
+  // Volver a la carpeta por defecto A PROPÓSITO sí sigue sincronizándola: eso
+  // es una decisión permanente, no un camino de reserva.
+  if (sesionLocalTemporal) return;
   const shouldBeOn = isUsingSharedDataLocationNow();
   const isOn = isDriveSyncGuardEnabled();
   if (shouldBeOn && !isOn) {
@@ -8989,10 +9851,76 @@ async function applyAsarPatch(parentWin) {
 
   try {
     originalFs.copyFileSync(chosenPath, stagedAsar);
+  } catch (e) {
+    try {
+      originalFs.unlinkSync(stagedAsar);
+    } catch (e2) {
+      /* no llegó a crearse */
+    }
+    await modalAlert(
+      parentWin,
+      'No se tocó el archivo real de la aplicación. Detalle: ' + String((e && e.message) || e) + errorCodeSuffix('PS-1003'),
+      { title: 'No se pudo preparar el parche', danger: true }
+    );
+    return;
+  }
+
+  // P18: la operación de procedencia se prepara ANTES de tocar el app.asar
+  // real — copia LOCAL de la versión actual, releída y verificada, y entrada
+  // 'preparada' en el registro. Si cualquier paso falla, el parche NO se
+  // aplica: no se lanza el ayudante y no queda nada utilizable para un rescate.
+  // Va ANTES de la copia heredada y de su purga: un intento que falla aquí no
+  // deja un .bak nuevo ni rota los de la carpeta de datos (compartida).
+  let operacion;
+  try {
+    operacion = prepararOperacionAsar({ realAsar, stagedAsar, shaParcheElegido: hash });
+  } catch (e) {
+    try {
+      originalFs.unlinkSync(stagedAsar);
+    } catch (e2) {
+      /* ya no estaba */
+    }
+    if (e && e.p18Identico) {
+      await modalAlert(parentWin, 'Ese archivo es exactamente la versión que ya está instalada: no hay nada que aplicar.', {
+        title: 'El parche ya está instalado',
+      });
+      return;
+    }
+    await modalAlert(
+      parentWin,
+      'No se ha aplicado el parche y no se tocó el archivo real de la aplicación: antes de sustituirlo, la app ' +
+        'tiene que guardar y verificar una copia local de la versión actual para poder volver a ella, y no lo ' +
+        'ha conseguido. Detalle: ' +
+        String((e && e.message) || e) +
+        errorCodeSuffix('PS-1003'),
+      { title: 'No se pudo preparar el parche', danger: true }
+    );
+    return;
+  }
+
+  // Copia heredada (camino manual transitorio, hasta D4) y ayudante. Si algo
+  // falla antes de que el ayudante quede lanzado, se retira lo que creó ESTE
+  // intento: un .bak de más desplazaría a los históricos en la próxima purga.
+  const bakYaExistia = originalFs.existsSync(backupAsar);
+  const deshacerIntento = () => {
+    try {
+      originalFs.unlinkSync(stagedAsar);
+    } catch (e) {
+      /* ya no estaba */
+    }
+    if (!bakYaExistia) {
+      try {
+        originalFs.unlinkSync(backupAsar);
+      } catch (e) {
+        /* no llegó a crearse */
+      }
+    }
+  };
+  try {
     originalFs.copyFileSync(realAsar, backupAsar);
-    purgeOldAsarBackups(stageDir);
     fs.writeFileSync(helperPath, asarPatchHelperSource(), 'utf8');
   } catch (e) {
+    deshacerIntento();
     await modalAlert(
       parentWin,
       'No se tocó el archivo real de la aplicación. Detalle: ' + String((e && e.message) || e) + errorCodeSuffix('PS-1003'),
@@ -9004,7 +9932,18 @@ async function applyAsarPatch(parentWin) {
   try {
     const child = spawn(
       process.execPath,
-      [helperPath, String(process.pid), backupAsar, realAsar, stagedAsar, logPath, process.execPath],
+      [
+        helperPath,
+        String(process.pid),
+        backupAsar,
+        realAsar,
+        stagedAsar,
+        logPath,
+        process.execPath,
+        rutaManifiestoProcedencia(),
+        operacion.operationId,
+        operacion.copia,
+      ],
       {
         detached: true,
         stdio: 'ignore',
@@ -9013,6 +9952,7 @@ async function applyAsarPatch(parentWin) {
     );
     child.unref();
   } catch (e) {
+    deshacerIntento();
     await modalAlert(
       parentWin,
       'No se tocó el archivo real de la aplicación. Detalle: ' + String((e && e.message) || e) + errorCodeSuffix('PS-1004'),
@@ -9020,6 +9960,10 @@ async function applyAsarPatch(parentWin) {
     );
     return;
   }
+
+  // La retención heredada (2 copias por mtime) solo se aplica con el ayudante
+  // ya lanzado: un intento que no llegó hasta aquí no rota los .bak compartidos.
+  purgeOldAsarBackups(stageDir);
 
   await modalAlert(
     parentWin,
@@ -9487,8 +10431,10 @@ function delayMs(ms) {
 // applyCustomUserDataDirIfConfigured): ya con la splash visible, así que
 // aquí SÍ se puede esperar sin bloquear el proceso. Si tras esto sigue sin
 // poder acceder, para el arranque con un diálogo que hay que atender.
+// P22: devuelve 'seguir' o 'cerrar' — «Cerrar» (y Esc/la X) cierran la app en
+// vez de caer en la carpeta local.
 async function resolveUserDataDirFailureInteractively() {
-  if (!customUserDataDirFailure) return;
+  if (!customUserDataDirFailure) return 'seguir';
   const target = customUserDataDirFailure.attempted;
 
   const deadline = Date.now() + USERDATA_POST_READY_RETRY_MS;
@@ -9501,7 +10447,7 @@ async function resolveUserDataDirFailureInteractively() {
       app.setPath('userData', target);
       customUserDataDirFailure = null;
       appLog(`Carpeta de datos personalizada disponible tras esperar: ${target}`);
-      return;
+      return 'seguir';
     }
     customUserDataDirFailure = { attempted: target, error: err };
   }
@@ -9510,34 +10456,34 @@ async function resolveUserDataDirFailureInteractively() {
   // 20s aquí): no se sigue decidiendo en silencio. Se para hasta que el
   // usuario elija — reintentar (otra ronda igual de larga) o seguir con
   // datos locales por ahora, con conocimiento de causa.
+  //
+  // P22: la elección «datos locales» ya no es implícita ni a ciegas. El
+  // diálogo dice QUÉ hay en la carpeta local (fecha, tamaño), ofrece «Usar
+  // estos datos locales» o «Crear una base de datos local vacía» como botón
+  // EXPLÍCITO, y Esc/la X cierran la aplicación en vez de elegir lo local.
   for (;;) {
-    const choice = dialog.showMessageBoxSync(undefined, {
-      type: 'warning',
-      title: 'No se puede acceder a la carpeta de datos',
-      message: 'No se puede acceder a tu carpeta de datos configurada.',
-      detail:
+    const accion = preguntarPorLaCarpetaLocal({
+      codigo: 'PS-1005',
+      titulo: 'No se puede acceder a la carpeta de datos',
+      mensaje: 'No se puede acceder a tu carpeta de datos configurada.',
+      cuerpo:
         `Carpeta: ${customUserDataDirFailure.attempted}\n\n` +
         `Motivo: ${customUserDataDirFailure.error}\n\n` +
         'Esto suele pasar cuando Google Drive (u OneDrive) todavía no ha terminado de montar la unidad ' +
-        '— por ejemplo, justo tras encender el ordenador. Puedes esperar un poco más y reintentar, o abrir ' +
-        'la app con datos locales por ahora: no verás tus proyectos más recientes hasta que la carpeta de ' +
-        'verdad esté disponible y vuelvas a abrir la app.' +
-        errorCodeSuffix('PS-1005'),
-      buttons: ['Reintentar', 'Abrir con datos locales (temporal)'],
-      defaultId: 0,
-      cancelId: 1,
-      noLink: true,
+        '— por ejemplo, justo tras encender el ordenador. Puedes esperar un poco más y reintentar.',
+      etiquetaReintento: 'Reintentar',
     });
-    if (choice === 1) {
-      appLog(`Continuando con datos locales temporales — no se pudo acceder a: ${customUserDataDirFailure.attempted}`);
-      return;
+    if (accion === 'cerrar') return 'cerrar';
+    if (accion === 'local' || accion === 'crear') {
+      appLog(`Continuando con datos locales temporales (elección explícita) — no se pudo acceder a: ${customUserDataDirFailure.attempted}`);
+      return 'seguir';
     }
     const immediateErr = await probeWritableDirAsync(target);
     if (!immediateErr) {
       app.setPath('userData', target);
       customUserDataDirFailure = null;
       appLog(`Carpeta de datos personalizada disponible tras reintento manual: ${target}`);
-      return;
+      return 'seguir';
     }
     customUserDataDirFailure = { attempted: target, error: immediateErr };
 
@@ -9555,7 +10501,7 @@ async function resolveUserDataDirFailureInteractively() {
       }
       customUserDataDirFailure = { attempted: target, error: err2 };
     }
-    if (recovered) return;
+    if (recovered) return 'seguir';
     // sigue sin funcionar: vuelve a preguntar
   }
 }
@@ -9766,10 +10712,10 @@ function estadoDeArchivoEnRuta(p) {
 }
 
 async function checkCustomLocationDatabaseSanity() {
-  if (!customUserDataDirTarget || customUserDataDirFailure) return; // solo aplica con carpeta personalizada ya accesible
+  if (!customUserDataDirTarget || customUserDataDirFailure) return 'seguir'; // solo aplica con carpeta personalizada ya accesible
   const dbPath = path.join(app.getPath('userData'), 'panorama.sqlite3');
   const inicial = estadoDeArchivoEnRuta(dbPath);
-  if (inicial.estado === 'visible') return; // lo normal — ya está ahí
+  if (inicial.estado === 'visible') return 'seguir'; // lo normal — ya está ahí
 
   // Espera silenciosa primero (mismo margen que ya se usa para el montaje de la carpeta): un
   // archivo de este tamaño suele terminar de bajar en segundos una vez la carpeta ya está montada,
@@ -9781,7 +10727,7 @@ async function checkCustomLocationDatabaseSanity() {
     ultimo = estadoDeArchivoEnRuta(dbPath);
     if (ultimo.estado === 'visible') {
       appLog(`Base de datos de la carpeta personalizada apareció tras esperar: ${dbPath}`);
-      return;
+      return 'seguir';
     }
   }
 
@@ -9790,15 +10736,44 @@ async function checkCustomLocationDatabaseSanity() {
   // una indisponibilidad en una creación. Se cae a la carpeta por defecto por
   // esta sesión, que es lo que ya hace la app cuando la carpeta no responde, y
   // NO se autoriza ninguna creación en la personalizada.
+  // P22 — ESTE ERA EL CAMINO PEOR: la base de datos configurada EXISTE pero no
+  // se puede comprobar, y hasta ahora la app se pasaba a la carpeta local EN
+  // SILENCIO; lo siguiente que veía el usuario era la contraseña de siempre,
+  // con otra base de datos debajo. Ahora se para y se pregunta (PS-1022), y no
+  // se abre NADA local hasta que se elija.
   if (ultimo.estado === 'no-accesible') {
-    appLog(`A3.3 — la base de datos de la carpeta personalizada no se puede comprobar (${ultimo.codigo}): ` +
-      'no se ofrece empezar desde cero. Se usa la carpeta por defecto por esta sesión.');
-    app.setPath('userData', defaultUserDataDir);
-    customUserDataDirFailure = {
-      attempted: customUserDataDirTarget,
-      error: `No se pudo comprobar panorama.sqlite3 ahí (${ultimo.codigo}: ${ultimo.motivo})`,
-    };
-    return;
+    appLog(`ERROR PS-1022 — la base de datos de la carpeta configurada no se puede comprobar (${ultimo.codigo}): ` +
+      'no se ofrece empezar desde cero y NO se cambia de carpeta sin preguntar.');
+    for (;;) {
+      const accion = preguntarPorLaCarpetaLocal({
+        codigo: 'PS-1022',
+        titulo: 'No se puede comprobar la base de datos configurada',
+        mensaje: 'La base de datos de tu carpeta de datos configurada está ahí, pero no se puede leer ni comprobar.',
+        cuerpo:
+          `Carpeta: ${customUserDataDirTarget}\n\n` +
+          `Motivo: ${ultimo.codigo} (${ultimo.motivo})\n\n` +
+          'Suele ser un archivo bloqueado por otro programa, una sincronización a medias o un problema de ' +
+          'permisos. Puedes reintentar.',
+        etiquetaReintento: 'Reintentar',
+      });
+      if (accion === 'cerrar') return 'cerrar';
+      if (accion === 'local' || accion === 'crear') {
+        app.setPath('userData', defaultUserDataDir);
+        customUserDataDirFailure = {
+          attempted: customUserDataDirTarget,
+          error: `No se pudo comprobar panorama.sqlite3 ahí (${ultimo.codigo}: ${ultimo.motivo})`,
+        };
+        appLog('PS-1022 — el usuario eligió expresamente usar la carpeta de datos local en esta sesión.');
+        return 'seguir';
+      }
+      const otra = estadoDeArchivoEnRuta(dbPath);
+      if (otra.estado === 'visible') {
+        appLog('La base de datos de la carpeta configurada ya se puede comprobar tras el reintento manual.');
+        return 'seguir';
+      }
+      ultimo = otra;
+      if (otra.estado === 'no-visible') break;   // ya no es «no comprobable»: sigue el camino de PS-1009
+    }
   }
 
   // Sigue sin aparecer tras ~20s: puede ser Drive yendo lento, o de verdad la primera vez que se
@@ -9816,11 +10791,18 @@ async function checkCustomLocationDatabaseSanity() {
         'termine de sincronizar.\n\nSi es la primera vez que usas esta carpeta a propósito (todavía no hay ' +
         'nada guardado en ningún otro PC), es normal que esté vacía y puedes continuar sin problema.' +
         errorCodeSuffix('PS-1009'),
-      buttons: ['Esperar más (reintentar)', 'Sí, empezar aquí desde cero', 'Usar la carpeta de datos por defecto por ahora'],
+      // P22: «usar la carpeta por defecto» ya no significa «abrir lo que haya
+      // sin mirar»: lleva a una confirmación informada (PS-1021). Y aparece
+      // «Cerrar», que es además lo que hacen Esc y la X.
+      buttons: ['Esperar más (reintentar)', 'Sí, empezar aquí desde cero', 'Usar los datos locales de este equipo', 'Cerrar'],
       defaultId: 0,
-      cancelId: 0,
+      cancelId: 3,
       noLink: true,
     });
+    if (choice === 3) {
+      appLog('PS-1009 — el usuario eligió cerrar en vez de usar la carpeta de datos local.');
+      return 'cerrar';
+    }
     if (choice === 1) {
       // A3.3 BLOQUE 2: esta elección es la ÚNICA que autoriza crear en una
       // carpeta personalizada. main.js autoriza; db.js sigue verificando
@@ -9829,19 +10811,30 @@ async function checkCustomLocationDatabaseSanity() {
       // tienen que decir que sí.
       usuarioAutorizaEmpezarDesdeCero = true;
       appLog(`El usuario confirmó empezar desde cero en la carpeta personalizada (no se encontró panorama.sqlite3): ${dbPath}`);
-      return;
+      return 'seguir';
     }
     if (choice === 2) {
       // Mismo espíritu que el fallback ya existente de "carpeta no disponible": se usa la carpeta
       // local por esta vez, sin tocar ni borrar la configuración guardada — al siguiente arranque
       // se vuelve a intentar la personalizada igual que siempre.
+      // P22: antes de usarla, confirmación informada de QUÉ hay en ella. Si se
+      // cancela, se vuelve a este mismo diálogo.
+      const accion = preguntarPorLaCarpetaLocal({
+        codigo: 'PS-1021',
+        titulo: 'Usar los datos locales de este equipo',
+        mensaje: 'Vas a usar la base de datos LOCAL de este equipo, no la de tu carpeta configurada.',
+        cuerpo: `Carpeta configurada: ${customUserDataDirTarget}\n\n` +
+          'En esa carpeta no aparece ninguna base de datos todavía.',
+        etiquetaReintento: null,
+      });
+      if (accion === 'cerrar') continue;    // vuelve a preguntar lo de arriba
       app.setPath('userData', defaultUserDataDir);
       customUserDataDirFailure = {
         attempted: customUserDataDirTarget,
         error: 'No se encontró panorama.sqlite3 ahí (el usuario eligió no continuar en esa carpeta)',
       };
-      appLog(`Continuando con datos locales temporales — no se encontró panorama.sqlite3 en: ${dbPath}`);
-      return;
+      appLog(`Continuando con datos locales temporales (elección explícita) — no se encontró panorama.sqlite3 en: ${dbPath}`);
+      return 'seguir';
     }
     // choice === 0 (o se cerró el diálogo): reintentar — otra ronda de espera igual de larga
     const deadline2 = Date.now() + USERDATA_POST_READY_RETRY_MS;
@@ -9852,7 +10845,7 @@ async function checkCustomLocationDatabaseSanity() {
     }
     if (appeared) {
       appLog(`Base de datos de la carpeta personalizada apareció tras reintento manual: ${dbPath}`);
-      return;
+      return 'seguir';
     }
     // sigue sin aparecer: vuelve a preguntar
   }
@@ -10070,6 +11063,145 @@ function startUserDataWatchdog() {
 //
 // El mensaje no muestra la ruta real: solo la forma %APPDATA%\... del archivo.
 // ------------------------------------------------------------------
+// ------------------------------------------------------------------
+// P22 (17 sept 2026) — UNA SOLA PUERTA ANTES DE TOCAR LA CARPETA DE DATOS LOCAL.
+//
+// Hasta ahora, cuatro caminos legítimos terminaban en la carpeta por defecto y
+// abrían (y modificaban) lo que hubiera, o creaban una base de datos nueva, sin
+// decir de qué base se trataba: PS-1005 «datos locales», PS-1009 «usar la
+// carpeta por defecto», el arranque sin `location.json`, y —el peor— una base
+// de datos configurada que existe pero no se puede comprobar, que cambiaba de
+// carpeta EN SILENCIO.
+//
+// Todos pasan ahora por aquí, y aquí no se abre ni se crea nada: solo se mira
+// (stat + 16 bytes) y se pregunta. Hasta que el usuario elige expresamente, la
+// base de datos local no se toca: ni `.gen`, ni registro de A3.3, ni
+// migraciones, ni backups, ni Seguridad, ni `getDb`.
+//
+// Lo que NO se puede evitar, y queda dicho: Chromium ya ha creado sus propios
+// archivos de perfil en esa carpeta antes de que este archivo pueda decidir
+// nada. Lo que esta puerta garantiza es la BASE DE DATOS, no la carpeta entera.
+// ------------------------------------------------------------------
+let sesionLocalTemporal = false;      // el usuario aceptó usar la carpeta local EN ESTE ARRANQUE
+let usuarioAutorizaCrearLocal = false; // …y eligió crear una base de datos local vacía
+
+// ¿Hay que preguntar antes de usar la carpeta por defecto? Sí siempre que
+// venga de un camino de reserva; y también sin configuración, salvo en el caso
+// del equipo PURAMENTE LOCAL de toda la vida: ese ya tiene su propia carpeta
+// registrada en A3.3 y no se le va a preguntar en cada arranque. Un equipo que
+// viene de una versión anterior a A3.3 (registro vacío) recibe la pregunta UNA
+// vez, y a partir de ahí queda registrado.
+function carpetaLocalNecesitaConfirmacion(motivo, hist) {
+  if (motivo !== 'sin-configuracion') return true;
+  if (hist.si) return true;
+  const est = estadoUbicacion(defaultUserDataDir);
+  if (est.corrupto) return true;                  // registro ilegible: ante la duda, se pregunta
+  return est.estado !== 'inicializada';
+}
+
+function avisoBaseLocalInutilizable(bd) {
+  appLog(`ERROR PS-1023 — la base de datos local no es utilizable (${bd.estado}: ${bd.motivo || bd.codigo}). No se abre, no se sustituye y no se crea otra.`);
+  try {
+    dialog.showMessageBoxSync(undefined, {
+      type: 'error',
+      title: 'La base de datos local no es utilizable',
+      message: 'En la carpeta de datos de este equipo hay un archivo de base de datos que no se puede usar.',
+      detail:
+        `${descripcionBaseDeDatosLocal(bd)}\n\n` +
+        'Panorama del Servicio NO lo ha abierto, NO lo ha sustituido, NO lo ha vaciado y NO ha creado otra ' +
+        'base de datos encima: un archivo así puede ser una copia a medias o el resto de un fallo anterior, y ' +
+        'pisarlo destruiría la única pista de lo que pasó.\n\n' +
+        'La aplicación se va a cerrar. Si tu carpeta de datos de verdad está en Google Drive/OneDrive, ' +
+        'comprueba que esté disponible y vuelve a abrir.' +
+        errorCodeSuffix('PS-1023'),
+      buttons: ['Cerrar'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+  } catch (e) {
+    appLog(`No se pudo mostrar el aviso PS-1023: ${String((e && e.message) || e)}`);
+  }
+}
+
+// Diálogo común de los caminos de reserva. Devuelve:
+//   'reintentar' | 'local' (usar los datos locales) | 'crear' (base vacía) | 'cerrar'
+// CERRAR es siempre la opción de escape (Esc y la X): nunca «usar local».
+function preguntarPorLaCarpetaLocal({ codigo, titulo, mensaje, cuerpo, etiquetaReintento }) {
+  const bd = estadoBaseDeDatosLocal(defaultUserDataDir);
+  if (bd.estado === 'invalida' || bd.estado === 'no-comprobable') {
+    avisoBaseLocalInutilizable(bd);
+    return 'cerrar';
+  }
+  const hist = huboUbicacionPersonalizada();
+  const botones = [];
+  const acciones = [];
+  if (etiquetaReintento) { botones.push(etiquetaReintento); acciones.push('reintentar'); }
+  if (bd.estado === 'existente') { botones.push('Usar estos datos locales'); acciones.push('local'); }
+  else { botones.push('Crear una base de datos local vacía'); acciones.push('crear'); }
+  botones.push('Cerrar');
+  acciones.push('cerrar');
+  const idCerrar = acciones.indexOf('cerrar');
+  let elegido;
+  try {
+    elegido = dialog.showMessageBoxSync(undefined, {
+      type: 'warning',
+      title: titulo,
+      message: mensaje,
+      detail:
+        `${cuerpo}\n\n${descripcionBaseDeDatosLocal(bd)}\n\n` +
+        (bd.estado === 'existente'
+          ? 'Esos datos locales pueden ser MUCHO más antiguos que los de tu carpeta de siempre, y lo que ' +
+            'cambies aquí no estará en ella.'
+          : 'Crear una base de datos local vacía NO recupera nada: empezarías de cero en este equipo.') +
+        (hist.si ? `\n\nEste equipo ya ha usado una carpeta de datos propia (${hist.fuente}).` : '') +
+        errorCodeSuffix(codigo),
+      buttons: botones,
+      defaultId: etiquetaReintento ? 0 : idCerrar,
+      cancelId: idCerrar,
+      noLink: true,
+    });
+  } catch (e) {
+    appLog(`No se pudo mostrar el aviso ${codigo}: ${String((e && e.message) || e)}`);
+    return 'cerrar';
+  }
+  const accion = acciones[elegido] || 'cerrar';
+  appLog(`${codigo} — carpeta de datos local: el usuario eligió «${botones[elegido] || 'Cerrar'}» (base local: ${bd.estado}).`);
+  if (accion === 'local' || accion === 'crear') {
+    // Sesión LOCAL TEMPORAL: solo si hay otra ubicación de por medio (configurada
+    // o histórica). En un equipo puramente local esto es su modo normal.
+    if (customUserDataDirTarget || hist.si) sesionLocalTemporal = true;
+    if (accion === 'crear') usuarioAutorizaCrearLocal = true;
+  }
+  return accion;
+}
+
+// Puerta del arranque SIN `location.json` (camino C).
+// Devuelve 'seguir' | 'cerrar'.
+function autorizarCarpetaLocal(motivo) {
+  const bd = estadoBaseDeDatosLocal(defaultUserDataDir);
+  if (bd.estado === 'invalida' || bd.estado === 'no-comprobable') {
+    avisoBaseLocalInutilizable(bd);
+    return 'cerrar';
+  }
+  const hist = huboUbicacionPersonalizada();
+  if (!carpetaLocalNecesitaConfirmacion(motivo, hist)) return 'seguir';
+  if (bd.estado === 'ausente' && !hist.si) return 'seguir';   // primera ejecución legítima
+  const accion = preguntarPorLaCarpetaLocal({
+    codigo: 'PS-1021',
+    titulo: bd.estado === 'existente' ? 'Hay datos locales en este equipo' : 'No hay ninguna carpeta de datos configurada',
+    mensaje: bd.estado === 'existente'
+      ? 'Panorama del Servicio va a usar la base de datos LOCAL de este equipo.'
+      : 'Panorama del Servicio no tiene ninguna carpeta de datos configurada.',
+    cuerpo: bd.estado === 'existente'
+      ? 'No hay ninguna carpeta de datos configurada (el archivo de configuración no está), así que la única ' +
+        'base de datos disponible es la local de este equipo.'
+      : 'No hay configuración de ubicación ni base de datos local.',
+    etiquetaReintento: null,
+  });
+  return accion === 'cerrar' ? 'cerrar' : 'seguir';
+}
+
 function detenerArranquePorConfigUbicacion() {
   const { estado, motivo } = configUbicacionNoResuelta;
   appLog(`ERROR PS-1020 — location.json ${estado}: ${motivo}. No se abre, crea ni modifica ninguna base de datos.`);
@@ -10112,9 +11244,24 @@ app.whenReady().then(async () => {
     detenerArranquePorConfigUbicacion();
     return;
   }
+  // P22 — dos cosas, y las dos ANTES de la splash y de tocar ninguna base de datos:
+  //   1. si hay una ubicación propia configurada, dejar constancia durable de
+  //      ello (lo que impide que un arranque futuro sin location.json confunda
+  //      este equipo con una instalación nueva);
+  //   2. si NO hay configuración, pasar por la puerta antes de usar la carpeta
+  //      de datos local.
+  if (customUserDataDirTarget) {
+    registrarUbicacionPersonalizada(customUserDataDirTarget, customUserDataDirShared);
+  } else if (autorizarCarpetaLocal('sin-configuracion') === 'cerrar') {
+    app.quit();
+    return;
+  }
   showSplashWindow();
   if (customUserDataDirFailure) {
-    await resolveUserDataDirFailureInteractively();
+    if ((await resolveUserDataDirFailureInteractively()) === 'cerrar') {
+      closeSplashWindow(() => app.quit());
+      return;
+    }
   }
   startUserDataWatchdog();
   // v0.1.39: adelanta la primera lectura (y cacheado en memoria) de la
@@ -10139,7 +11286,10 @@ app.whenReady().then(async () => {
     /* no crítico: se reintentará solo en el primer uso real */
   }
   await waitForCloudSyncIdleAtStartup();
-  await checkCustomLocationDatabaseSanity();
+  if ((await checkCustomLocationDatabaseSanity()) === 'cerrar') {
+    closeSplashWindow(() => app.quit());
+    return;
+  }
   // v0.1.56: a estas alturas ya se sabe con certeza qué carpeta de datos se
   // usa de verdad esta sesión (checkCustomLocationDatabaseSanity ya pudo
   // haber hecho fallback a la de por defecto) — momento correcto para
@@ -10538,6 +11688,25 @@ app.whenReady().then(async () => {
         'proyectos más recientes. En cuanto esa carpeta vuelva a estar disponible, cierra la app y vuelve a abrirla.' +
         errorCodeSuffix('PS-1005'),
       { title: 'Usando datos locales temporalmente', danger: true }
+    );
+  }
+  // P22: si no se pudo dejar constancia de que este equipo usa una carpeta de
+  // datos propia, NO se sigue como si todo estuviera protegido: se dice. La
+  // barrera no desaparece —el registro de ubicaciones de A3.3 guarda la misma
+  // información por su cuenta, y mientras tanto la ausencia de constancia nunca
+  // cuenta como prueba de «instalación nueva»— pero queda degradada.
+  if (historialUbicacionDegradado) {
+    modalAlert(
+      launcherWin,
+      'Panorama del Servicio no ha podido guardar en la configuración local la constancia de que este equipo ' +
+        'usa una carpeta de datos propia.\n\n' +
+        `Detalle: ${historialUbicacionDegradado.motivo}\n\n` +
+        'Todo sigue funcionando con normalidad y tus datos no están en riesgo por esto. Lo que queda debilitado ' +
+        'es una defensa: esa constancia es la que impide que, más adelante y sin el archivo de configuración, un ' +
+        'arranque confunda este equipo con una instalación nueva. Revisa los permisos de la carpeta de ' +
+        'configuración de Windows.' +
+        errorCodeSuffix('PS-1024'),
+      { title: 'No se pudo dejar constancia de la ubicación de datos', danger: true }
     );
   }
 });

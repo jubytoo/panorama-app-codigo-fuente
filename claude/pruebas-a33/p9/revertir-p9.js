@@ -83,8 +83,12 @@ const FAMILIAS = [
     que: 'la sincronización de la protección de apagado pierde su guarda (segunda capa)',
     tumba: [/^P9-13 (BOM duplicado|JSON truncado|ruta relativa|vacío) \+ protección (ACTIVA|activa SIN)/, /^P9-13 la guarda va ANTES/],
     electron: [],
-    hacer: () => cambiar(MAIN, '  if (configUbicacionNoResuelta) return;\n  const shouldBeOn',
-      '  // REVERSIÓN P9-G: sin guarda\n  const shouldBeOn', 1),
+    // 18 sept 2026: el ancla antigua («…return;\n  const shouldBeOn») dejó de
+    // existir en P22 (2952711), que puso su propia guarda y comentarios entre
+    // medias; desde entonces este script reventaba antes de generar G. Misma
+    // intención: quitar SOLO la guarda de P9.
+    hacer: () => cambiar(MAIN, '  if (configUbicacionNoResuelta) return;\n  // P22: una sesión LOCAL TEMPORAL',
+      '  // REVERSIÓN P9-G: sin guarda\n  // P22: una sesión LOCAL TEMPORAL', 1),
   },
 ];
 

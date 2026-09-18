@@ -264,7 +264,13 @@ if (fs.existsSync(PRE_INDEX)) {
 //            solo restaura una copia con procedencia demostrada (copia LOCAL +
 //            registro local + operation_id + installation_id, PREPARADA ->
 //            VERIFICADA); las `app.asar.bak-*` heredadas ya no deciden nada;
-//            PS-1025/1026/1027. No toca el lanzador.
+//            PS-1025/1026/1027. No toca el lanzador. (Ese hash, el del commit
+//            9ada9a9, traía la colisión de `sha256DeArchivo`: ver la siguiente.)
+//         -> 486B803F… (P18 Fase 1, corrección del 18 sept 2026): el hash de P18
+//            pasa a llamarse `sha256HexArchivoP18` (la colisión de nombre con el
+//            del rekey dejaba el rescate y «Aplicar parche» inservibles), y
+//            `applyAsarPatch` prepara P18 ANTES de la copia heredada y purga solo
+//            con el ayudante lanzado. No toca el lanzador.
 //
 //   db.js    1B16381F… (intacto desde el Bloque 1 hasta B3)
 //         -> B03C81FF… (ronda B4, 16 sept 2026): **SOLO COMENTARIOS**. Dos
@@ -276,7 +282,7 @@ if (fs.existsSync(PRE_INDEX)) {
 // `dashboard/plantilla_dashboard.html` NO esta en esta tabla a proposito: E1 no
 // lo toca ni lo miraba, y lo han modificado P12 y E2 por su cuenta.
 const HASHES_TRAS_A2 = {
-  'main.js': '3A0D7217A6A7AF056ED7079168E3B974D74858A20F92A3DAAD0BECC75A7AE686',
+  'main.js': '486B803FDEF772BECC542125B42675FC270137827F6CDDFFCFEC3A8C7F784491',
   'preload.js': 'AA77316F3FDB384D582F8270213A846EE1A1D2E067784EE17DF8D65CC1F6A27B',
   'preload-launcher.js': '01D38C31D5FB9B23E5AD9FC617DEB7E3960E88EBF5A0ACF89C9C8EDDAA21ECFD',
   'preload-backup-picker.js': '19D2D1BAD74F774797E5F129F99FFAF2A19BF77E370BF1727161447B326D3061',

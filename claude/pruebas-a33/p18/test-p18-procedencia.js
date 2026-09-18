@@ -23,6 +23,14 @@
 // app.asar. Con el asar truncado, sin cabecera, sin main.js o sin archivo, no
 // se ejecuta ni una línea de Panorama (medido el 18 sept 2026). Eso es Fase 2.
 //
+// FALSO VERDE DEL 18 SEPT 2026, y por qué existen P18-S1/S2: extraer por firma
+// prueba la PRIMERA declaración de un nombre, pero V8 liga la ÚLTIMA. main.js
+// declaraba dos veces `sha256DeArchivo`; esta batería dio 102/0 mientras el
+// módulo real nunca restauraba y «Aplicar parche» lanzaba siempre. S1 busca
+// nombres duplicados a nivel de módulo; S2 pide a V8 (sin ejecutar el módulo)
+// qué funciones quedan ligadas de verdad y prueba el contrato con ESAS.
+// La sección P18-O es consistencia DOCUMENTAL: no es evidencia técnica.
+//
 // Uso: node claude/pruebas-a33/p18/test-p18-procedencia.js
 //      (PANORAMA_MAIN=<otra copia de main.js> para las reversiones)
 // ---------------------------------------------------------------------------
@@ -30,7 +38,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
+const vm = require('vm');
 const { execFileSync, spawnSync } = require('child_process');
+const DETECTOR = require('./nombres-modulo.js');
 
 const PROJ = path.resolve(__dirname, '..', '..', '..');
 const MAIN = process.env.PANORAMA_MAIN || path.join(PROJ, 'main.js');
@@ -40,11 +50,12 @@ const BAT = fs.readFileSync(path.join(PROJ, 'claude', 'Restaurar-backup.bat'), '
 const SB = fs.mkdtempSync(path.join(os.tmpdir(), 'a33-p18-'));
 const SBn = path.resolve(SB).toLowerCase();
 
-let pass = 0, fail = 0;
+let pass = 0, fail = 0, passDoc = 0, failDoc = 0;
 const fallos = [];
 function ok(n, c, extra) {
-  if (c) { pass++; console.log('  OK    ' + n); }
-  else { fail++; fallos.push(n); console.log('  FALLO ' + n + (extra === undefined ? '' : '  -- ' + extra)); }
+  const doc = n.startsWith('P18-O');
+  if (c) { pass++; if (doc) passDoc++; console.log('  OK    ' + n); }
+  else { fail++; if (doc) failDoc++; fallos.push(n); console.log('  FALLO ' + n + (extra === undefined ? '' : '  -- ' + extra)); }
 }
 const seccion = (t) => console.log('\n=== ' + t + ' ===');
 const nota = (t) => console.log('        ' + t);
@@ -89,7 +100,7 @@ const FIRMAS = ['function userDataConfigPath()', 'function leerConfigUbicacion()
   'function resolveDataDirForStartupRecovery()', 'function findLatestAsarBackupForRecovery(dir)',
   'function rutaInstallationIdParaRescate()', 'function leerInstallationIdParaRescate()',
   'function carpetaRecuperacionAsar()', 'function rutaManifiestoProcedencia()',
-  'function leerManifiestoProcedencia()', 'function sha256DeArchivo(ruta)', 'function versionDeAsar(ruta)',
+  'function leerManifiestoProcedencia()', 'function sha256HexArchivoP18(ruta)', 'function versionDeAsar(ruta)',
   'function analizarRecuperacionAsar(asarInstalado)', 'function restaurarPredecesoraVerificada(a, asarInstalado)',
   'function describirCopiasHeredadasParaSoporte()', 'function handleFatalStartupError(err)',
   'function guardarManifiestoProcedencia(j)', 'function prepararOperacionAsar({ realAsar, stagedAsar, shaParcheElegido })',
@@ -116,7 +127,12 @@ function mundo() {
   for (const d of [w.cfg, w.def, w.local, w.res, w.comp]) fs.mkdirSync(d, { recursive: true });
   return w;
 }
-function construir(w, { respuestaDialogo, dialogoLanza, localAppData } = {}) {
+const DEVOLVER = ['leerInstallationIdParaRescate', 'rutaInstallationIdParaRescate', 'carpetaRecuperacionAsar',
+  'rutaManifiestoProcedencia', 'leerManifiestoProcedencia', 'versionDeAsar', 'analizarRecuperacionAsar',
+  'handleFatalStartupError', 'prepararOperacionAsar', 'guardarManifiestoProcedencia', 'asarPatchHelperSource',
+  'describirCopiasHeredadasParaSoporte'];
+// `fuente`/`devolver`: P18-S2 monta el mismo mundo con los cuerpos que V8 liga de verdad.
+function construir(w, { respuestaDialogo, dialogoLanza, localAppData, fuente, devolver } = {}) {
   const traza = { escrituras: [], errorBox: [], mensajes: [], exit: [], logs: [] };
   const app = {
     getPath: (k) => (k === 'appData' ? w.appData : k === 'userData' ? w.def : os.tmpdir()),
@@ -136,10 +152,7 @@ function construir(w, { respuestaDialogo, dialogoLanza, localAppData } = {}) {
   };
   const g = fsGuardado(fs, traza.escrituras);
   const f = new Function('app', 'fs', 'originalFs', 'path', 'crypto', 'dialog', 'process',
-    FUENTE + '\nreturn { leerInstallationIdParaRescate, rutaInstallationIdParaRescate, carpetaRecuperacionAsar,' +
-    ' rutaManifiestoProcedencia, leerManifiestoProcedencia, versionDeAsar, analizarRecuperacionAsar,' +
-    ' handleFatalStartupError, prepararOperacionAsar, guardarManifiestoProcedencia, asarPatchHelperSource,' +
-    ' describirCopiasHeredadasParaSoporte };');
+    (fuente || FUENTE) + '\nreturn { ' + (devolver || DEVOLVER).join(', ') + ' };');
   return Object.assign(f(app, g, g, path, crypto, dialog, proc), { traza });
 }
 
@@ -205,17 +218,139 @@ console.log('  P18 — FASE 1 EXIGENTE: solo se restaura lo que tiene procedenci
 console.log('======================================================================');
 
 // =============================================================================
-seccion('P18-O. EL PENDIENTE Y SU ESTADO');
+seccion('P18-O. CONSISTENCIA DOCUMENTAL (no es evidencia técnica de P18)');
 // =============================================================================
+// 18 sept 2026 — P18-O2 exigía «FASE 1 CERRADA» en el resumen: la batería se
+// ponía verde PORQUE el documento declaraba el cierre (dependencia circular), y
+// eso ocurrió con la evidencia sin rellenar. Ahora solo se exige que ningún
+// documento de estado finja evidencia con marcadores sin rellenar. Ni esto ni
+// nada de esta sección demuestra una propiedad de P18.
 {
   const p = DOC('pendientes-abiertos.md');
+  nota('Solo consistencia de documentos: no prueba ninguna propiedad de P18.');
   ok('P18-O1 el diagnóstico se conserva como historia (seis instalaciones en la carpeta compartida)',
     /106 parches de SEIS instalaciones distintas/.test(p));
-  ok('P18-O2 Fase 1 CERRADA y Fase 2 ABIERTA / D4 en el resumen',
-    /\| P18 \| \*\*FASE 1 CERRADA\*\*/.test(p) && /FASE 2 ABIERTA/.test(p));
+  const conMarcas = ['pendientes-abiertos.md', 'handoff-opus-estado-actual.md', path.join('pruebas-a33', 'MANIFIESTO.md')]
+    .map((f) => [f, (DOC(f).match(/@@[A-Z0-9_]+@@/g) || [])]).filter(([, m]) => m.length);
+  ok('P18-O2 ningún documento de estado contiene marcadores de evidencia sin rellenar (@@…@@)',
+    conMarcas.length === 0, JSON.stringify(conMarcas));
   ok('P18-O3 el límite está dicho: la Fase 1 NO cubre un asar que Electron no puede cargar',
     /no se ejecuta ni una línea de Panorama|no se ejecuta NI UNA línea de Panorama/i.test(p) && /P18 — FASE 1 IMPLEMENTADA/.test(p));
   ok('P18-O4 ARN-3 y P23 siguen registrados', /## ARN-3 —/.test(p) && /\| P23 \| \*\*ABIERTO — MEDIO\*\*/.test(p));
+}
+
+// =============================================================================
+seccion('P18-S. ¿LO QUE PRUEBA ESTA BATERÍA ES LO QUE EJECUTA main.js?');
+// =============================================================================
+// Sonda de vínculos: compila main.js dentro del envoltorio CommonJS, en un
+// contexto vm VACÍO (sin process, require ni fs), con `return` como PRIMERA
+// sentencia. Las declaraciones de función ya están instanciadas (hoisting) y no
+// se ejecuta ni un require ni una línea del módulo: no inicializa el producto ni
+// toca ningún archivo. Devuelve lo que V8 liga de verdad a cada nombre.
+function sondaVinculos(src, nombres) {
+  const cuerpo = 'return {' + nombres.map((x) => `${JSON.stringify(x)}: (function () { try { return typeof ${x} === 'function' ? ${x} : typeof ${x}; } catch (e) { return 'tdz'; } })()`).join(',\n') + '};\n';
+  const envuelto = '(function (exports, require, module, __filename, __dirname) {' + cuerpo + src + '\n})';
+  return new vm.Script(envuelto, { filename: 'p18-sonda-vinculos.js' }).runInContext(vm.createContext({}))(
+    {}, () => { throw new Error('P18: require NO permitido en la sonda'); }, {}, MAIN, path.dirname(MAIN));
+}
+let DECL = null;
+let errLex = null;
+try { DECL = DETECTOR.declaracionesDeModulo(SRC); } catch (e) { errLex = 'el detector no pudo analizar main.js: ' + e.message; }
+const cuentaEn = (decl, x) => decl.filter((d) => d.nombre === x).length;
+{
+  const dups = DECL ? DETECTOR.duplicados(DECL) : null;
+  ok('P18-S1a main.js no declara dos veces ningún nombre a nivel de módulo (function/var): la segunda sustituiría a la primera',
+    dups !== null && dups.length === 0, errLex || JSON.stringify(dups));
+  ok('P18-S1b exactamente UNA declaración de módulo de sha256DeArchivo (rekey, objeto) y UNA de sha256HexArchivoP18 (P18, hex)',
+    DECL !== null && cuentaEn(DECL, 'sha256DeArchivo') === 1 && cuentaEn(DECL, 'sha256HexArchivoP18') === 1,
+    errLex || JSON.stringify({ rekey: cuentaEn(DECL, 'sha256DeArchivo'), p18: cuentaEn(DECL, 'sha256HexArchivoP18') }));
+  // Controles del propio detector, independientes del estado de main.js.
+  const base = DECL ? cuentaEn(DECL, 'sha256DeArchivo') : -1;
+  const conDup = DETECTOR.declaracionesDeModulo(SRC + '\nfunction sha256DeArchivo(ruta) {\n  return 1;\n}\n');
+  ok('P18-S1c control: el detector VE una `sha256DeArchivo` más añadida a nivel de módulo (la colisión del 18 sept)',
+    cuentaEn(conDup, 'sha256DeArchivo') === base + 1 && DETECTOR.duplicados(conDup).some((d) => d.nombre === 'sha256DeArchivo'));
+  const sinMod = DETECTOR.declaracionesDeModulo(SRC + '\nfunction __p18EnvoltorioS1__() {\n  function sha256DeArchivo(ruta) { return 1; }\n  return sha256DeArchivo;\n}\n'
+    + 'const __p18PlantillaS1__ = `\nfunction sha256DeArchivo(ruta) {\n  return 1;\n}\n`;\n');
+  ok('P18-S1d control: NO cuenta como de módulo ni una declaración anidada ni el texto de una plantilla (como el del ayudante)',
+    cuentaEn(sinMod, 'sha256DeArchivo') === base);
+  if (DECL) {
+    const fnsMod = DECL.filter((d) => d.tipo === 'function');
+    const nombresMod = [...new Set(fnsMod.map((d) => d.nombre))];
+    const textuales = [...new Set([...SRC.matchAll(/\bfunction\s*\*?\s*([\p{L}_$][\p{L}\p{N}_$]*)\s*\(/gu)].map((m) => m[1]))];
+    const soloAnidados = textuales.filter((x) => !nombresMod.includes(x));
+    const v = sondaVinculos(SRC, [...nombresMod, ...soloAnidados]);
+    const malMod = nombresMod.filter((x) => typeof v[x] !== 'function'
+      || v[x].toString() !== DETECTOR.textoDeclaracion(SRC, fnsMod.filter((d) => d.nombre === x).pop().pos));
+    const malAnid = soloAnidados.filter((x) => v[x] !== 'undefined');
+    ok(`P18-S1e el detector coincide con V8: ${nombresMod.length} nombres de módulo ligados a su ÚLTIMA declaración, `
+      + `${soloAnidados.length} solo anidados/en plantilla sin vínculo de módulo`,
+      malMod.length === 0 && malAnid.length === 0 && soloAnidados.includes('applyPatch') && nombresMod.length > 200,
+      JSON.stringify({ malMod: malMod.slice(0, 5), malAnid: malAnid.slice(0, 5) }));
+  } else ok('P18-S1e el detector coincide con V8', false, errLex);
+}
+{
+  // Todo lo que P18 usa, siguiendo las llamadas dentro de los cuerpos EFECTIVOS.
+  const ENTRADAS = [...DEVOLVER, 'restaurarPredecesoraVerificada'];
+  const modFns = new Set(DECL ? DECL.filter((d) => d.tipo === 'function').map((d) => d.nombre) : []);
+  const V = sondaVinculos(SRC, [...modFns]);
+  const cierre = new Set(ENTRADAS.filter((x) => modFns.has(x)));
+  for (let cambio = true; cambio;) {
+    cambio = false;
+    for (const x of [...cierre]) {
+      for (const m of String(V[x]).matchAll(/([\p{L}_$][\p{L}\p{N}_$]*)\s*\(/gu)) {
+        if (modFns.has(m[1]) && !cierre.has(m[1])) { cierre.add(m[1]); cambio = true; }
+      }
+    }
+  }
+  // Lo que prueba el resto de la batería: la declaración que se extrae por firma (la PRIMERA).
+  const probada = (x) => {
+    const f = FIRMAS.find((s) => s.startsWith(`function ${x}(`));
+    return f ? extraerDe(SRC, f) : DETECTOR.textoDeclaracion(SRC, DECL.find((d) => d.nombre === x && d.tipo === 'function').pos);
+  };
+  const sustituidas = [...cierre].filter((x) => typeof V[x] !== 'function' || V[x].toString() !== probada(x));
+  ok(`P18-S2a las ${cierre.size} funciones que P18 usa son, en el módulo real, las MISMAS que prueba esta batería (ninguna sustituida por otra declaración)`,
+    ENTRADAS.every((x) => cierre.has(x)) && sustituidas.length === 0, errLex || 'sustituidas: ' + sustituidas.join(', '));
+  const hashes = [...cierre].filter((x) => /^sha256/i.test(x));
+  nota('Hash(es) que P18 usa, según V8: ' + (hashes.join(', ') || '(ninguno)'));
+  const real = { fuente: [...cierre].map((x) => String(V[x])).join('\n') + '\nlet startupRecoveryArmed = true;', devolver: [...cierre] };
+  const intenta = (f) => { try { return { r: f() }; } catch (e) { return { e }; } };
+  {
+    const w = mundo();
+    const muestra = path.join(w.raiz, 'muestra.bin');
+    fs.writeFileSync(muestra, asar('9.9.9'));
+    const m = intenta(() => construir(w, real));
+    const res = hashes.map((h) => [h, intenta(() => m.r[h](muestra)), intenta(() => m.r[h](path.join(w.raiz, 'no-existe.bin')))]);
+    ok('P18-S2b1 el hash que P18 usa, TAL COMO QUEDA LIGADO en main.js, devuelve el SHA-256 en hex y lanza si no puede leer',
+      hashes.length >= 1 && res.every(([, a, b]) => a.r === sha(asar('9.9.9')) && b.e !== undefined),
+      m.e ? m.e.message : JSON.stringify(res.map(([h, a, b]) => [h, a.e ? a.e.message : a.r, b.e ? 'lanza' : b.r])).slice(0, 300));
+  }
+  {
+    const e = escenario();
+    const d = intenta(() => construir(e.w, real).analizarRecuperacionAsar(e.w.asar));
+    ok('P18-S2b2 en el módulo real: operación VERIFICADA y asar exacto → auto (P18-1)',
+      d.r && d.r.decision === 'auto', d.e ? d.e.message : JSON.stringify(d.r && { d: d.r.decision, m: d.r.motivo }));
+  }
+  {
+    const e = escenario({ instalado: asar('2.0.99') });
+    const d = intenta(() => construir(e.w, real).analizarRecuperacionAsar(e.w.asar));
+    ok('P18-S2b3 en el módulo real: asar instalado distinto → confirmar (P18-17)',
+      d.r && d.r.decision === 'confirmar', d.e ? d.e.message : JSON.stringify(d.r && { d: d.r.decision, m: d.r.motivo }));
+  }
+  {
+    const p = prepMundo();
+    const r = intenta(() => construir(p.w, real).prepararOperacionAsar({ realAsar: p.w.asar, stagedAsar: p.staged, shaParcheElegido: sha(p.nueva) }));
+    const op = !r.e && fs.existsSync(p.w.man) ? JSON.parse(fs.readFileSync(p.w.man, 'utf8')).operaciones[0] : null;
+    ok('P18-S2b4 en el módulo real: «Aplicar parche» puede PREPARAR la operación (hashes en hex, copia local exacta)',
+      !r.e && !!op && op.estado === 'preparada' && op.sha256_anterior === sha(p.vieja) && op.sha256_copia_local === sha(p.vieja)
+      && op.sha256_nuevo_esperado === sha(p.nueva), r.e ? r.e.message : JSON.stringify(op).slice(0, 200));
+  }
+  {
+    const e = escenario();
+    const r = intenta(() => rescatar(e, real));
+    ok('P18-S2b5 en el módulo real: el rescate restaura sola la predecesora verificada, sin PS-1008',
+      !!r.r && r.r.despues === sha(e.vieja) && !r.r.t.errorBox.some((b) => /PS-1008/.test(b.c)),
+      r.e ? r.e.message : JSON.stringify({ restaurada: r.r.despues === sha(e.vieja), avisos: r.r.t.errorBox.map((b) => b.t) }));
+  }
 }
 
 // =============================================================================
@@ -626,6 +761,181 @@ seccion('P18-G. LO QUE NO CAMBIA (y por qué el .bat no se recomienda)');
 }
 
 // =============================================================================
+// P18-P. «APLICAR PARCHE»: UN INTENTO QUE NO SE APLICA NO TOCA LA RETENCIÓN HEREDADA
+// =============================================================================
+// Se ejecuta el applyAsarPatch REAL (async), con sus funciones reales de P18 y
+// de retención, en un sandbox explícito y con fallos inyectados en fs/spawn.
+// Hasta el 18 sept 2026 la copia heredada y su purga iban ANTES de preparar
+// P18: un intento que fallaba en P18 creaba un .bak y retiraba el más antiguo
+// de la carpeta de datos (compartida), y dos intentos seguidos borraban la
+// predecesora manual. Reversión K = ese orden antiguo.
+const HEREDADAS_P = [['app.asar.bak-2026-09-12T20-11-51-730Z', '2.0.53', 2], ['app.asar.bak-2026-09-12T21-29-05-730Z', '2.0.54', 1]];
+const KEEP_P = (SRC.match(/^const ASAR_PATCH_BACKUP_KEEP = \d+;$/m) || ['const ASAR_PATCH_BACKUP_KEEP = 2;'])[0];
+let FUENTE_PARCHE = '';
+try { FUENTE_PARCHE = extraerDe(SRC, 'async function applyAsarPatch(parentWin)'); } catch (e) { /* P18-P0 lo dirá */ }
+function mundoParche(o = {}) {
+  const w = mundo();
+  if (o.id !== null) fs.writeFileSync(path.join(w.cfg, 'installation-id'), o.id === undefined ? ID : o.id, 'utf8');
+  fs.writeFileSync(w.asar, asar('2.0.55'));
+  const ahora = Date.now();
+  for (const [nombre, v, dias] of HEREDADAS_P) {
+    const p = path.join(w.def, nombre);
+    fs.writeFileSync(p, asar(v));
+    const t = new Date(ahora - dias * 86400000);
+    fs.utimesSync(p, t, t);
+  }
+  const parche = asar('2.0.56');
+  fs.mkdirSync(path.join(w.raiz, 'Descargas'), { recursive: true });
+  w.parche = path.join(w.raiz, 'Descargas', `${sha(parche).slice(0, 16)}-App0256.asar`);
+  fs.writeFileSync(w.parche, parche);
+  return w;
+}
+function construirParche(w, fallos) {
+  const traza = { spawn: [], avisos: [], escrituras: [] };
+  const base = fsGuardado(fs, traza.escrituras);
+  const err = (code, m) => Object.assign(new Error(`${code}: ${m} (simulado)`), { code });
+  const bn = (p) => path.basename(String(p));
+  const bajo = (p, dir) => path.resolve(String(p)).toLowerCase().startsWith(path.resolve(dir).toLowerCase() + path.sep);
+  const aMedias = (origen, destino, n) => {
+    if (!dentro(destino)) throw new Error('P18: escritura FUERA del sandbox: ' + destino);
+    fs.writeFileSync(destino, fs.readFileSync(origen).slice(0, n));
+  };
+  let registroEscrito = false;
+  const f = new Proxy(base, {
+    get(t, k) {
+      const v = t[k];
+      if (typeof v !== 'function') return v;
+      return (...a) => {
+        if (k === 'copyFileSync') {
+          if (fallos.stagedParcial && bn(a[1]).startsWith('patch-pending-')) { aMedias(a[0], a[1], 30); throw err('EIO', 'copia del patch-pending'); }
+          if (fallos.copiaLocal && bajo(a[1], w.rec)) throw err('EACCES', 'copia local de P18');
+          if (fallos.hashCopia && bajo(a[1], w.rec)) { aMedias(a[0], a[1], 40); return undefined; }
+          if (fallos.bakParcial && bn(a[1]).startsWith('app.asar.bak-')) { aMedias(a[0], a[1], 30); throw err('EIO', 'copia heredada'); }
+        }
+        if (k === 'renameSync' && fallos.registro && path.resolve(String(a[1])) === path.resolve(w.man)) throw err('EPERM', 'registro de procedencia');
+        if (k === 'writeFileSync' && fallos.ayudante && bn(a[0]) === 'apply-patch-helper.js') throw err('ENOSPC', 'ayudante');
+        const r = v.apply(t, a);
+        if (k === 'renameSync' && path.resolve(String(a[1])) === path.resolve(w.man)) registroEscrito = true;
+        if (k === 'readFileSync' && fallos.relectura && registroEscrito && path.resolve(String(a[0])) === path.resolve(w.man)) return String(r) + ' ';
+        return r;
+      };
+    },
+  });
+  const app = { isPackaged: true, quit() {}, getPath: (k) => (k === 'appData' ? w.appData : k === 'userData' ? w.def : os.tmpdir()) };
+  const proc = { platform: 'win32', pid: process.pid, execPath: path.join(w.raiz, 'no-existe', 'electron.exe'), env: { LOCALAPPDATA: w.local }, resourcesPath: w.res };
+  const spawn = (exe, args) => { traza.spawn.push(args); if (fallos.spawn) throw new Error('spawn falla (simulado)'); return { unref() {} }; };
+  const modalAlert = async (win, texto, o) => { traza.avisos.push((((String(texto).match(/PS-\d{4}/) || [''])[0]) + ' ' + ((o && o.title) || '')).trim()); };
+  const cuerpoParche = FUENTE_PARCHE || 'async function applyAsarPatch() { throw new Error("applyAsarPatch no encontrada en main.js"); }';
+  const m = new Function('app', 'fs', 'originalFs', 'path', 'crypto', 'dialog', 'process', 'spawn', 'modalAlert', 'modalConfirm',
+    'canWriteToAsarFolder', 'installDirPath', 'errorCodeSuffix', 'setTimeout',
+    FUENTE + '\n' + KEEP_P + '\n' + cuerpoParche + '\nreturn { applyAsarPatch };')(
+    app, f, f, path, crypto, { showOpenDialogSync: () => [w.parche] }, proc, spawn, modalAlert, async () => true,
+    () => true, () => w.res, (c) => ` (código ${c})`, () => {});
+  return { m, traza };
+}
+async function intentoParche(w, fallos = {}) {
+  const { m, traza } = construirParche(w, fallos);
+  let error = null;
+  try { await m.applyAsarPatch(null); } catch (e) { error = e.message; }
+  const enDatos = fs.readdirSync(w.def);
+  const baks = enDatos.filter((x) => x.startsWith('app.asar.bak-'));
+  const iniciales = HEREDADAS_P.map(([nombre]) => nombre);
+  let ops = [];
+  try { ops = JSON.parse(fs.readFileSync(w.man, 'utf8').trim()).operaciones || []; } catch (e) { ops = []; }
+  let decision;
+  try { decision = construir(w).analizarRecuperacionAsar(w.asar).decision; } catch (e) { decision = 'error: ' + e.message; }
+  return {
+    quedanIniciales: iniciales.filter((b) => baks.includes(b)).length, v2054: baks.includes(HEREDADAS_P[1][0]),
+    nuevos: baks.filter((b) => !iniciales.includes(b)), staged: enDatos.filter((x) => x.startsWith('patch-pending-')).length,
+    ops, spawn: traza.spawn, avisos: traza.avisos.join(' | '), instalado: shaF(w.asar), decision, error,
+  };
+}
+const espera = (ms) => new Promise((res) => setTimeout(res, ms));
+async function seccionParche() {
+  seccion('P18-P. «APLICAR PARCHE»: UN INTENTO QUE NO SE APLICA NO TOCA LA RETENCIÓN HEREDADA');
+  let efectiva = null;
+  try { efectiva = sondaVinculos(SRC, ['applyAsarPatch']).applyAsarPatch; } catch (e) { /* abajo */ }
+  ok('P18-P0 la applyAsarPatch que se ejecuta aquí es la que liga main.js (V8)',
+    !!FUENTE_PARCHE && typeof efectiva === 'function' && efectiva.toString() === FUENTE_PARCHE);
+  const inicial = sha(asar('2.0.55'));
+  const resumen = (r) => JSON.stringify({ quedan: r.quedanIniciales, nuevos: r.nuevos.length, staged: r.staged, spawn: r.spawn.length,
+    ops: r.ops.map((o) => o.estado), decision: r.decision, avisos: r.avisos, error: r.error });
+  for (const [cod, que, fallos, om] of [
+    ['PA', 'falla la copia local de P18', { copiaLocal: true }, {}],
+    ['PB', 'falla el hash de la copia local (queda truncada)', { hashCopia: true }, {}],
+    ['PC1', 'falla escribir el registro de procedencia', { registro: true }, {}],
+    ['PC2', 'falla la relectura del registro de procedencia', { relectura: true }, {}],
+    ['PD1', 'installation-id ausente', {}, { id: null }],
+    ['PD2', 'installation-id de sesión', {}, { id: 'sesion-' + 'd'.repeat(24) }],
+    ['PD3', 'installation-id con formato inválido', {}, { id: 'esto-no-es-un-id' }],
+  ]) {
+    const r = await intentoParche(mundoParche(om), fallos);
+    ok(`P18-${cod}.1 ${que} → ni .bak nuevo ni purga: v2.0.53 y v2.0.54 siguen`, r.quedanIniciales === 2 && r.nuevos.length === 0, resumen(r));
+    ok(`P18-${cod}.2 ${que} → patch-pending retirado, ayudante sin lanzar, instalado intacto, nada candidato, PS-1003`,
+      r.staged === 0 && r.spawn.length === 0 && r.instalado === inicial && r.decision === 'no' && /PS-1003/.test(r.avisos), resumen(r));
+  }
+  {
+    const r = await intentoParche(mundoParche(), { bakParcial: true });
+    ok('P18-PE1 falla la copia heredada (queda A MEDIAS) tras PREPARADA → no queda ningún .bak de este intento, ni el parcial, y no hay purga',
+      r.quedanIniciales === 2 && r.nuevos.length === 0, resumen(r));
+    ok('P18-PE2 …el parche NO se aplica: ayudante sin lanzar, instalado intacto, patch-pending retirado; lo PREPARADO no es candidato',
+      r.spawn.length === 0 && r.instalado === inicial && r.staged === 0 && r.decision === 'no'
+      && r.ops.every((o) => o.estado !== 'verificada') && /PS-1003/.test(r.avisos), resumen(r));
+  }
+  {
+    const r = await intentoParche(mundoParche(), { ayudante: true });
+    ok('P18-PF1 falla escribir el ayudante → no hay purga y el .bak de ESTE intento se retira', r.quedanIniciales === 2 && r.nuevos.length === 0, resumen(r));
+    ok('P18-PF2 …ayudante sin lanzar, patch-pending retirado, instalado intacto, nada candidato, PS-1003',
+      r.spawn.length === 0 && r.staged === 0 && r.instalado === inicial && r.decision === 'no' && /PS-1003/.test(r.avisos), resumen(r));
+  }
+  {
+    const r = await intentoParche(mundoParche(), { spawn: true });
+    ok('P18-PG1 falla lanzar el ayudante → no hay purga y el .bak de ESTE intento se retira', r.quedanIniciales === 2 && r.nuevos.length === 0, resumen(r));
+    ok('P18-PG2 …patch-pending retirado, instalado intacto, nada candidato, PS-1004',
+      r.spawn.length === 1 && r.staged === 0 && r.instalado === inicial && r.decision === 'no' && /PS-1004/.test(r.avisos), resumen(r));
+  }
+  {
+    const w = mundoParche();
+    const r = await intentoParche(w, {});
+    const bak = r.nuevos[0];
+    ok('P18-PH1 caso correcto → la copia heredada se crea y es EXACTAMENTE el app.asar instalado',
+      r.nuevos.length === 1 && shaF(path.join(w.def, bak)) === inicial, resumen(r));
+    const args = r.spawn[0] || [];
+    const op = r.ops.find((o) => o.operation_id === args[8]);
+    ok('P18-PH2 …el ayudante se lanza UNA vez, atado a una operación PREPARADA, a su copia local y a esa copia heredada',
+      r.spawn.length === 1 && !!op && op.estado === 'preparada' && args[9] === path.join(w.rec, op.nombre_copia)
+      && args[2] === path.join(w.def, bak || '?'), resumen(r));
+    ok('P18-PH3 …y la retención heredada se aplica como siempre (2 por mtime): quedan v2.0.54 y la nueva, se retira v2.0.53',
+      r.quedanIniciales === 1 && r.v2054 && r.nuevos.length === 1 && r.staged === 1 && /Aplicando parche/.test(r.avisos), resumen(r));
+  }
+  {
+    const w = mundoParche({ id: null });
+    await intentoParche(w, {});
+    await espera(3);
+    const r = await intentoParche(w, {});
+    ok('P18-PI dos intentos seguidos que fallan en P18 → las DOS copias históricas (v2.0.53 y v2.0.54) siguen y no aparece ningún .bak',
+      r.quedanIniciales === 2 && r.nuevos.length === 0, resumen(r));
+  }
+  {
+    const w = mundoParche();
+    await intentoParche(w, { ayudante: true });
+    await espera(3);
+    const r = await intentoParche(w, {});
+    ok('P18-PI2 un intento fallido (ayudante) y después uno correcto → queda como si el fallido no hubiera existido: v2.0.54 + la nueva',
+      r.quedanIniciales === 1 && r.v2054 && r.nuevos.length === 1 && r.spawn.length === 1, resumen(r));
+  }
+  {
+    const r = await intentoParche(mundoParche(), { stagedParcial: true });
+    ok('P18-PZ falla copiar el patch-pending (queda A MEDIAS) → se retira; ni .bak, ni purga, ni operación P18, ni ayudante; PS-1003',
+      r.staged === 0 && r.quedanIniciales === 2 && r.nuevos.length === 0 && r.ops.length === 0 && r.spawn.length === 0 && /PS-1003/.test(r.avisos), resumen(r));
+  }
+}
+
+// P18-P es asíncrona: la sección Z y el resumen van DESPUÉS, para que P18-Z4
+// también vea las escrituras de P18-P.
+async function seccionFinal() {
+  try { await seccionParche(); } catch (e) { ok('P18-P la sección «Aplicar parche» termina sin reventar', false, e && e.stack); }
+// =============================================================================
 seccion('P18-Z. ALCANCE');
 // =============================================================================
 {
@@ -651,7 +961,11 @@ try { fs.rmSync(SB, { recursive: true, force: true }); } catch (e) { /* */ }
 
 console.log('\n======================================================================');
 console.log(`  P18: ${pass} OK / ${fail} FALLOS`);
+console.log(`  de ellas, consistencia DOCUMENTAL (P18-O, no es evidencia técnica): ${passDoc} OK / ${failDoc} FALLOS`);
+console.log(`  técnicas: ${pass - passDoc} OK / ${fail - failDoc} FALLOS`);
 console.log('======================================================================');
 if (fallos.length) fallos.forEach((f) => console.log('  fallo: ' + f));
 console.log('  Batería EXIGENTE (Fase 1). No cubre un app.asar que Electron no puede cargar: eso es Fase 2 / D4.');
 if (fail) process.exit(1);
+}
+seccionFinal();
