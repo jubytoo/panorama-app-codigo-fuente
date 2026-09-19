@@ -30,6 +30,12 @@ const BLOQUES_B5 = [
   // P27: «¿alguna fila de projects usa esta partición?». Lo llaman el predicado de
   // P26 y la guarda de `vaciarParticionDe()`.
   'function particionUsadaPorFila(particion)',
+  // P28: contrato del nombre de partición y ruta física confinada. `leerJournalBorrado()`,
+  // `leerJournalRestauracion()` y `vaciarParticionDe()` los llaman, así que entran en el
+  // ámbito de todo arnés que extraiga cualquiera de las tres.
+  'function motivoParticionNoValida(tipo, particion)',
+  'function esHijoDirectoDe(padre, hijo)',
+  'function rutaParticionSeguraParaBorrado(particion)',
   'function f1Borrados()',
   'function f1Global()',
   'function resumirDirectorio(dir)',
@@ -110,6 +116,8 @@ const CONSTS_B5 = [
   // P26: las dos que necesita `purgaP24Desligada()` (forma de la partición y
   // nombre de carpeta normalizado para compararla con las filas de `projects`).
   'const PARTICION_PROYECTO_PERSISTENTE_RE =',
+  // P28: el contrato de nombre seguro (borrar-proyecto y el journal de restauración).
+  'const PARTICION_NOMBRE_SEGURO_RE =',
   'const carpetaDeParticion =',
   'const BACKUP_KEEP =',
   "const RESTAURACIONES_DIR_NAME = '.panorama-restauraciones';",

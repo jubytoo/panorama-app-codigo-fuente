@@ -40,6 +40,8 @@ verificadas como reales.
 | P25 | **ABIERTO — bajo** *(19 sept 2026)* | **`writeLocalStorageDumpToPartition()` no cierra `helperWin` si `loadFile()` rechaza** (el `.catch(reject)` final no llama a `helperWin.close()`, a diferencia de las otras dos ramas). Afecta a los cuatro llamadores (creación con import, restauración de backups). Encontrado al implementar P24; deliberadamente sin corregir, para no mezclar su diff. Ver §P24 |
 | P26 | **CERRADO** *(19 sept 2026, con P27)* | **`rollback-creacion-proyecto` en fase de purga pendiente bloqueaba F-1 global hasta reinicio.** Opción E1: un predicado único (`purgaP24Desligada`: propio, `rollback-creacion-proyecto`, `purgando`, `sinRecursos`, sin recursos, partición `persist:proj-…` **y** la BD demuestra que ninguna fila la usa) que `f1Borrados()` ya no cuenta como pendiente y que `resolverBorradoPendiente()` usa como prueba **sin consultar `acciones_<writer>`** (la marca de 8 acciones ya no puede convertir una operación confirmada en «no llegó a confirmarse»). **No relaja nada más:** `borrar-proyecto`, `borrar-prep`, `purgar-backups`, acciones y restauraciones, iguales. Batería real-Electron **151 OK/0**, reversiones **9 familias, 28 OK/0**. La condición que quedaba abierta (fila reaparecida con la marca aún con el id) la cerró P27 (`P26-FR10`). **No reabre P24.** Ver §P26 |
 | P27 | **CERRADO** *(19 sept 2026)* | **Una partición referenciada por una fila NUNCA se destruye durante la recuperación de un rollback P24.** Baseline medido (centinela dentro de la carpeta): con la marca aún con el id y una fila reaparecida (mismo id u otro) el CASO B histórico hacía `rmSync` y **destruía la carpeta viva**; con la consulta a la BD fallando también purgaba. Guarda en `vaciarParticionDe` (rama rollback), **inmediatamente antes del `rmSync`** y sin `await`: `referenciada` ⇒ no se toca nada y el journal se **retira** (premisa del contrato refutada por la BD, sin recursos ni SQL, no reinterpretable, coherente con el CASO A); `no-demostrable` ⇒ no se destruye y el journal **se conserva**. Helper único `particionUsadaPorFila`, compartido con el predicado de P26. `borrar-proyecto`/`purgar-backups`/`borrar-prep` sin cambios. Batería real-Electron **84 OK/0**, reversiones **8 familias, 25 OK/0**, regresión P26/P24/Bloque 5/C1 verde. Observaciones no corregidas (una **medida**: journal con travesía en `particion` borra fuera de `Partitions/`). Ver §P27 |
+| P28 | **CERRADO** *(19 sept 2026)* | **Confinamiento de rutas de particiones: un journal con `particion` manipulada (`persist:..\\victima`, `.`, vacío, `..`) hacía que el CASO B ejecutara `rmSync` fuera de `Partitions/`** (carpeta hermana, `Partitions/` entero y `userData`; medido en sandbox). Contrato de nombre en tres niveles + ruta física solo por `rutaParticionSeguraParaBorrado` (nombre de proyecto, base `sessionData`, hijo directo por `path.relative`); lector de journals, escritor, journal de restauración y rama genérica lo aplican (fail-closed, log explícito). Batería **95/0**, reversiones **34/0**, regresión P27/P26/P24/Bloque 5/C1/P18 verde. `partition_name` compartido: lo impide `UNIQUE`; queda la reaparición → P29. Ver §P28 |
+| P29 | **ABIERTO — provisional** *(19 sept 2026, separado de P28)* | **Fronteras restantes de `partition_name`** (semántica, no contrato de nombre): `borrar-proyecto` + fila reaparecida con el nombre de un borrado ya confirmado; `row.partition_name` sin contrato en ventanas, seed, `backup:restore` y `runInPartition`; inventario de residuos sobre `userData` aunque las particiones cuelgan de `sessionData` (P16). Sin implementar. Ver §P29 |
 | E2 | **CERRADO** (15 sept 2026) | `vendor/service-status.js` como fuente única. Batería **67 OK/0**, Electron real **42 OK/0**, dos reversiones. Ver §E2, abajo |
 | P13 | **ABIERTO / ACEPTADO TEMPORALMENTE — baja-media** *(15 sept 2026)* | **Frescura del origen**: lanzador = snapshot del último backup persistido; dashboard abierto = estado vivo. **Decisión del usuario:** no se cambia la fuente ahora. Ver §P13 |
 | B3 | **CERRADO** (15 sept 2026) | Los errores relevantes **ya no dependen exclusivamente de `console`**. Cifrado de backup **fail-closed**, el Directorio avisa cuando no puede guardar, **15** líneas de rastro nuevas en `main.js` (9 con dedupe por sesión) y saneado de rutas. Los 19 `console.warn` siguen ahí: B3 añade al lado, no sustituye. Catch vacíos 26 → 17. Batería **85 OK/0**, Electron real **36 OK/0**, siete reversiones. Ver §B3, abajo |
@@ -3331,15 +3333,155 @@ prueba (no de producto): `comun/bloque5-extraccion.js` (+ el helper), `p24/rever
    defiende de eso para `recursos` (cuarentena bajo `.panorama-borrados/<id>`) y no
    aquí. La vía especial de P26 sí está protegida (regex de forma). Corrección
    mínima posible: en la misma guarda, exigir la forma `persist:proj-…` y que la
-   ruta caiga bajo `Partitions/` (si no, no destruir: `no-demostrable`). Sin
-   implementar; sin ID asignado.
+   ruta caiga bajo `Partitions/` (si no, no destruir: `no-demostrable`).
+   **→ Resuelto por P28** (ver §P28: ese confinamiento resultó mucho más amplio de lo
+   que aquí se decía —`persist:..` alcanzaba `userData` entero—).
 
 **Custodia.** Entre las baterías de P26 y esta ronda el hash de la BD viva de `G:`
 pasó de `C7F6FC2F…` a `451EA2C1…` (mismo tamaño, 77 824 B). No fue ninguna batería:
 la última terminó a las 14:01 (hora local) y la BD se modificó a las 15:24:04; la
 `app.log` real registra un **arranque real de la v2.0.55** el 19/09 13:23:45Z con
 backups `startup` y `closing` del proyecto 5. Cada batería verifica antes = después
-(INTACTA en todas). `comun/baseline-bd-viva.json` **no** se ha reanclado.
+(INTACTA en todas). *(Actualización P28: `comun/baseline-bd-viva.json` reanclado a
+`451EA2C1…`, ver §P28.)*
+
+## P28 — IMPLEMENTACIÓN (19 sept 2026): confinamiento de rutas de particiones
+
+**P26 y P27 CERRADOS; no se reabren. P25, P14 y Block 9 sin tocar.** Nace del hallazgo
+lateral de P27 (journal con `particion:'persist:..\\victima'`). `main.js` +134 / −4
+(casi todo comentario; parche en `p28/diff-p28-main.patch`), hash `5DAB6F29…` →
+`11496139…`.
+
+### 1. Inventario de caminos (todo lo que lleva un nombre de partición a algo destructivo)
+
+| # | Camino | Nombre desde | Operación | Antes de P28 | Ahora |
+|---|---|---|---|---|---|
+| 1 | Rollback P24 (in-session, CASO B, vía especial P26) → `vaciarParticionDe`, rama rollback | journal `particion` | `fs.rmSync` recursivo sobre `path.join(sessionData,'Partitions',nombre)` **a mano** | **escapaba** (medido) | `rutaParticionSeguraParaBorrado`: contrato de proyecto + base `sessionData` + hijo directo |
+| 2 | `borrar-proyecto` (`projects:delete` → `ejecutarBorrado` → `finalizarPurga`/recuperación), rama genérica | `row.partition_name` (BD) → journal | `session.fromPartition(nombre).clearStorageData()`; Electron resuelve la ruta | nombre sin validar (Electron: `persist:../x` → `userData/x`, `.` → `Partitions`, `..`/vacío → `userData`) | nombre seguro exigido en lector, escritor y rama |
+| 3 | `borrar-prep` | ninguno (el producto nunca escribe `particion`) | — | alcanzable con un journal manipulado que declare `particion` → rama 2 | el lector lo rechaza: el tipo no admite partición |
+| 4 | `purgar-backups` | ídem | — | ídem | ídem |
+| 5 | Recuperación de restauraciones (`j.partition`) | journal de restauración | `localStorage.clear()` en el contexto que resuelve Electron + `flushStorageData` | solo «no vacío» | el lector exige nombre seguro |
+| 6 | `backup:restore` normal, `seedNewProjectStorage`, ventanas de proyecto, `runInPartition` | `row.partition_name` (BD) | vuelcan/leen en la partición del propio proyecto (`clearFirst:true` solo en restaurar) | sin contrato | **sin cambios** (→ P29) |
+| 7 | Inventario de residuos | carpetas de `<userData>/Partitions` | solo LISTA | — | sin cambios (usa `userData`, no `sessionData`: P16) |
+| 8 | `purgarTodo`/`reponerTodo`, `borrarJournalResuelto` | recursos del journal / `action_id` (32 hex) | `rmSync`/`rename`/`unlink` | ya confinados (cuarentena bajo `.panorama-borrados/<id>`, id hex) | — |
+
+**Los cuatro tipos:** en el producto solo `rollback-creacion-proyecto` y
+`borrar-proyecto` escriben `particion` (verificado en los cuatro llamadores de
+`ejecutarBorrado`); `borrar-prep` y `purgar-backups` no. Pero el validador aceptaba
+`particion` en **cualquiera** de los cuatro, así que con un journal manipulado los
+cuatro alcanzaban la lógica de particiones. Ahora solo la alcanzan los dos que la
+tienen, cada uno con su contrato.
+
+### 2. Baseline reproducido (sandbox, `main.js` en estado P27)
+Journal válido para el validador antiguo, id en la marca (CASO B histórico), carpetas
+víctima con contenido: `persist:..\\victima` y `persist:../victima` (carpeta hermana),
+`persist:..\\Partitions-evil` (prefijo hermano) → **destruidas**; `persist:.` y
+`persist:` (nombre vacío) → **`Partitions/` entero** (la partición viva desaparece);
+`persist:..` → **`userData` entero** (`rmSync` recursivo: se llevó `backups/`, el
+propio journal, `Cache`… hasta chocar con un archivo bloqueado; el arranque acabó con
+PS-2006 y `journalsFinal=0`); `persist:directorio-talento` en un rollback → su carpeta
+destruida (sin fila que la referenciara). Las rutas absolutas no escapaban con
+`path.join` pero se aceptaban (journal retirado sin más). Medido además con Electron
+real: `getStoragePath()` escapa `\`, espacios, `:` y `%` (queda en `Partitions/`) pero
+**no** `/`, `.` ni `..`.
+
+### 3. Contrato y helper
+Tres niveles (`motivoParticionNoValida(tipo, particion)` es la ÚNICA tabla):
+- **proyecto** — `/^persist:proj-\d{12,14}-[a-z0-9]{1,6}$/`: lo que genera
+  `projects:create`. Real (9 de 9 en la BD viva): 13 dígitos (`Date.now()` de
+  2001-09-09 a 2286-11-20) y 6 caracteres; el contrato admite 12–14 y 1–6. Único con
+  permiso de borrado FÍSICO.
+- **nombre seguro** — `/^persist:[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/` (una pieza, sin
+  puntos, separadores, `:` ni `%`): `borrar-proyecto` (proyectos y Directorio de
+  Talento).
+- **ninguno** — `borrar-prep`/`purgar-backups`.
+
+`rutaParticionSeguraParaBorrado(nombre)` da la ruta física solo si (A) el nombre
+cumple el contrato de proyecto (más una comprobación explícita de `.`/`..`/`\`/`/`/`:`/`%`/NUL,
+redundante a propósito), (B) la base sale de `app.getPath('sessionData')` (no de
+`userData`) y es absoluta, y (C) el resultado es **hijo directo** de
+`<sessionData>/Partitions` según `esHijoDirectoDe` (`path.relative`: sin distinguir
+mayúsculas ni separadores; no acepta el mismo directorio, otra unidad, UNC ni un nieto;
+`Partitions-evil` queda fuera). Cualquier duda ⇒ `{ok:false, motivo}` y nadie destruye
+nada; **el nombre nunca se decodifica ni se «sanea»** (no hay `decodeURI*` en
+`main.js`; Electron convierte `%2e` en `%252e`).
+
+Aplicación: `leerJournalBorrado` lo exige por tipo (⇒ `incompleto`: no demostrable, F-1
+bloquea, el arranque no toca nada y el log dice «journal de borrado no demostrable …
+partición … fuera de contrato»); `ejecutarBorrado` valida **antes** de escribir el
+journal (una fila con nombre hostil no llega a escribir un journal que luego bloquearía
+todo); `vaciarParticionDe` lo repite como defensa en profundidad (rollback: helper;
+resto: nombre seguro antes de cualquier `session.fromPartition`) con
+`{ok:false, particionInvalida:true}` y la recuperación lo clasifica
+`particion-invalida`; `leerJournalRestauracion` exige el nombre seguro en `partition`.
+`PARTICION_PROYECTO_PERSISTENTE_RE` (compartido con el predicado de P26) pasó de
+`\d{1,16}` a `\d{12,14}` (más estricto; el generador y la BD real caen dentro).
+
+### 4. Batería `p28/` y reversiones
+Batería real (`comprobar-p28.js`): estática (un solo punto construye la ruta; el
+escritor valida antes de escribir; nunca se decodifica), unidad (contrato, confinamiento
+Windows, helper, `leerJournalBorrado`/`leerJournalRestauracion`/`vaciarParticionDe`
+reales, UNIQUE) y Electron real con manifiestos byte a byte: 12 journals manipulados en
+un mismo arranque, `projects:delete` sobre filas hostiles, `sessionData` separado de
+`userData` (con una carpeta homónima señuelo bajo `userData`), ruta legítima inexistente.
+Reversiones `revertir-p28.js` (R1 sin validación de traversal —devuelve el defecto
+medido—, R2 `startsWith` ingenuo, R3 `userData` en vez de `sessionData`, R4 cualquier
+`persist:*`, R5 seguir tras el error, más las capas R6–R11).
+
+**Cifras:** batería **95 OK / 0** (~33 s; 7 procesos Electron con `sessionData`,
+`userData` y `APPDATA`/`LOCALAPPDATA` aislados y el guardián real sin cambios).
+Reversiones: control + 11 familias, **34 OK / 0** (R1, R4 y R6 se re-ejecutaron tras
+anunciar los `EU`/`EH6` que la reversión total hace caer; R1 devuelve el defecto
+medido: `EH3`/`EH4`, carpetas víctima destruidas, y `EU3`–`EU6`, `backups/` y el
+journal desaparecen con `userData`). Como hay **capas** (lector de journals, escritor,
+helper de ruta, rama genérica), quitar solo una la ve la unidad y el E2E sigue
+protegido por las demás; por eso R2, R5, R7 y R11 son de unidad/estática.
+
+### 4b. Regresión y ajustes de infraestructura de prueba
+P27 **84/0** y reversiones **25/0**; P26 **151/0** y reversiones **28/0**; P24 **62/0** y
+reversiones **22/0**; Bloque 5 **80/0** y **58/0**; C1 **165/0**; además Bloques 2–4 y A2
+(comparten la lista de extracción que se amplió) y `P18-Z5` (lee el baseline reanclado):
+**P18 140/0**. Ajustes que la nueva tabla de contrato obligó a hacer (la semántica que
+prueban no cambia): `comun/bloque5-extraccion.js` (+3 funciones, +1 constante);
+`p24/comprobar-p24.js` (lista de extracción del lector y el fixture `persist:proj-1`,
+que el producto nunca genera, pasa a un nombre de la forma real) y `p24/revertir-p24.js`
+(huella de R4); `p27/comprobar-p27.js` (extracción de `vaciarParticionDe` y `ST11`: la
+ruta física ahora la construye solo el helper); `c1/test-c1-residuos.js` (`C1-S23`, mismo
+motivo); `p26/revertir-p26.js`: R4, R7, R8 y R9 pierden de su lista los casos E2E `N7b/N7c`
+y `N9/N9b`, que desde P28 detiene el lector de journals antes de que actúe el predicado
+(siguen cayendo en unidad); el arnés `p26/test-p26-purga-desligada.js` gana
+`--session-data`, `prep-hostil` y `borrar-particion-invalida` sin cambiar los modos
+previos.
+
+### 5. `borrar-proyecto` y `partition_name` compartido
+- **A. La BD lo impide estructuralmente:** `partition_name TEXT NOT NULL UNIQUE`
+  (`db.js`), confirmado en la BD viva (`sqlite_autoindex_projects_1`, 0 duplicados) y
+  medido: un segundo `INSERT` igual falla. Dos filas **vivas** no comparten nombre, así
+  que borrar una nunca vacía a la otra.
+- **B. Límite medido:** `UNIQUE` libera el nombre al borrar la fila; una imagen antigua
+  de la BD puede reintroducirlo (`P28-DB3`). Es el caso «fila reaparecida» de P27
+  aplicado a `borrar-proyecto` (CASO B + `clearStorageData()`): **no** lo resuelve un
+  contrato de nombre, y su solución es de semántica distinta (¿vaciar o conservar la
+  sesión de un proyecto que el usuario borró y que una imagen antigua resucita? el
+  backup ya se purgó). No se implementa; queda como punto separado → **P29**.
+
+### 6. Baseline de la BD viva
+`comun/baseline-bd-viva.json` reanclado a `451EA2C18A2DFF55…` (77 824 B, mtime
+2026-09-19T15:24:04+02:00). `C7F6FC2F…` fue válido hasta la sesión real del 19/09 (arranque
+de la v2.0.55 13:23:45Z, backups `startup`/`closing` del proyecto 5); el cambio **no lo
+causaron P26/P27** (última tirada de Electron terminada a las 14:01; cada batería
+verificó inicio = fin). Cadena conservada: `451EA2C1` ← `C7F6FC2F` ← `C26323D1` ←
+`D5C3FF53` ← `52394C7A`. No se tocó el contenido de la BD real.
+
+## P29 — provisional (19 sept 2026): fronteras restantes de `partition_name`
+
+Separado de P28 a propósito (semántica, no contrato de nombre): (a) `borrar-proyecto`
++ fila reaparecida con la `partition_name` de un borrado ya confirmado (CASO B +
+`clearStorageData()`); (b) `row.partition_name` de la BD entra sin contrato en las
+ventanas de proyecto, `seedNewProjectStorage`, `backup:restore` (`clearFirst:true`) y
+`runInPartition` — no purgan, pero resuelven el nombre en Electron; (c) el inventario
+de residuos lista `<userData>/Partitions` aunque las particiones cuelgan de
+`sessionData` (P16). Sin implementar; decisión pendiente.
 
 ## Block 8B — lock multi-PC (18 sept 2026)
 

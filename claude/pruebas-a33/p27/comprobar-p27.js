@@ -72,8 +72,10 @@ function comprobarEstatico(env, ok) {
   try { dentroClear = /\.clearStorageData\(/.test(cuerpo); } catch (e) { /* se reporta abajo */ }
   ok('P27-ST10 el ÚNICO clearStorageData() de main.js está dentro de vaciarParticionDe (no hay otra destrucción de sesión que la guarda no cubra)', clears === 1 && dentroClear, String(clears));
   const lineasParticiones = codigo.split('\n').filter((l) => /'Partitions'/.test(l));
-  ok('P27-ST11 solo hay DOS usos de la carpeta `Partitions/`: el rmSync de vaciarParticionDe y el inventario de residuos, que solo LISTA',
-    lineasParticiones.length === 2 && lineasParticiones.some((l) => /getPath\('sessionData'\)/.test(l)) && lineasParticiones.some((l) => /listar\(/.test(l)), JSON.stringify(lineasParticiones.map((l) => l.trim().slice(0, 100))));
+  // (Desde P28 la ruta física la construye ÚNICAMENTE `rutaParticionSeguraParaBorrado`; antes lo hacía
+  // `vaciarParticionDe` a mano. El otro uso es el inventario de residuos, que solo LISTA.)
+  ok('P27-ST11 solo hay DOS usos de la carpeta `Partitions/`: la ruta confinada de rutaParticionSeguraParaBorrado y el inventario de residuos, que solo LISTA',
+    lineasParticiones.length === 2 && lineasParticiones.some((l) => /path\.join\(sesion, 'Partitions'\)/.test(l)) && lineasParticiones.some((l) => /listar\(/.test(l)), JSON.stringify(lineasParticiones.map((l) => l.trim().slice(0, 100))));
 
   // «No hay riesgo de repetir DELETE»: ninguna función de la recuperación emite SQL de escritura.
   const firmas = ['async function resolverBorradoPendiente(j)', 'async function finalizarPurga(j)', 'async function vaciarParticionDe(j)',
@@ -133,7 +135,14 @@ function comprobarGuarda(env, ok) {
   const src = fs.readFileSync(mainPathDe(env), 'utf8');
   let crear;
   try {
-    const fuente = [lineaConstDe(src, 'carpetaDeParticion'), extraerDe(src, 'function particionUsadaPorFila(particion)'), extraerDe(src, 'async function vaciarParticionDe(j)')].join('\n');
+    const fuente = [
+      lineaConstDe(src, 'carpetaDeParticion'), extraerDe(src, 'function particionUsadaPorFila(particion)'),
+      // P28: la rama de rollback obtiene la ruta de `rutaParticionSeguraParaBorrado` y la de los demás
+      // tipos exige el nombre seguro antes de pedirle nada a Electron.
+      lineaConstDe(src, 'PARTICION_PROYECTO_PERSISTENTE_RE'), lineaConstDe(src, 'PARTICION_NOMBRE_SEGURO_RE'),
+      extraerDe(src, 'function esHijoDirectoDe(padre, hijo)'), extraerDe(src, 'function rutaParticionSeguraParaBorrado(particion)'),
+      extraerDe(src, 'async function vaciarParticionDe(j)'),
+    ].join('\n');
     crear = (o) => {
       const traza = []; const log = []; const estado = { existe: o.carpetaExiste !== false };
       const fsD = {

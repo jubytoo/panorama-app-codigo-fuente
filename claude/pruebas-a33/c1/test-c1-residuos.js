@@ -459,8 +459,15 @@ const shaBuf = (b) => crypto.createHash('sha256').update(b).digest('hex');
     // ahí que aquí se compruebe la rama de vaciarParticionDe por separado,
     // no el conteo global de apariciones de la palabra.
     !/tipo === 'rollback-creacion-proyecto'[\s\S]*?fs\.rmSync/.test(cuerpo('async function deleteProjectById(id)')) &&
-    (COD.match(/Partitions/g) || []).length === 2 && /path\.join\(ud, 'Partitions'\)/.test(INV) &&
-    /app\.getPath\('sessionData'\), 'Partitions'/.test(cuerpo('async function vaciarParticionDe(j)')));
+    // P28 (19 sept 2026): esa construcción de la ruta ya no vive en `vaciarParticionDe`, sino en
+    // `rutaParticionSeguraParaBorrado` (nombre de proyecto + base `sessionData/Partitions` + hijo
+    // directo demostrado), y `vaciarParticionDe` la OBTIENE de ahí. Se cuenta el literal
+    // `'Partitions'` (los mensajes del helper también nombran la carpeta, sin comillas alrededor).
+    // La exigencia es la misma: solo hay DOS usos de la carpeta —el destructivo y el inventario— y
+    // el destructivo es únicamente del rollback.
+    (COD.match(/'Partitions'/g) || []).length === 2 && /path\.join\(ud, 'Partitions'\)/.test(INV) &&
+    /path\.join\(sesion, 'Partitions'\)/.test(cuerpo('function rutaParticionSeguraParaBorrado(particion)')) &&
+    /rutaParticionSeguraParaBorrado\(j\.particion\)/.test(cuerpo('async function vaciarParticionDe(j)')));
 
   // =========================================================================
   seccion('C1-E1. BACKUP HUÉRFANO REAL (resto de purga) — la purga de hoy NO lo ve');

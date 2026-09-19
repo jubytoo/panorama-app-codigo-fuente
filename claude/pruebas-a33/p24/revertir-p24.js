@@ -96,9 +96,10 @@ const FAMILIAS = [
       /^P24-16 \(5\)/, /^P24-16 \(6a\)/, /^P24-16 \(6b\)/, /^P24-16 \(6c\)/, /^P24-16 orden real/],
     // (P27: la guarda de fila se inserta entre `existsSync` y el `try` del rmSync, así que la
     // huella se acota a las tres líneas que construyen la ruta; la guarda queda intacta.)
+    // (P28: la ruta ya no se construye a mano, la da `rutaParticionSeguraParaBorrado`; la huella
+    // pasa a ser esa obtención y la reversión sigue siendo «ruta vía session.fromPartition».)
     hacer: () => cambiar(MAIN,
-      `    const nombre = String(j.particion).replace(/^persist:/, '');
-    const ruta = path.join(app.getPath('sessionData'), 'Partitions', nombre);
+      `    const ruta = seg.ruta;
     if (!fs.existsSync(ruta)) return { ok: true };`,
       `    // REVERSIÓN R4: ruta obtenida vía session.fromPartition (medido que esto
     // deja una referencia viva que bloquea el propio rmSync siguiente, incluso

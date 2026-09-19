@@ -87,6 +87,9 @@ function comprobarContratoSinRecursos(env, ok) {
       lineaConstDe(src, 'BORRADOS_DIR_NAME'), lineaConstDe(src, 'BORRADOS_JOURNAL_V'),
       lineaConstDe(src, 'BORRADOS_TIPOS'), lineaConstDe(src, 'BORRADOS_TIPOS_SIN_RECURSOS'),
       lineaConstDe(src, 'esHex'), lineaConstDe(src, 'esEnteroNoNegativo'),
+      // P28: `leerJournalBorrado` aplica ahora el contrato del nombre de partición por tipo.
+      lineaConstDe(src, 'PARTICION_PROYECTO_PERSISTENTE_RE'), lineaConstDe(src, 'PARTICION_NOMBRE_SEGURO_RE'),
+      extraerDe(src, 'function motivoParticionNoValida(tipo, particion)'),
       extraerDe(src, 'function borradosDir()'), extraerDe(src, 'function estaDentroDe(hijo, padre)'),
       extraerDe(src, 'function mismaRuta(a, b)'), extraerDe(src, 'function leerJournalBorrado(ruta)'),
     ].join('\n');
@@ -114,7 +117,10 @@ function comprobarContratoSinRecursos(env, ok) {
   });
 
   // --- los tres tipos cuyo contrato permite cero recursos --------------------
-  ok('P24-15 rollback-creacion-proyecto + recursos:[] + sinRecursos:true ES válido', clase(base('rollback-creacion-proyecto', { sinRecursos: true, particion: 'persist:proj-1' })) === 'valido');
+  // (P28: el fixture usaba `persist:proj-1`, un nombre que el producto nunca genera y que el
+  // contrato de nombre de partición rechaza; se cambia por uno de la forma real. La exigencia
+  // de P24-15 —que `sinRecursos` abra `recursos:[]` en estos tipos— es la misma.)
+  ok('P24-15 rollback-creacion-proyecto + recursos:[] + sinRecursos:true ES válido', clase(base('rollback-creacion-proyecto', { sinRecursos: true, particion: 'persist:proj-1700000000001-abc001' })) === 'valido');
   ok('P24-15 purgar-backups + recursos:[] + sinRecursos:true ES válido', clase(base('purgar-backups', { sinRecursos: true })) === 'valido');
   ok('P24-15 borrar-prep + recursos:[] + sinRecursos:true ES válido', clase(base('borrar-prep', { sinRecursos: true })) === 'valido');
   // --- el que NO lo permite ---------------------------------------------------

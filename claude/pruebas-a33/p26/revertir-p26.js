@@ -68,7 +68,9 @@ const FAMILIAS = [
     que: 'la excepción deja de ser exclusiva de rollback-creacion-proyecto sin recursos: vale para CUALQUIER journal propio en `purgando` cuya partición no tenga fila (incluido borrar-proyecto) — la relajación genérica de F-1 que P26 prohíbe',
     // B3/B4 son la consecuencia grave: un borrar-proyecto cuyo id no está en la marca se PURGA en vez de reponerse.
     // RC5b/RC7 también cambian porque la vía especial se salta la marca para un tipo que no le corresponde.
-    tumba: [/^P26-U4[abcd] /, /^P26-U6 /, /^P26-U7[ab] /, /^P26-U14b? /, /^P26-F1[defi] /, /^P26-RC(5[ab]|6[ab]|7|8) /, /^P26-N-N(3|7|7b|7c) /, /^P26-B[134] /],
+    // (Desde P28, N7b/N7c —purgar-backups/borrar-prep con `particion`— ya no caen aquí: el LECTOR de journals los rechaza
+    // como fuera de contrato antes de que el predicado los vea. Siguen cayendo en unidad: U4/F1f/RC6.)
+    tumba: [/^P26-U4[abcd] /, /^P26-U6 /, /^P26-U7[ab] /, /^P26-U14b? /, /^P26-F1[defi] /, /^P26-RC(5[ab]|6[ab]|7|8) /, /^P26-N-N(3|7) /, /^P26-B[134] /],
     hacer: () => {
       let s = reemplazarLinea(MAIN, "if (j.tipo !== 'rollback-creacion-proyecto') return no(", '    // REVERSIÓN R4: sin restricción de tipo');
       s = reemplazarLinea(s, "if (j.sinRecursos !== true) return no(", '    // REVERSIÓN R4: sin exigir sinRecursos');
@@ -101,14 +103,16 @@ const FAMILIAS = [
     id: 'R7-tipo-ampliado',
     que: 'la excepción se amplía a todos los tipos que permiten cero recursos (purgar-backups, borrar-prep) — precedente automático que P26 prohíbe',
     // borrar-proyecto (U4a) NO cae: no está en BORRADOS_TIPOS_SIN_RECURSOS. Caen purgar-backups y borrar-prep.
-    tumba: [/^P26-U4[bc] /, /^P26-F1f /, /^P26-RC6[ab] /, /^P26-N-N7[bc] /],
+    // (Desde P28 N7b/N7c ya no caen: el lector de journals rechaza un purgar-backups/borrar-prep con `particion`.)
+    tumba: [/^P26-U4[bc] /, /^P26-F1f /, /^P26-RC6[ab] /],
     hacer: () => reemplazarLinea(MAIN, "if (j.tipo !== 'rollback-creacion-proyecto') return no(",
       '    if (!BORRADOS_TIPOS_SIN_RECURSOS.has(j.tipo)) return no(`tipo ${JSON.stringify(j.tipo)}`); // REVERSIÓN R7: tipo ampliado'),
   },
   {
     id: 'R8-sin-forma-de-particion',
     que: 'el predicado no comprueba la forma de la partición — `persist:directorio-talento` o una ruta con travesía contarían como partición de proyecto desligada',
-    tumba: [/^P26-U8[abc] /, /^P26-N-N9b? /],
+    // (Desde P28 N9/N9b ya no caen: el lector de journals rechaza una partición fuera de contrato antes que el predicado.)
+    tumba: [/^P26-U8[abc] /],
     hacer: () => reemplazarLinea(MAIN, 'PARTICION_PROYECTO_PERSISTENTE_RE.test(j.particion)) return no(',
       "    if (typeof j.particion !== 'string') return no('particion no es una cadena'); // REVERSIÓN R8: sin comprobar la forma"),
   },
@@ -116,7 +120,8 @@ const FAMILIAS = [
     id: 'R9-criterio-duplicado-en-f1',
     que: 'f1Borrados repite un criterio propio, algo distinto (sin fila, sin forma, sin recursos) en vez de llamar al predicado único',
     // ST2/ST4 son la guarda estática de «predicado único»; el resto son las tres condiciones que la copia se dejó (fila, forma, recursos, consulta).
-    tumba: [/^P26-ST[24] /, /^P26-F1[bj] /, /^P26-FR[23] /, /^P26-N-N(2|3|5|5b|9|9b) /],
+    // (Desde P28 N9/N9b ya no caen: el lector de journals rechaza una partición fuera de contrato.)
+    tumba: [/^P26-ST[24] /, /^P26-F1[bj] /, /^P26-FR[23] /, /^P26-N-N(2|3|5|5b) /],
     hacer: () => reemplazarLinea(MAIN, '!purgaP24Desligada(e.j).cumple',
       "      if (e.j.writer === yo && !(e.j.tipo === 'rollback-creacion-proyecto' && e.j.fase === 'purgando' && e.j.sinRecursos === true)) pendientes.push({ tipo: 'borrado', ruta: e.ruta, actionId: e.j.action_id }); // REVERSIÓN R9"),
   },

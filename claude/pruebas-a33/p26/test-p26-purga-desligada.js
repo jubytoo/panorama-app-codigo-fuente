@@ -53,8 +53,8 @@ const FILA_ID = arg('--fila-id=') === 'mismo' ? 'mismo' : 'otro';
 const FASE_RETIRANDO = arg('--fase-retirando=') === '1';
 // P27: la consulta a `projects` de la guarda falla durante el arranque.
 const BD_FALLA = arg('--bd-falla=') === '1';
-// P27 reutiliza este arnés: acepta los sandboxes de las dos baterías.
-if (!SB || !/_a33-p2[67]/i.test(SB)) { console.error('sandbox no marcado'); process.exit(2); }
+// P27 y P28 reutilizan este arnés: acepta los sandboxes de las tres baterías.
+if (!SB || !/_a33-p2[678]/i.test(SB)) { console.error('sandbox no marcado'); process.exit(2); }
 if (!MODO) { console.error('falta --modo='); process.exit(2); }
 
 // ---- ARN-3: lo primero de todo ---------------------------------------------
@@ -73,6 +73,15 @@ const { app, ipcMain, dialog } = electron;
 app.setPath('appData', APPDATA_SB);
 app.setPath('userData', UD);
 app.setPath('temp', TEMP_SB);
+// P28: `--session-data=1` separa sessionData de userData (dentro del sandbox, como todo
+// lo demás): las particiones de Chromium viven en `<sessionData>/Partitions`, y el
+// código que las retira tiene que usar ESA ruta, no la de userData.
+const SESION_APARTE = arg('--session-data=') === '1';
+if (SESION_APARTE) {
+  const SESSION_SB = path.join(SB, 'sessiondata');
+  fs.mkdirSync(SESSION_SB, { recursive: true });
+  app.setPath('sessionData', SESSION_SB);
+}
 
 const dentro = (p) => { const r = path.relative(path.resolve(SB), path.resolve(String(p))); return !!r && !r.startsWith('..') && !path.isAbsolute(r); };
 const entorno = {
@@ -129,10 +138,17 @@ app.on('session-created', (s) => {
 });
 app.on('browser-window-created', () => marca_('window-created', {}));
 const relevante = (p) => typeof p === 'string' && (/[\\/]Partitions[\\/]/.test(p) || /\.panorama-borrados/.test(p));
+// P28: TODO `rmSync` que NO cae bajo `Partitions/` ni `.panorama-borrados` (p. ej. una
+// travesía que sale de `Partitions/`) también queda anotado: una ruta normalizada por
+// `path.join` ya no contiene «Partitions», y la línea de tiempo de arriba no la vería.
+const rmFuera = [];
 for (const nombre of ['rmSync', 'unlinkSync', 'renameSync', 'writeFileSync']) {
   const orig = fs[nombre];
   fs[nombre] = function (...a) {
-    if (!relevante(a[0]) && !relevante(a[1])) return orig.apply(this, a);
+    if (!relevante(a[0]) && !relevante(a[1])) {
+      if (nombre === 'rmSync' && rmFuera.length < 400) rmFuera.push(String(a[0]));
+      return orig.apply(this, a);
+    }
     const destino = (nombre === 'renameSync' && typeof a[1] === 'string') ? a[1] : null;
     try { const r = orig.apply(this, a); marca_('fs', { op: nombre, ruta: String(a[0]), destino, ok: true }); return r; }
     catch (e) { marca_('fs', { op: nombre, ruta: String(a[0]), destino, ok: false, codigo: (e && e.code) || null }); throw e; }
@@ -141,7 +157,8 @@ for (const nombre of ['rmSync', 'unlinkSync', 'renameSync', 'writeFileSync']) {
 
 // ---- inventario de disco (solo lecturas de fs: no toca Chromium) -------------
 function inventario() {
-  const partitionsDir = path.join(UD, 'Partitions');
+  // P28: las particiones cuelgan de `sessionData` (= userData salvo `--session-data=1`).
+  const partitionsDir = path.join(app.getPath('sessionData'), 'Partitions');
   const carpetas = fs.existsSync(partitionsDir) ? fs.readdirSync(partitionsDir) : [];
   const dirB = path.join(UD, '.panorama-borrados');
   let journals = [];
@@ -171,6 +188,9 @@ function volcarArranque(porQuit) {
     porQuit: !!porQuit,
     antes: { carpetas: antes.carpetas, journals: antes.journals.map(resumenJournal) },
     carpetasFinal: carpetas, journalsFinal: journals.map(resumenJournal), filasFinal: filas,
+    // P28: lo que hay en `userData/Partitions` (distinto de sessionData con --session-data=1).
+    carpetasUserData: fs.existsSync(path.join(UD, 'Partitions')) ? fs.readdirSync(path.join(UD, 'Partitions')) : [],
+    rmSyncFuera: rmFuera.slice(), // (P28) rmSync sobre rutas que no son Partitions/ ni .panorama-borrados
     linea, dialogos: dialogosVistos.slice(), appLogRelevante: logRel,
   });
 }
@@ -208,6 +228,7 @@ const marcaAcciones = () => {
 };
 const filasProyectos = () => dbmod.all('SELECT id, name, partition_name FROM projects ORDER BY id').map((r) => ({ id: r.id, name: r.name, partition_name: r.partition_name }));
 const corto = (x) => (x && typeof x === 'object') ? { ok: x.ok, aplicado: x.aplicado, bloqueo: x.bloqueo, error: x.error ? String(x.error).slice(0, 110) : undefined } : x;
+const lineasLogTail = () => { try { return fs.readFileSync(path.join(UD, 'app.log'), 'utf8').split(/\r?\n/).filter((l) => /Borrado|P2[4-8]|PS-2006|partici/i.test(l)).slice(-8).map((l) => l.slice(0, 230)); } catch (e) { return []; } };
 const sha = (f) => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
 const hex = (n) => crypto.randomBytes(n).toString('hex');
 
@@ -461,6 +482,60 @@ app.whenReady().then(async () => {
 
     R.journalsResiduales = inventario().journals.map(resumenJournal);
     return salir(R);
+  }
+
+  // =========================================================================
+  if (MODO === 'prep-hostil') {
+    // P28: un journal que el producto NO escribe (partición manipulada), con su id ya en la
+    // marca (CASO B histórico). Los datos (`hostil.json`) los deja el driver en el sandbox:
+    // así los nombres con `\`, `:` o `/` no pasan por ninguna línea de comandos.
+    const cfg = JSON.parse(fs.readFileSync(path.join(SB, 'hostil.json'), 'utf8'));
+    const w = dbmod.getInstallationId();
+    const items = Array.isArray(cfg.lista) ? cfg.lista : [cfg];
+    fs.mkdirSync(borradosDir(), { recursive: true });
+    const ids = [];
+    for (const it of items) {
+      const actionId = hex(16);
+      const j = {
+        v: 1, action_id: actionId, writer: w, tipo: it.tipo || 'rollback-creacion-proyecto', base_commit_id: '0'.repeat(32),
+        fase: it.fase || 'purgando', startedAt: new Date().toISOString(), recursos: [], sinRecursos: true,
+      };
+      if (it.particion !== undefined) j.particion = it.particion;
+      fs.writeFileSync(path.join(borradosDir(), actionId + '.json'), JSON.stringify(j), 'utf8');
+      ids.push(actionId);
+    }
+    // TODOS los ids quedan en la marca (el lector no limita su longitud): cada journal entra por el
+    // CASO B histórico, sin que la marca circular de 8 expulse a ninguno.
+    const previa = marcaAcciones();
+    const lista = ids.concat(Array.isArray(previa) ? previa : []);
+    dbmod.run('INSERT INTO app_meta(key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', ['acciones_' + w, JSON.stringify(lista)]);
+    const enMarca = marcaAcciones() || [];
+    return salir({ ids, n: ids.length, actionId: ids[0], particion: items[0] && items[0].particion, tipo: items[0] && items[0].tipo, marcaContieneTodos: ids.every((i) => enMarca.includes(i)), sessionData: app.getPath('sessionData'), userData: UD });
+  }
+
+  // =========================================================================
+  if (MODO === 'borrar-particion-invalida') {
+    // P28: una FILA cuya partition_name es hostil (BD manipulada) y `projects:delete` sobre ella.
+    // Antes de P28 se escribía un journal y `clearStorageData()` se pedía a Electron con ese nombre.
+    const cfg = JSON.parse(fs.readFileSync(path.join(SB, 'hostil.json'), 'utf8'));
+    await crearImp('P28 proyecto bueno');
+    const nombres = Array.isArray(cfg.particiones) ? cfg.particiones : [cfg.particion];
+    const casos = [];
+    for (const particion of nombres) {
+      const id = insertarFilaConParticion(particion);
+      const sesionesAntes = linea.filter((e) => e.tipo === 'session-created').length;
+      const r = corto(await borrar(id));
+      await dormir(600);
+      casos.push({
+        particion, id, resultado: r, filaSigue: filasProyectos().some((f) => f.id === id),
+        sesionesNuevas: linea.filter((e) => e.tipo === 'session-created').slice(sesionesAntes).map((e) => e.storage),
+        journals: inventario().journals.map(resumenJournal),
+      });
+    }
+    // CONTROL: un proyecto normal (partición generada por `projects:create`) se borra como siempre.
+    const c = await crearSin('P28 control');
+    const rc = c.ok ? corto(await borrar(c.id)) : null;
+    return salir({ casos, control: { creado: c, resultado: rc }, appLog: lineasLogTail() });
   }
 
   // =========================================================================

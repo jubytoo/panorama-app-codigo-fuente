@@ -4301,6 +4301,9 @@ function leerJournalRestauracion(ruta) {
   if (!esHex(j.writer, 32)) falta.push('writer no tiene formato de installation-id');
   if (!(typeof j.project_id === 'number' && Number.isInteger(j.project_id) && j.project_id > 0)) falta.push('project_id no es un entero > 0');
   if (!textoNoVacio(j.partition)) falta.push('partition vacía');
+  // P28: la reposición vuelca (`localStorage.clear()`) sobre la partición que dice el journal; el
+  // nombre se resuelve en Electron, así que tiene que cumplir el contrato de nombre seguro.
+  else if (!PARTICION_NOMBRE_SEGURO_RE.test(j.partition)) falta.push(`partition ${JSON.stringify(j.partition.slice(0, 80))} fuera de contrato de nombre seguro`);
   if (!esHex(j.base_commit_id, 32)) falta.push('base_commit_id no es un commit válido');
   if (!RESTAURACION_FASES.has(j.fase)) falta.push(`fase inesperada (${JSON.stringify(j.fase)})`);
   if (j.cifrado !== 0 && j.cifrado !== 1) falta.push('cifrado no es 0 ni 1');
@@ -6618,6 +6621,13 @@ function leerJournalBorrado(ruta) {
   // ser un identificador explícito. Nunca se inventa durante la recuperación.
   if (j.particion !== undefined && j.particion !== null) {
     if (typeof j.particion !== 'string' || !j.particion) falta.push('particion declarada pero vacía');
+    else if (BORRADOS_TIPOS.has(j.tipo)) {
+      // P28: el nombre tiene que cumplir el contrato de SU tipo. Un journal con una
+      // partición manipulada (`persist:..\victima`, `persist:.`, `persist:`…) es
+      // evidencia incompleta: no demostrable, no se interpreta ni se «sanea».
+      const m = motivoParticionNoValida(j.tipo, j.particion);
+      if (m) falta.push(`particion ${JSON.stringify(j.particion.slice(0, 80))} fuera de contrato: ${m}`);
+    }
   }
   if (falta.length) {
     return {
@@ -6747,8 +6757,98 @@ function ocupacionComun(destino, opts) {
 //
 // Sin efectos: solo lee. Devuelve `{ cumple, motivo }`; `motivo` solo se usa
 // para diagnóstico.
-const PARTICION_PROYECTO_PERSISTENTE_RE = /^persist:proj-\d{1,16}-[a-z0-9]{1,6}$/;
+const PARTICION_PROYECTO_PERSISTENTE_RE = /^persist:proj-\d{12,14}-[a-z0-9]{1,6}$/;
+const PARTICION_NOMBRE_SEGURO_RE = /^persist:[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/;
 const carpetaDeParticion = (p) => String(p).replace(/^persist:/i, '').toLowerCase();
+
+// P28 (19 sept 2026) — CONTRATO DEL NOMBRE DE PARTICIÓN Y RUTA FÍSICA CONFINADA.
+//
+// El nombre de una partición llega de la BD (`projects.partition_name`) o de un
+// journal, y acaba en DOS sitios destructivos que lo interpretan de forma DISTINTA:
+//   - `vaciarParticionDe` (rollback) construía la ruta a mano con `path.join`, donde
+//     en Windows `\` y `/` separan y `..` sube: `persist:..\victima` salía de
+//     `Partitions/`, `persist:.` y `persist:` (nombre vacío) apuntaban a `Partitions/`
+//     entero y `persist:..` a `userData` entero. Medido en sandbox: se llevaron una
+//     carpeta hermana, otras particiones y —con `..`— `backups/` y el propio journal;
+//   - `session.fromPartition(nombre).clearStorageData()` (borrar-proyecto) lo resuelve
+//     Electron, que escapa `\`, espacios, `:` y `%` (queda dentro de `Partitions/`) pero
+//     NO `/`, `.` ni `..` (medido: `persist:../x` → `userData/x`, `persist:.` →
+//     `Partitions`, `persist:..` y `persist:` → `userData`).
+// Ninguna de las dos debe ver un nombre que no haya pasado por el contrato. Un nombre
+// nunca se decodifica ni se «sanea»: o cumple, o no se toca nada (`%2e` no es `.`:
+// Electron lo vuelve `%252e`, y aquí no hay ningún `decodeURI*`).
+//
+// Tres niveles, del más estricto al más laxo:
+//   - PROYECTO (`PARTICION_PROYECTO_PERSISTENTE_RE`): lo que genera `projects:create`,
+//     `persist:proj-<Date.now()>-<Math.random().toString(36).slice(2, 8)>`. Real (9 de 9
+//     en la BD viva): 13 dígitos —el rango de `Date.now()` de 2001-09-09 a 2286-11-20— y
+//     6 caracteres [a-z0-9]. El contrato admite 12–14 dígitos y 1–6 caracteres (el
+//     generador puede dar menos). Es la ÚNICA forma con permiso de borrado FÍSICO
+//     (`rutaParticionSeguraParaBorrado`): `persist:directorio-talento` no lo tiene.
+//   - NOMBRE SEGURO (`PARTICION_NOMBRE_SEGURO_RE`): un solo segmento de letras, dígitos,
+//     `-` o `_`, sin puntos, separadores, `:` ni `%`. Lo exige `borrar-proyecto`
+//     (proyectos normales y Directorio de Talento) antes de pedirle nada a Electron.
+//   - NINGUNO: `borrar-prep` y `purgar-backups` no tienen partición; su journal no
+//     puede declararla (el producto nunca la escribe).
+// `motivoParticionNoValida(tipo, particion)` es la ÚNICA tabla tipo → contrato: la usan
+// el lector de journals (`leerJournalBorrado`, que lo deja `incompleto`: no demostrable,
+// F-1 bloquea y el arranque no toca nada) y el escritor (`ejecutarBorrado` se niega
+// antes de escribir un journal que el lector rechazaría).
+function motivoParticionNoValida(tipo, particion) {
+  if (typeof particion !== 'string' || !particion) return 'la partición no es una cadena no vacía';
+  if (tipo === 'rollback-creacion-proyecto') {
+    return PARTICION_PROYECTO_PERSISTENTE_RE.test(particion) ? null
+      : 'rollback-creacion-proyecto solo admite «persist:proj-<12-14 dígitos>-<1-6 [a-z0-9]>»';
+  }
+  if (tipo === 'borrar-proyecto') {
+    return PARTICION_NOMBRE_SEGURO_RE.test(particion) ? null
+      : 'borrar-proyecto solo admite «persist:<letras, dígitos, - o _>» (sin puntos, separadores ni rutas)';
+  }
+  if (tipo === 'borrar-prep' || tipo === 'purgar-backups') return `${tipo} no tiene partición: su journal no puede declararla`;
+  return `el tipo ${JSON.stringify(tipo)} no tiene contrato de partición`;
+}
+
+// ¿`hijo` es un hijo DIRECTO de `padre`? Comparación de Windows, no de cadenas:
+// `path.relative` no distingue mayúsculas ni separadores y resuelve `..`; un
+// `startsWith` a pelo daría por bueno `C:\x\Partitions-evil` dentro de `C:\x\Partitions`.
+// El mismo directorio NO cuenta (`Partitions/` no es una partición), ni otra unidad o
+// UNC (`relative` devuelve una ruta absoluta), ni un nieto.
+function esHijoDirectoDe(padre, hijo) {
+  try {
+    const p = path.resolve(String(padre));
+    const h = path.resolve(String(hijo));
+    const rel = path.relative(p, h);
+    if (!rel || path.isAbsolute(rel)) return false;
+    if (rel === '..' || rel.startsWith('..' + path.sep)) return false;
+    if (rel.includes(path.sep) || rel.includes('/')) return false;
+    return path.basename(h).toLowerCase() === rel.toLowerCase() && path.dirname(h).toLowerCase() === p.toLowerCase();
+  } catch (e) {
+    return false;
+  }
+}
+
+// La ÚNICA forma de obtener una ruta física destructiva de una partición. Solo la da
+// si se demuestra: (A) el nombre cumple el contrato de PROYECTO, (B) la base sale de
+// `app.getPath('sessionData')` —donde Chromium pone `Partitions/`, no de `userData`—
+// y (C) el resultado es un hijo directo de `<sessionData>/Partitions`. Cualquier duda
+// es `{ ok:false }` y quien llama NO destruye nada: no hay «arreglar el nombre y seguir».
+function rutaParticionSeguraParaBorrado(particion) {
+  const no = (motivo) => ({ ok: false, motivo });
+  try {
+    if (typeof particion !== 'string') return no('la partición no es una cadena');
+    if (!PARTICION_PROYECTO_PERSISTENTE_RE.test(particion)) return no('el nombre no cumple el contrato de proyecto («persist:proj-<12-14 dígitos>-<1-6 [a-z0-9]>»)');
+    const nombre = particion.slice('persist:'.length);
+    if (nombre === '' || nombre === '.' || nombre === '..' || /[\\/:%\0]/.test(nombre)) return no('el nombre contiene puntos, separadores o caracteres de ruta');
+    const sesion = app.getPath('sessionData');
+    if (typeof sesion !== 'string' || !path.isAbsolute(sesion)) return no('sessionData no es una ruta absoluta');
+    const base = path.join(sesion, 'Partitions');
+    const ruta = path.join(base, nombre);
+    if (!esHijoDirectoDe(base, ruta)) return no('la ruta resultante no queda DENTRO de <sessionData>/Partitions');
+    return { ok: true, ruta, base, nombre };
+  } catch (e) {
+    return no('no se pudo derivar la ruta: ' + String((e && e.message) || e));
+  }
+}
 
 // P27 (19 sept 2026) — «¿alguna fila de `projects` usa esta partición?», UNA sola
 // vez. Lo comparten el predicado de P26 (más abajo) y la guarda de
@@ -7022,11 +7122,24 @@ function purgarTodo(j) {
 //     journal SE CONSERVA como purga pendiente (`particionPendiente`), igual que
 //     un `EBUSY`: sin poder demostrar que la carpeta está desligada no se destruye,
 //     y sin poder descartar la deuda no se retira la prueba de que existe.
+//
+// P28 (19 sept 2026) — CONFINAMIENTO: ninguna de las dos ramas destruye nada sin haber
+// pasado por el contrato del nombre (ver «P28 — CONTRATO DEL NOMBRE DE PARTICIÓN»).
+// La de rollback ya NO construye la ruta a mano: la da `rutaParticionSeguraParaBorrado`
+// —nombre de proyecto, base `sessionData/Partitions`, hijo directo demostrado— o no hay
+// ruta. Si no la hay, no se destruye nada, el journal SE CONSERVA y se dice por qué en el
+// log; nunca se intenta «arreglar» el nombre (`{ok:false, particionInvalida:true}`, que
+// la recuperación clasifica como `particion-invalida`). La rama de los demás tipos exige el
+// nombre seguro ANTES de pedirle a Electron ningún `session.fromPartition`.
 async function vaciarParticionDe(j) {
   if (!j.particion) return { ok: true };
   if (j.tipo === 'rollback-creacion-proyecto') {
-    const nombre = String(j.particion).replace(/^persist:/, '');
-    const ruta = path.join(app.getPath('sessionData'), 'Partitions', nombre);
+    const seg = rutaParticionSeguraParaBorrado(j.particion);
+    if (!seg.ok) {
+      appLog(`ERROR PS-2006 — partición NO válida, no se destruye nada (${j.tipo} ${j.action_id}): ${seg.motivo}. Partición declarada: ${JSON.stringify(String(j.particion).slice(0, 120))}`);
+      return { ok: false, particionInvalida: true, motivo: seg.motivo };
+    }
+    const ruta = seg.ruta;
     if (!fs.existsSync(ruta)) return { ok: true };
     const uso = particionUsadaPorFila(j.particion);
     if (uso.estado === 'referenciada') {
@@ -7048,6 +7161,11 @@ async function vaciarParticionDe(j) {
       return { ok: false, particionPendiente: true, motivo: 'la carpeta sigue existiendo tras fs.rmSync' };
     }
     return { ok: true };
+  }
+  if (!PARTICION_NOMBRE_SEGURO_RE.test(String(j.particion))) {
+    const motivo = 'el nombre no cumple el contrato de nombre seguro («persist:<letras, dígitos, - o _>»)';
+    appLog(`ERROR PS-2006 — partición NO válida, no se vacía nada (${j.tipo} ${j.action_id}): ${motivo}. Partición declarada: ${JSON.stringify(String(j.particion).slice(0, 120))}`);
+    return { ok: false, particionInvalida: true, motivo };
   }
   try {
     await session.fromPartition(j.particion).clearStorageData();
@@ -7111,6 +7229,18 @@ async function ejecutarBorrado(opts) {
     return noAplicado('Un borrado tiene que declarar al menos un recurso.', false);
   }
   if (!BORRADOS_TIPOS.has(o.tipo)) return noAplicado(`Tipo de borrado desconocido: ${JSON.stringify(o.tipo)}`, false);
+  // P28: el escritor aplica el MISMO contrato que el lector. Una fila con una `partition_name`
+  // fuera de contrato no llega a escribir un journal que luego el lector rechazaría (y que
+  // bloquearía todo hasta reiniciar): el borrado ni empieza y no se toca nada.
+  if (o.particion) {
+    const m = motivoParticionNoValida(o.tipo, String(o.particion));
+    if (m) {
+      appLog(`ERROR PS-2006 — borrado (${o.tipo}) NO iniciado: partición ${JSON.stringify(String(o.particion).slice(0, 80))} fuera de contrato: ${m}`);
+      return noAplicado(
+        'La partición registrada para este elemento no tiene un nombre válido, así que no se ha borrado nada. ' +
+        'Revisa el registro de la aplicación (app.log).', false, { bloqueo: 'particion-invalida' });
+    }
+  }
 
   for (const r of entrada) {
     // Un borrado pregunta por su ÁMBITO, no por un punto: si alguien tiene
@@ -7270,7 +7400,7 @@ async function resolverBorradoPendiente(j) {
   // CASO B: el commit SÍ se aplicó → no se repone; se purga.
   if (enMarca.estado === 'aplicada') {
     const p = await finalizarPurga(j);
-    if (!p.ok) return { ok: false, actionId: j.action_id, clase: 'purga-incompleta', motivo: p.motivo, particionPendiente: !!p.particionPendiente };
+    if (!p.ok) return { ok: false, actionId: j.action_id, clase: p.particionInvalida ? 'particion-invalida' : 'purga-incompleta', motivo: p.motivo, particionPendiente: !!p.particionPendiente };
     return { ok: true, actionId: j.action_id, caso: 'B', clase: p.particionOmitida ? 'sin-efecto' : 'purgado' };
   }
   // CASO A: no se aplicó → se repone TODO, con NO-CLOBBER.
