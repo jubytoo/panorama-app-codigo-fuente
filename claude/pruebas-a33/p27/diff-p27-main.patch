@@ -1,0 +1,112 @@
+diff --git a/main.js b/main.js
+index 5845905..fadbf8a 100644
+--- a/main.js
++++ b/main.js
+@@ -6750,4 +6750,35 @@ function ocupacionComun(destino, opts) {
+ const PARTICION_PROYECTO_PERSISTENTE_RE = /^persist:proj-\d{1,16}-[a-z0-9]{1,6}$/;
+ const carpetaDeParticion = (p) => String(p).replace(/^persist:/i, '').toLowerCase();
++
++// P27 (19 sept 2026) — «¿alguna fila de `projects` usa esta partición?», UNA sola
++// vez. Lo comparten el predicado de P26 (más abajo) y la guarda de
++// `vaciarParticionDe()`: si cada uno tuviera su copia, una diferencia mínima de
++// comparación bastaría para que uno diera la carpeta por desligada y el otro no.
++// Tres estados, y solo `libre` autoriza a nada:
++//   - `referenciada`   la consulta respondió y una fila usa esa carpeta (se compara
++//                      la carpeta física — sin `persist:` y sin distinguir
++//                      mayúsculas, como la resuelve Windows —, no el id de la fila:
++//                      una fila con OTRO id pero la misma `partition_name` también
++//                      la referencia). Una coincidencia manda sobre una fila ilegible.
++//   - `no-demostrable` la consulta lanzó, no devolvió una lista, o alguna fila no se
++//                      puede leer y ninguna otra coincide: no se ha demostrado nada.
++//   - `libre`          la consulta respondió y ninguna fila la usa.
++function particionUsadaPorFila(particion) {
++  try {
++    const filas = dbmod.all('SELECT partition_name FROM projects');
++    if (!Array.isArray(filas)) return { estado: 'no-demostrable', motivo: 'la consulta a projects no devolvió una lista' };
++    const carpeta = carpetaDeParticion(particion);
++    let ilegible = false;
++    for (const f of filas) {
++      if (!f || typeof f.partition_name !== 'string') { ilegible = true; continue; }
++      if (carpetaDeParticion(f.partition_name) === carpeta) return { estado: 'referenciada', motivo: 'una fila de projects usa esa partición' };
++    }
++    if (ilegible) return { estado: 'no-demostrable', motivo: 'una fila de projects no se puede leer' };
++    return { estado: 'libre' };
++  } catch (e) {
++    return { estado: 'no-demostrable', motivo: 'no se pudo consultar projects: ' + String((e && e.message) || e) };
++  }
++}
++
+ function purgaP24Desligada(j) {
+   const no = (motivo) => ({ cumple: false, motivo });
+@@ -6760,11 +6791,6 @@ function purgaP24Desligada(j) {
+     if (!Array.isArray(j.recursos) || j.recursos.length !== 0) return no('tiene recursos pendientes o no son un array');
+     if (typeof j.particion !== 'string' || !PARTICION_PROYECTO_PERSISTENTE_RE.test(j.particion)) return no('particion sin la forma de un proyecto persistente');
+-    const filas = dbmod.all('SELECT partition_name FROM projects');
+-    if (!Array.isArray(filas)) return no('la consulta a projects no devolvió una lista');
+-    const carpeta = carpetaDeParticion(j.particion);
+-    for (const f of filas) {
+-      if (!f || typeof f.partition_name !== 'string') return no('una fila de projects no se puede leer');
+-      if (carpetaDeParticion(f.partition_name) === carpeta) return no('una fila de projects usa esa partición');
+-    }
++    const uso = particionUsadaPorFila(j.particion);
++    if (uso.estado !== 'libre') return no(uso.motivo);
+     return { cumple: true };
+   } catch (e) {
+@@ -6973,4 +6999,28 @@ function purgarTodo(j) {
+ // idénticos pero solo `sessionData` seguiría siendo correcto si algún día
+ // llegaran a separarse (P16, sin decidir todavía).
++//
++// P27 (19 sept 2026) — GUARDA: NUNCA se destruye la carpeta de una partición que
++// una fila de `projects` referencia en ese momento. La comprobación va
++// INMEDIATAMENTE antes del `rmSync` —sin ningún `await` entre una y otro— y aquí
++// dentro, no en quien llama: así cubre a TODOS los caminos que llegan a
++// destruirla (`ejecutarBorrado` tras su commit, el CASO B histórico de la
++// recuperación —con el id todavía en la marca— y la vía especial de P26), en vez de
++// depender de que alguno de ellos ya lo hubiera comprobado antes en otro punto.
++// Es solo de `rollback-creacion-proyecto`: `borrar-proyecto` y el resto no cambian.
++//   - `referenciada`: no se toca NADA (ni `rmSync` ni `clearStorageData`) y el
++//     journal se da por SIN EFECTO y se retira. Su contrato era «tras el commit
++//     ninguna fila usa esta partición, solo falta quitar la carpeta»; esa premisa
++//     ya no es cierta y su única acción pendiente —quitar la carpeta— es ahora
++//     imposible sin destruir datos vivos, no está pendiente. No guarda recursos
++//     reversibles (`recursos:[]`, y `finalizarPurga` ya vació la cuarentena
++//     antes de llegar aquí), ni SQL (el `DELETE` va en el commit, no en el
++//     journal, y la recuperación nunca emite SQL), así que no hay nada que
++//     repetir ni reinterpretar; la fila es desde ahora la referencia durable de la
++//     carpeta. Es, además, exactamente lo que ya hace la recuperación cuando la
++//     marca está agotada (CASO A): el desenlace no depende de la marca.
++//   - `no-demostrable` (la consulta falló o es ambigua): no se destruye nada y el
++//     journal SE CONSERVA como purga pendiente (`particionPendiente`), igual que
++//     un `EBUSY`: sin poder demostrar que la carpeta está desligada no se destruye,
++//     y sin poder descartar la deuda no se retira la prueba de que existe.
+ async function vaciarParticionDe(j) {
+   if (!j.particion) return { ok: true };
+@@ -6979,4 +7029,13 @@ async function vaciarParticionDe(j) {
+     const ruta = path.join(app.getPath('sessionData'), 'Partitions', nombre);
+     if (!fs.existsSync(ruta)) return { ok: true };
++    const uso = particionUsadaPorFila(j.particion);
++    if (uso.estado === 'referenciada') {
++      appLog(`Aviso — P27: la carpeta de la partición ${j.particion} NO se retira porque una fila de projects la usa; el borrado ${j.action_id} (${j.tipo}) se da por sin efecto y su journal se retira. La fila es ahora la referencia de esa partición.`);
++      return { ok: true, particionOmitida: 'referenciada', motivo: uso.motivo };
++    }
++    if (uso.estado !== 'libre') {
++      appLog(`Borrado — la carpeta de la partición ${j.particion} NO se retira: no se pudo comprobar si alguna fila de projects la usa (${uso.motivo}). Queda pendiente.`);
++      return { ok: false, particionPendiente: true, motivo: uso.motivo };
++    }
+     try {
+       fs.rmSync(ruta, { recursive: true, force: true });
+@@ -7010,5 +7069,6 @@ async function finalizarPurga(j) {
+     if (!v.ok) return v;
+     borrarJournalResuelto(journalBorradoPath(j.action_id), 'un borrado');
+-    return { ok: true };
++    // P27: si la carpeta se respetó porque una fila la usa, se dice (no es una purga).
++    return v.particionOmitida ? { ok: true, particionOmitida: v.particionOmitida } : { ok: true };
+   } catch (e) {
+     return { ok: false, motivo: String((e && e.message) || e) };
+@@ -7212,5 +7272,5 @@ async function resolverBorradoPendiente(j) {
+     const p = await finalizarPurga(j);
+     if (!p.ok) return { ok: false, actionId: j.action_id, clase: 'purga-incompleta', motivo: p.motivo, particionPendiente: !!p.particionPendiente };
+-    return { ok: true, actionId: j.action_id, caso: 'B', clase: 'purgado' };
++    return { ok: true, actionId: j.action_id, caso: 'B', clase: p.particionOmitida ? 'sin-efecto' : 'purgado' };
+   }
+   // CASO A: no se aplicó → se repone TODO, con NO-CLOBBER.

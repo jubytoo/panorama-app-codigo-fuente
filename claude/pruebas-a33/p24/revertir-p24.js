@@ -94,31 +94,30 @@ const FAMILIAS = [
     // cierre por PS-2006 (6b)(6c) y orden de ventanas.
     tumba: [/^P24-12 la carpeta de la partición huérfana/, /^P24-12 el journal quedó resuelto/, /^P24-16 \(2\)/, /^P24-16 \(3\)/, /^P24-16 \(4\)/,
       /^P24-16 \(5\)/, /^P24-16 \(6a\)/, /^P24-16 \(6b\)/, /^P24-16 \(6c\)/, /^P24-16 orden real/],
+    // (P27: la guarda de fila se inserta entre `existsSync` y el `try` del rmSync, así que la
+    // huella se acota a las tres líneas que construyen la ruta; la guarda queda intacta.)
     hacer: () => cambiar(MAIN,
       `    const nombre = String(j.particion).replace(/^persist:/, '');
     const ruta = path.join(app.getPath('sessionData'), 'Partitions', nombre);
-    if (!fs.existsSync(ruta)) return { ok: true };
-    try {
-      fs.rmSync(ruta, { recursive: true, force: true });`,
+    if (!fs.existsSync(ruta)) return { ok: true };`,
       `    // REVERSIÓN R4: ruta obtenida vía session.fromPartition (medido que esto
     // deja una referencia viva que bloquea el propio rmSync siguiente, incluso
     // en un proceso que nunca antes había tocado la partición)
     let ruta;
     try { ruta = session.fromPartition(j.particion).getStoragePath(); } catch (e) { return { ok: false, particionPendiente: true, motivo: String((e && e.message) || e) }; }
-    if (!ruta) return { ok: true };
-    try {
-      fs.rmSync(ruta, { recursive: true, force: true });`, 1),
+    if (!ruta) return { ok: true };`, 1),
   },
   {
     id: 'R5-borra-journal-siempre',
     que: 'borra el journal de purga aunque vaciarParticionDe haya fallado — pierde la única evidencia durable de que queda limpieza pendiente',
     // También cae la precondición de P24-16: el journal ya no sobrevive a la sesión que falló.
     tumba: [/^P24-3 hay EXACTAMENTE/, /^P24-14 /, /^P24-12 la carpeta/, /^P24-16 precondición: el proceso anterior/],
+    // (P27: el `return` final de `finalizarPurga` ahora distingue `particionOmitida`; la huella
+    // se acota a las tres líneas de arriba y el resultado de la reversión sigue siendo {ok:true}.)
     hacer: () => cambiar(MAIN,
       `    const v = await vaciarParticionDe(j);
     if (!v.ok) return v;
-    borrarJournalResuelto(journalBorradoPath(j.action_id), 'un borrado');
-    return { ok: true };`,
+    borrarJournalResuelto(journalBorradoPath(j.action_id), 'un borrado');`,
       `    const v = await vaciarParticionDe(j);
     borrarJournalResuelto(journalBorradoPath(j.action_id), 'un borrado'); // REVERSIÓN R5: se borra pase lo que pase
     return { ok: true };`, 1),

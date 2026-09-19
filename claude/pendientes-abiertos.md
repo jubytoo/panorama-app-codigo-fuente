@@ -38,6 +38,8 @@ verificadas como reales.
 | P16 | **ABIERTO** *(16 sept 2026)* | **Particiones de Chromium dentro de la carpeta sincronizada.** Las vivas suman ~755 MB, ~721 MB de caché; una sola lleva ~523 MB de Service Worker de un origen https externo. Ubicación, sincronización innecesaria, crecimiento y ciclo de vida. Relacionado con A3.3 Bloque 8 / ciclo de vida de Drive y con P14. **No es C1.** Ver §P16 |
 | P24 | **CERRADO** (19 sept 2026) | **`projects:create` con importación fallida dejaba la partición huérfana sin journal.** Distinto de C1-B (huérfanos históricos, multi-PC) y de P16 (arquitectura): aquí la fila y la partición nacen y fallan en la MISMA sesión, sin ambigüedad de otro equipo. Reutiliza `ejecutarBorrado`/`resolverBorradoPendiente` con `tipo:'rollback-creacion-proyecto'` — nunca un `DELETE` directo. Si F-1 sigue ocupado tras reintento acotado (3×300ms) o el journal no se puede escribir, la fila **no se toca** (ella misma es la referencia durable). Batería real-Electron **62 OK/0**, reversiones **7 familias, 22 OK/0** (tras la inspección final: `sinRecursos` acotado por tipo y convergencia demostrada en el arranque real). Ver §P24 |
 | P25 | **ABIERTO — bajo** *(19 sept 2026)* | **`writeLocalStorageDumpToPartition()` no cierra `helperWin` si `loadFile()` rechaza** (el `.catch(reject)` final no llama a `helperWin.close()`, a diferencia de las otras dos ramas). Afecta a los cuatro llamadores (creación con import, restauración de backups). Encontrado al implementar P24; deliberadamente sin corregir, para no mezclar su diff. Ver §P24 |
+| P26 | **CERRADO** *(19 sept 2026, con P27)* | **`rollback-creacion-proyecto` en fase de purga pendiente bloqueaba F-1 global hasta reinicio.** Opción E1: un predicado único (`purgaP24Desligada`: propio, `rollback-creacion-proyecto`, `purgando`, `sinRecursos`, sin recursos, partición `persist:proj-…` **y** la BD demuestra que ninguna fila la usa) que `f1Borrados()` ya no cuenta como pendiente y que `resolverBorradoPendiente()` usa como prueba **sin consultar `acciones_<writer>`** (la marca de 8 acciones ya no puede convertir una operación confirmada en «no llegó a confirmarse»). **No relaja nada más:** `borrar-proyecto`, `borrar-prep`, `purgar-backups`, acciones y restauraciones, iguales. Batería real-Electron **151 OK/0**, reversiones **9 familias, 28 OK/0**. La condición que quedaba abierta (fila reaparecida con la marca aún con el id) la cerró P27 (`P26-FR10`). **No reabre P24.** Ver §P26 |
+| P27 | **CERRADO** *(19 sept 2026)* | **Una partición referenciada por una fila NUNCA se destruye durante la recuperación de un rollback P24.** Baseline medido (centinela dentro de la carpeta): con la marca aún con el id y una fila reaparecida (mismo id u otro) el CASO B histórico hacía `rmSync` y **destruía la carpeta viva**; con la consulta a la BD fallando también purgaba. Guarda en `vaciarParticionDe` (rama rollback), **inmediatamente antes del `rmSync`** y sin `await`: `referenciada` ⇒ no se toca nada y el journal se **retira** (premisa del contrato refutada por la BD, sin recursos ni SQL, no reinterpretable, coherente con el CASO A); `no-demostrable` ⇒ no se destruye y el journal **se conserva**. Helper único `particionUsadaPorFila`, compartido con el predicado de P26. `borrar-proyecto`/`purgar-backups`/`borrar-prep` sin cambios. Batería real-Electron **84 OK/0**, reversiones **8 familias, 25 OK/0**, regresión P26/P24/Bloque 5/C1 verde. Observaciones no corregidas (una **medida**: journal con travesía en `particion` borra fuera de `Partitions/`). Ver §P27 |
 | E2 | **CERRADO** (15 sept 2026) | `vendor/service-status.js` como fuente única. Batería **67 OK/0**, Electron real **42 OK/0**, dos reversiones. Ver §E2, abajo |
 | P13 | **ABIERTO / ACEPTADO TEMPORALMENTE — baja-media** *(15 sept 2026)* | **Frescura del origen**: lanzador = snapshot del último backup persistido; dashboard abierto = estado vivo. **Decisión del usuario:** no se cambia la fuente ahora. Ver §P13 |
 | B3 | **CERRADO** (15 sept 2026) | Los errores relevantes **ya no dependen exclusivamente de `console`**. Cifrado de backup **fail-closed**, el Directorio avisa cuando no puede guardar, **15** líneas de rastro nuevas en `main.js` (9 con dedupe por sesión) y saneado de rutas. Los 19 `console.warn` siguen ahí: B3 añade al lado, no sustituye. Catch vacíos 26 → 17. Batería **85 OK/0**, Electron real **36 OK/0**, siete reversiones. Ver §B3, abajo |
@@ -3014,7 +3016,8 @@ borrados 80/0 y cableado 58/0, Bloque 4 acciones 243/0 y consumidores 168/0,
 A2 129/0 y 66/0, Bloque 3 223/0, C1 165/0. Ajuste de arnés (no de producto):
 `comun/bloque5-extraccion.js` incluye la nueva constante.
 
-**Hallazgos fuera de alcance — NO corregidos, decisión pendiente:**
+**Hallazgos fuera de alcance — NO corregidos, decisión pendiente** *(actualización
+19 sept 2026: el 1 lo resuelve P26; el 2 quedó medido con un EBUSY real en P26-D)*:
 1. *(medido)* En la MISMA sesión, un import fallido deja el journal pendiente (el
    `EBUSY` es lo normal ahí) y F-1 lo cuenta como borrado propio sin resolver:
    `backup:save` y `projects:delete` de OTRO proyecto se rechazan con
@@ -3026,6 +3029,317 @@ A2 129/0 y 66/0, Bloque 3 223/0, C1 165/0. Ajuste de arnés (no de producto):
    `recuperarBorradosPendientes()` devuelve no-ok y el arranque muestra PS-2006 y
    se cierra: mismo comportamiento fail-closed que cualquier borrado con purga
    pendiente.
+
+## P26 — DIAGNÓSTICO (19 sept 2026): F-1 global bloqueado por un journal P24 en purga pendiente
+
+**Solo diagnóstico. Producto sin tocar. No reabre P24 ni toca P25.**
+
+**Estado exacto del journal tras un import fallido** (medido en sandbox, Electron
+real): `tipo:'rollback-creacion-proyecto'`, **`fase:'purgando'`**, `sinRecursos:true`,
+`recursos:[]`, `particion`, `base_commit_id`, `action_id`. El `DELETE` está
+**confirmado** (ninguna fila de `projects` usa esa partición) y la marca
+`acciones_<writer>` **contiene** su `action_id`. No hay recursos ni SQL pendientes;
+la única deuda es borrar una carpeta ya desligada de la BD. `particionPendiente` no
+se guarda en el journal (es solo un valor de retorno): la única señal durable es la
+fase. `finalizarPurga` es el único sitio que escribe `'purgando'`, y solo lo llaman
+`ejecutarBorrado` tras un commit confirmado y la recuperación tras probar «aplicada»:
+`'purgando'` implica commit aplicado.
+
+**Por qué F-1 lo bloquea.** `f1Borrados()` solo distingue por journal: propio
+válido ⇒ «pendiente»; ajeno válido ⇒ se ignora; inválido ⇒ «no demostrable». **No
+distingue** tipo, fase, recursos ni `particionPendiente`: antes del commit,
+después con recursos, purga solo de partición y ninguna otra cosa reciben el mismo
+bloqueo. Bloquea `ejecutarAccionDeArchivo` (todo guardado de backups, preparaciones
+y evaluaciones), `ejecutarBorrado` (borrar proyecto/prep, purga de backups) y
+`restoreProjectBackup`. **No** bloquea `projects:create` (con o sin import).
+
+**Impacto medido** (misma sesión, tras un import fallido): `backup:save` y
+`projects:delete` de otro proyecto ⇒ `bloqueo:'accion-no-demostrable'`;
+`projects:create` con y sin import ⇒ OK. En el dashboard el guardado manual sale en
+rojo («✗ No se pudo guardar»), el automático reintenta cada 15 s y deja líneas
+PS-2006 en `app.log`, y el guardado final al cerrar tampoco se aplica (el estado
+sigue en el `localStorage` de la partición, pero el backup durable no avanza).
+En la misma sesión la carpeta no se suelta: `rename` ⇒ `EPERM` y `rmSync` ⇒
+`EBUSY` a +0, +10 y +30 s, así que ni una segunda purga ni una cuarentena por
+renombrado son viables.
+
+**Por qué el bloqueo NO es solo prudencia (hallazgo central, medido).** Lo que F-1
+protege no es un riesgo transaccional (no queda ninguno) sino la **prueba de
+recuperación**: `resolverBorradoPendiente` decide «aplicada / no aplicada» **solo**
+por la marca `acciones_<writer>`, que guarda **8** acciones y la desaloja cualquier
+guardado o borrado posterior; y una ausencia se interpreta como **`no-aplicada`**
+(no como «no demostrable»). Experimento (journal apartado de `.panorama-borrados`
+mientras se hacen N guardados = «F-1 relajado», sin tocar producto) y arranque real:
+
+| Guardados | Marca contiene el id P24 | Arranque real |
+|---|---|---|
+| 7 | sí | CASO B: purga la partición, journal cae. Correcto |
+| 8 | **no** | CASO A: journal **borrado** con «no llegó a confirmarse: deshecho», carpeta **sigue en disco**, sin fila, sin diálogo ni PS-2006: **huérfano silencioso** |
+
+Con el autoguardado (15 s por proyecto abierto) ocho acciones se alcanzan en
+minutos. **Relajar F-1 sin tocar la recuperación NO es seguro**: violaría la
+propiedad central de P24 (nunca desaparece la última referencia durable mientras
+la carpeta pueda existir) y falsearía el log. Para un `borrar-proyecto` real la
+misma pérdida de la marca **resucitaría** archivos borrados.
+
+**Opciones.** A) mantener el bloqueo: seguro, coste descrito arriba, disparador
+raro pero plausible (7 huérfanos históricos). B) F-1 ignora estos journals *solo*:
+**descartada, insegura** (tabla). C) categoría «purga diferida» aparte: segura y
+aislada, pero más maquinaria (directorio, validación, inventario). D) segunda purga
+en la misma sesión: **inviable** (medido). E1) B **más** una prueba de recuperación
+independiente de la marca para este único estado (recomendada). E2) «anclar» el id
+en la marca más allá de 8: conserva la recuperación pero toca la semántica de la
+marca compartida por todas las acciones.
+
+**Recomendación:** si se implementa, E1, pequeña y con condición exacta. La
+excepción (en `f1Borrados`) **y** la recuperación (`resolverBorradoPendiente`, para
+decidir «aplicada» sin marca) usarían el mismo predicado: journal **válido y
+propio**; `tipo==='rollback-creacion-proyecto'`; `fase==='purgando'`;
+`sinRecursos===true` y `recursos.length===0`; `particion` `persist:proj-…`; y
+**verdad de la BD**: ninguna fila de `projects` con ese `partition_name` (si la
+consulta falla ⇒ no se cumple ⇒ sigue bloqueando). Nunca aplica a: fase
+`'retirando'` (commit sin demostrar), `borrar-proyecto`/`borrar-prep`/
+`purgar-backups`, journals con recursos, acciones, restauraciones, ajenos ni
+journals no demostrables; y si la fila reapareciera (adopción A3.3), F-1 vuelve a
+bloquear y la recuperación cae a la marca (CASO A correcto: no purga una partición
+viva). Alternativa legítima: **aceptarlo como comportamiento deliberado** (el
+coste es una sesión degradada hasta reiniciar y solo tras un import fallido); la
+decisión es de criterio, no de corrección.
+
+**Batería propuesta** (real-Electron, arnés con `APPDATA`/`LOCALAPPDATA`/`appData`/
+`userData` fijados **antes** de cargar nada — endurecimiento permanente, no
+incidencia). Positivas: import falla ⇒ estado exacto del journal; backup, borrado,
+creación (con/sin import) y restauración de OTRO proyecto se aplican; ≥9 acciones
+(marca agotada) sin alterar journal ni carpeta P24 (mismo contenido antes/después);
+cierre y arranque real (observadores de P24-16) ⇒ journal detectado, partición sin
+tocar, `rmSync` ok, journal cae después. Negativas (siguen bloqueando): P24 con fase
+`'retirando'`; `borrar-proyecto` pendiente; journal no demostrable; P24 `'purgando'`
+con fila presente; P24 `'purgando'` con recursos; consulta de BD fallida. De
+recuperación: marca agotada + predicado ⇒ purga; marca agotada + fila presente ⇒ no
+purga. Reversiones: excepción sin comprobar fase, sin comprobar fila, ampliada a
+`borrar-proyecto`, y F-1 relajado con recuperación solo por marca (la del 8.º guardado).
+
+**Nota de arnés.** Lanzar Electron con `Start-Process -ArgumentList` y una ruta con
+espacios NO la entrecomilla: Electron recibe `C:\Codigo` como aplicación y se para
+en un diálogo de error invisible. Los arneses del repo usan `spawnSync` con array
+de argumentos (correcto).
+
+## P26 — IMPLEMENTACIÓN (19 sept 2026): purga P24 post-commit no bloqueante, con recuperación independiente de la marca
+
+**Opción E1, autorizada.** P24 sigue CERRADO; no se toca P25.
+
+**Qué NO significa.** P26 **no** convierte en no bloqueantes las purgas
+post-commit en general. La excepción es exclusiva de
+`rollback-creacion-proyecto` **+** `purgando` **+** sin recursos **+** partición sin
+fila. `borrar-proyecto`, `borrar-prep`, `purgar-backups`, las acciones y las
+restauraciones conservan exactamente su comportamiento anterior — en particular, un
+`borrar-proyecto` cuyo `action_id` salga de la marca **no gana ninguna excepción**.
+
+**Diff** (solo `main.js`; +106 / −3, comentarios incluidos):
+1. `purgaP24Desligada(j)` + dos constantes (`PARTICION_PROYECTO_PERSISTENTE_RE`,
+   `carpetaDeParticion`): el predicado **único**, sin efectos, devuelve
+   `{cumple, motivo}`.
+2. `f1Borrados()`: `if (e.j.writer === yo && !purgaP24Desligada(e.j).cumple) pendientes.push(…)`.
+   Nada más cambia en F-1.
+3. `resolverBorradoPendiente(j)`: bloque inicial — si el predicado se cumple,
+   `finalizarPurga(j)` **sin consultar la marca** (resultado `caso:'B'`,
+   `clase:'purgado'`, `prueba:'particion-desligada'`). Todo lo demás sigue por el
+   camino histórico.
+4. Solo comentarios: `ejecutarAccionDeArchivo` y `sentenciaMarcaAccion`.
+
+**Predicado** (todas obligatorias; cualquier duda ⇒ `false` ⇒ comportamiento
+cerrado de siempre): objeto; `writer` con formato de installation-id **y** igual al
+de esta instalación; `tipo === 'rollback-creacion-proyecto'`; `fase === 'purgando'`;
+`sinRecursos === true`; `recursos` es un array **vacío**; `particion` de la forma que
+genera `projects:create` (`/^persist:proj-\d{1,16}-[a-z0-9]{1,6}$/`: ni otras
+particiones ni nada que salga de `Partitions/`); y la BD **demuestra** que ninguna
+fila de `projects` usa esa carpeta (`SELECT partition_name FROM projects`, comparada
+sin `persist:` y sin distinguir mayúsculas). Si la consulta lanza, no devuelve una
+lista o una fila no se puede leer ⇒ `false`. Orden de las comprobaciones: las baratas
+primero, la BD la última (el camino caliente de F-1 no consulta la BD salvo para un
+journal que ya es P24-purgando-sin-recursos).
+
+**Decisiones de diseño.**
+- La vía especial **no lee la marca ni para descartarla**: con la marca agotada *o
+  ilegible*, el estado exacto se purga igual. Antes una marca ilegible daba
+  `accion-no-demostrable`.
+- La comprobación de la fila usa el nombre de **carpeta** (sin `persist:`, en
+  minúsculas), no la cadena exacta: es como Windows resuelve la partición.
+- `finalizarPurga` no se toca: sigue siendo lo único que retira el journal, y solo
+  después de que `vaciarParticionDe` verifique con `fs.existsSync` que la carpeta
+  desapareció.
+- Efecto colateral **positivo**, medido (P26-DF): un segundo import fallido con el
+  primer journal P24 todavía pendiente ya **hace** su rollback (antes se saltaba por
+  F-1 ocupado y dejaba la fila visible).
+
+**Batería** `pruebas-a33/p26/` (`comprobar-p26.js`, arnés `test-p26-purga-desligada.js`):
+**148 OK / 0** en ~47 s. Estático (predicado único: una definición, una llamada en
+cada puerta, ninguna repite el criterio); unidad del predicado REAL, de `f1Borrados`
+REAL y de `resolverBorradoPendiente` REAL (por firma, con dobles); y Electron real
+en sandbox: import fallido ⇒ estado exacto del journal; con el P24 pendiente se
+aplican `backup:save`, `projects:create` con y sin import, `projects:delete` y
+`backup:restore` de OTRO proyecto; se agota la marca (8 acciones, id P24 expulsado,
+medido) con journal **byte a byte** y carpeta intactos y **cero** operaciones de fs
+sobre ellos; cierre; **proceso nuevo**: la carpeta desaparece de verdad, después el
+journal, sin abrir la partición en Chromium y con el mismo orden real que P24-16.
+Negativas E2E (siguen bloqueando): N1 `retirando`, N2 fila presente, N3 con recursos,
+N4 sin `sinRecursos`, N5 consulta que lanza, N5b consulta ambigua, N6 journal no
+demostrable, N7 `borrar-proyecto` pendiente, N7b/N7c `purgar-backups`/`borrar-prep`
+con `sinRecursos` y partición sin fila, N8 acción propia (bloquea borrados), N9/N9b
+partición sin forma / con travesía; control: el único estado que no bloquea; N10
+ajeno sigue ignorándose. `borrar-proyecto` con su id **fuera** de la marca: el
+arranque lo **repone** (`no llegó a confirmarse: deshecho`) y devuelve el material.
+Durabilidad con un **EBUSY real** (otro proceso con la carpeta como directorio de
+trabajo): el journal **sobrevive**, ningún `unlink` antes del `rmSync`, el arranque
+se cierra con «borrado anterior sin resolver»; con la carpeta libre converge.
+
+**Reversiones** (`revertir-p26.js`, 9 familias, cada una anuncia lo que tumba y solo
+eso): R1 recuperación por marca (**reaparece el huérfano silencioso**), R2 sin fase,
+R3 sin fila (**purga la carpeta de una fila viva con la marca agotada**), R4
+excepción genérica (**un `borrar-proyecto` fuera de la marca se PURGA en vez de
+reponerse**), R5 consulta fallida = «sin fila», R6 journal retirado antes de
+verificar la carpeta, R7 tipo ampliado a `purgar-backups`/`borrar-prep`, R8 sin
+forma de partición, R9 criterio duplicado en F-1.
+
+**ARN-3 (endurecimiento permanente).** El arnés fija `APPDATA`, `LOCALAPPDATA`,
+`TEMP`/`TMP` y, tras cargar Electron, `appData`, `userData` y `temp` dentro del
+sandbox **antes** de cargar nada, se auto-comprueba y lo vuelca en el resultado; la
+batería lo asevera en **cada** proceso y comprueba que el directorio real de
+`PanoramaDriveSyncGuard` no cambió. No fue incidencia (ninguna escritura real).
+
+**Cierre de P26 (19 sept 2026, con P27).** La condición que quedaba abierta —«fila
+reaparecida ⇒ fail-closed»— la cierra P27: con la marca intacta el CASO B histórico
+también conserva la carpeta (`P26-FR10`, que sustituye a la antigua línea
+INFORMATIVA y ahora es aserción). La batería de P26 pasa a **151 OK / 0** y sus
+reversiones siguen en **9 familias, 28 OK / 0**: R3 se reancló al helper compartido
+(`particionUsadaPorFila`) y anuncia además `FR10` (se re-ejecutó tras ese ajuste).
+
+## P27 — IMPLEMENTACIÓN (19 sept 2026): una partición referenciada por una fila NUNCA se destruye durante la recuperación de un rollback P24
+
+**P24 y P25 sin tocar** (de P24 solo se reajustaron dos huellas de sus *reversiones*
+—R4 y R5—, que la guarda desplaza; su implementación no cambia). Con este cierre,
+**P26 pasa a CERRADO**.
+
+**Baseline reproducido** (Electron real, `main.js` en estado P26, un **centinela**
+`centinela-viva.txt` dentro de la carpeta, arranque en proceso nuevo):
+
+| Caso | Antes de P27 |
+|---|---|
+| B1 marca **con** el id + fila reaparecida con el **mismo** id | CASO B histórico: `rmSync` ok — **carpeta y centinela destruidos**, la fila sigue viva |
+| B5 marca con el id + fila con **otro** id | igual: destruidos |
+| B3 marca con el id, sin fila, la consulta a `projects` **falla** | purga igual: `vaciarParticionDe` no consulta nada |
+| B2 marca **agotada** + fila | CASO A: carpeta intacta, journal retirado (P26) |
+| B4 sin fila, fase `retirando`, marca con el id | CASO B legítimo: purga |
+| B6 journal malformado + partición viva | `journal-no-demostrable`, PS-2006, cierre; carpeta intacta |
+
+**Guarda exacta** (`main.js`, +69 / −9 con comentarios; parche en
+`p27/diff-p27-main.patch`):
+1. `particionUsadaPorFila(particion)` — **una sola** comprobación «¿alguna fila de
+   `projects` usa esta partición?» con tres estados: `referenciada` (una fila usa la
+   *carpeta*, sin `persist:` y sin distinguir mayúsculas; da igual el id de la fila;
+   una coincidencia manda sobre una fila ilegible), `no-demostrable` (la consulta
+   lanza, no devuelve una lista o hay una fila ilegible sin coincidencia) y `libre`.
+   El predicado de P26 la usa (antes tenía su bucle inline): las dos defensas no
+   pueden discrepar.
+2. En `vaciarParticionDe`, rama `rollback-creacion-proyecto`, **inmediatamente antes
+   del `rmSync`** y sin ningún `await` en medio: `referenciada` ⇒ no `rmSync`, no
+   `clearStorageData`, no sesión, `{ok:true, particionOmitida:'referenciada'}` y
+   `Aviso — P27` en `app.log`; `no-demostrable` ⇒ no se destruye, `{ok:false,
+   particionPendiente:true}` (fail-closed); `libre` ⇒ el comportamiento P24/P26 de
+   siempre. Va **dentro** de `vaciarParticionDe`, no en quien llama: es el único punto
+   que destruye particiones (verificado estáticamente: un solo `clearStorageData()`,
+   un solo `rm` bajo `Partitions/`), así que cubre el CASO B histórico, la vía
+   especial de P26 y `ejecutarBorrado`.
+3. `finalizarPurga` propaga `particionOmitida`; el CASO B devuelve `clase:'sin-efecto'`
+   en vez de `'purgado'` cuando no se purgó nada.
+
+**Decisión sobre el journal: RETIRARLO cuando la partición está referenciada
+(política B); CONSERVARLO cuando la consulta no es demostrable.** Razonado por
+contrato, no por comodidad de arranque:
+- El contrato de `rollback-creacion-proyecto` es «tras el commit ninguna fila usa
+  esta partición; solo falta quitar la carpeta». Si una fila vuelve a usarla, esa
+  premisa es **falsa** por la verdad de la BD y su única acción pendiente es
+  **imposible sin destruir datos vivos**: no está pendiente, está sin objeto. La
+  fila es ahora la referencia durable de la carpeta.
+- *No quedan recursos reversibles*: `recursos:[]`/`sinRecursos:true` por contrato
+  (P24-15) y `finalizarPurga` vacía la cuarentena **antes** de decidir sobre la
+  partición (`P27-F1b`, orden medido).
+- *No queda SQL*: el journal no lo lleva (`ST8/ST9`); el `DELETE` va en el commit
+  (junto a la marca), no en el journal.
+- *No hay riesgo de repetir el DELETE*: ninguna función de la recuperación emite SQL
+  de escritura (`ST7`), y medido: tras la recuperación la fila **sigue** (`C1h`).
+- *No se puede reinterpretar*: retirado el archivo no hay nada que leer (segundo
+  arranque limpio, `C1i`). Conservarlo (política A) lo dejaría **reinterpretable**
+  —si la fila desapareciera, el predicado de P26 volvería a darlo por desligado— y
+  bloquearía F-1 y cerraría la app con PS-2006 en **cada** arranque (`R7` lo
+  demuestra) para proteger una acción vacía.
+- *Coherencia*: con la marca agotada, la recuperación **ya** retiraba el journal y
+  dejaba la carpeta (CASO A). Con P27 el desenlace de un mismo estado deja de
+  depender de la marca (`C2f`: estados finales idénticos).
+- Con `no-demostrable` **no** se retira: sin poder descartar la deuda no se
+  destruye la prueba de que existe (`C3d`), y con la BD sana el siguiente arranque
+  converge (`C3f`).
+
+*Límite honesto:* si la fila desapareciera después por una anomalía transitoria
+(p. ej. vaivén de adopciones A3.3), la carpeta quedaría huérfana **sin** journal —el
+mismo estado que ya inventaría C1 como `particionesSinProyecto`—, y lo normal
+(borrar ese proyecto) tiene su propio journal `borrar-proyecto`.
+
+**Casos** (todos con centinela): 1 fila reaparece + id en la marca (`C1`, mismo id) —
+carpeta y centinela intactos, sin `rmSync`, journal retirado, arranque sano, fila
+viva, segundo arranque limpio; 2 fila reaparece + id fuera de la marca (`C2`) — mismo
+estado final; 3 consulta a la BD falla (`C3`) — nada se destruye, journal
+**sobrevive**, cierre con «borrado anterior sin resolver», y con la BD sana el
+siguiente arranque converge; 4 fila inexistente (`C4`) — sigue purgando por la vía
+de P26 **y** por el CASO B histórico (journal `retirando`), rmSync ok y journal
+después; 5 misma `partition_name`, otro id (`C5`, `H2d`); 6 journal malformado
+(`C6`) — sin cambios, no se toca nada; 7 `borrar-proyecto` normal (`G7`) —
+`clearStorageData` sin consultar la BD, como siempre; 8 `purgar-backups`/`borrar-prep`
+(`G8`) — sin cambios.
+
+**Batería** `pruebas-a33/p27/` (`comprobar-p27.js`; arnés de P26 con opciones nuevas):
+**84 OK / 0** en ~52 s — estático (ST1–ST11), unidad del helper, de `vaciarParticionDe`,
+de `finalizarPurga` y de `resolverBorradoPendiente` reales, y Electron real.
+
+**Reversiones** (`revertir-p27.js`, 8 familias, **25 OK / 0**; R4 se re-ejecutó tras
+corregir su lista anunciada): R1 sin comprobar fila antes del `rmSync` (**reaparece la
+partición viva borrada**), R2 consulta fallida tratada como «sin fila», R3 guarda solo
+en la vía especial de P26 (cae el caso con el id en la marca), R4 guarda extendida a
+`borrar-proyecto`/`purgar-backups`/`borrar-prep` (caen `G7`/`G8` y las guardas
+estáticas), R5 `await` entre consulta y `rmSync`, R6 journal retirado si la consulta
+falla (**huérfano silencioso**), R7 política A (conservar y bloquear), R8 comparación
+exacta en vez de por carpeta.
+
+**Regresión:** P26 151/0 y reversiones (9 familias); P24 62/0 y reversiones 22/0;
+Bloque 5 borrados 80/0 y cableado 58/0; C1 165/0. Ajustes de infraestructura de
+prueba (no de producto): `comun/bloque5-extraccion.js` (+ el helper), `p24/revertir-p24.js`
+(huellas de R4 y R5), `p26/revertir-p26.js` (R3 y R5 al helper) y `p26/comprobar-p26.js`
+(`FR10`).
+
+**Observaciones NO corregidas (fuera de alcance por instrucción):**
+1. *(razonado, no medido)* El camino genérico de `vaciarParticionDe`
+   (`borrar-proyecto`) llama a `clearStorageData()` sin consultar filas; si una fila
+   reapareciera con la `partition_name` de un `borrar-proyecto` ya confirmado, su
+   CASO B vaciaría esa sesión. No lo toca P27 («borrar-proyecto normal no cambia»).
+2. *(**medido**, anterior a P24/P26/P27)* `vaciarParticionDe` no valida la forma de
+   `journal.particion` en la rama de rollback: un journal válido con
+   `particion:'persist:..\\victima'` (el validador solo exige una cadena no vacía) y
+   el id en la marca hace que el CASO B ejecute `rmSync` de `userData\victima`,
+   **fuera de `Partitions/`** — medido en sandbox: la carpeta hermana y su contenido
+   desaparecen (la guarda de P27 consulta filas, no la forma; no hay fila, así que da
+   `libre`). Exige un journal manipulado en `userData`, pero el código ya se
+   defiende de eso para `recursos` (cuarentena bajo `.panorama-borrados/<id>`) y no
+   aquí. La vía especial de P26 sí está protegida (regex de forma). Corrección
+   mínima posible: en la misma guarda, exigir la forma `persist:proj-…` y que la
+   ruta caiga bajo `Partitions/` (si no, no destruir: `no-demostrable`). Sin
+   implementar; sin ID asignado.
+
+**Custodia.** Entre las baterías de P26 y esta ronda el hash de la BD viva de `G:`
+pasó de `C7F6FC2F…` a `451EA2C1…` (mismo tamaño, 77 824 B). No fue ninguna batería:
+la última terminó a las 14:01 (hora local) y la BD se modificó a las 15:24:04; la
+`app.log` real registra un **arranque real de la v2.0.55** el 19/09 13:23:45Z con
+backups `startup` y `closing` del proyecto 5. Cada batería verifica antes = después
+(INTACTA en todas). `comun/baseline-bd-viva.json` **no** se ha reanclado.
 
 ## Block 8B — lock multi-PC (18 sept 2026)
 

@@ -1,0 +1,143 @@
+diff --git a/main.js b/main.js
+index 34694e8..5845905 100644
+--- a/main.js
++++ b/main.js
+@@ -6200,6 +6200,8 @@ function accionYaAplicada(actionId) {
+ //
+ // Si la marca no se puede interpretar se empieza una lista nueva: llegar aquí
+-// implica que F-1 ya comprobó que NO hay ningún journal propio pendiente, así
+-// que no hay ninguna prueba que preservar. Queda registrado igualmente.
++// implica que F-1 ya comprobó que NO hay ningún journal propio pendiente cuya
++// prueba dependa de la marca, así que no hay ninguna prueba que preservar
++// (P26: un rollback de creación ya desligado, `purgaP24Desligada()`, se prueba
++// por la BD y no por la marca). Queda registrado igualmente.
+ function sentenciaMarcaAccion(actionId) {
+   const w = dbmod.getInstallationId();
+@@ -6708,4 +6710,67 @@ function ocupacionComun(destino, opts) {
+ }
+ 
++// --- P26: «purga P24 ya desligada» — EL predicado único -------------------
++//
++// Reconoce EXCLUSIVAMENTE el estado en que un `rollback-creacion-proyecto` ya
++// se confirmó y lo único que le queda es retirar físicamente una carpeta de
++// partición que la base de datos ya no referencia. Lo usan las DOS puertas que
++// tienen que estar de acuerdo, y no hay una segunda copia del criterio:
++//   - `f1Borrados()`: ese journal no cuenta como operación global sin resolver
++//     (Chromium no suelta la carpeta hasta reiniciar; bloquear toda la
++//     aplicación por eso era una regresión funcional);
++//   - `resolverBorradoPendiente()`: para ese MISMO estado la prueba de que el
++//     commit se aplicó ya NO es `acciones_<writer>` — que guarda 8 ids y los
++//     expulsa —, sino este predicado. Medido: con F-1 relajado y la recuperación
++//     atada a la marca, el 8.º guardado posterior expulsaba el id y el arranque
++//     borraba el journal («no llegó a confirmarse») dejando la carpeta huérfana.
++//
++// TODAS las condiciones son obligatorias, y cualquier duda es FALSE — que es
++// el comportamiento cerrado de siempre (F-1 bloquea, la recuperación decide
++// por la marca):
++//   - journal propio y con forma de objeto;
++//   - `tipo === 'rollback-creacion-proyecto'`. NUNCA otro: un `borrar-proyecto`
++//     cuyo id salga de la marca no gana nada nuevo;
++//   - `fase === 'purgando'`. `finalizarPurga` es lo único que la escribe, y solo
++//     se llega a ella tras un commit confirmado o tras demostrar 'aplicada';
++//   - `sinRecursos === true` y `recursos` es un array VACÍO: no hay nada
++//     reversible que reponer. Con recursos, el journal sigue siendo un borrado
++//     normal;
++//   - `particion` con la forma que genera `projects:create` (`persist:proj-…`):
++//     ni otras particiones (`persist:directorio-talento`…), ni nada que pueda
++//     salirse de `Partitions/`;
++//   - la BD DEMUESTRA que ninguna fila de `projects` usa esa partición (se
++//     compara la carpeta física, sin `persist:` y sin distinguir mayúsculas,
++//     que es como Windows la resuelve). Si la consulta falla, devuelve algo que
++//     no es una lista, o una fila no se puede leer, no se ha demostrado nada.
++//     Una fila reaparecida — por la razón que sea — la anula: esa carpeta ya no
++//     es una partición desligada, es la de un proyecto vivo.
++//
++// Sin efectos: solo lee. Devuelve `{ cumple, motivo }`; `motivo` solo se usa
++// para diagnóstico.
++const PARTICION_PROYECTO_PERSISTENTE_RE = /^persist:proj-\d{1,16}-[a-z0-9]{1,6}$/;
++const carpetaDeParticion = (p) => String(p).replace(/^persist:/i, '').toLowerCase();
++function purgaP24Desligada(j) {
++  const no = (motivo) => ({ cumple: false, motivo });
++  try {
++    if (!j || typeof j !== 'object' || Array.isArray(j)) return no('el journal no es un objeto');
++    if (!esHex(j.writer, 32) || j.writer !== dbmod.getInstallationId()) return no('el journal no es propio');
++    if (j.tipo !== 'rollback-creacion-proyecto') return no(`tipo ${JSON.stringify(j.tipo)}`);
++    if (j.fase !== 'purgando') return no(`fase ${JSON.stringify(j.fase)}`);
++    if (j.sinRecursos !== true) return no('no declara sinRecursos');
++    if (!Array.isArray(j.recursos) || j.recursos.length !== 0) return no('tiene recursos pendientes o no son un array');
++    if (typeof j.particion !== 'string' || !PARTICION_PROYECTO_PERSISTENTE_RE.test(j.particion)) return no('particion sin la forma de un proyecto persistente');
++    const filas = dbmod.all('SELECT partition_name FROM projects');
++    if (!Array.isArray(filas)) return no('la consulta a projects no devolvió una lista');
++    const carpeta = carpetaDeParticion(j.particion);
++    for (const f of filas) {
++      if (!f || typeof f.partition_name !== 'string') return no('una fila de projects no se puede leer');
++      if (carpetaDeParticion(f.partition_name) === carpeta) return no('una fila de projects usa esa partición');
++    }
++    return { cumple: true };
++  } catch (e) {
++    return no('no se pudo consultar projects: ' + String((e && e.message) || e));
++  }
++}
++
+ // --- F-1, en sus dos alcances ---------------------------------------------
+ //
+@@ -6720,4 +6785,21 @@ function ocupacionComun(destino, opts) {
+ // pendiente sin resolver es peor que un guardado. Evidencia incompleta no es
+ // estado ausente.
++//
++// P26 (19 sept 2026) — UNA SOLA EXCEPCIÓN, y con nombre propio:
++// `purgaP24Desligada()`. Un `rollback-creacion-proyecto` ya confirmado cuya
++// única deuda es retirar físicamente una carpeta que Chromium no suelta hasta
++// reiniciar NO cuenta como pendiente aquí. NO significa que las purgas
++// post-commit sean, en general, no bloqueantes: `borrar-proyecto`,
++// `borrar-prep`, `purgar-backups`, las acciones y las restauraciones siguen
++// bloqueando exactamente como antes. La misma función decide la recuperación
++// (ver `resolverBorradoPendiente`): sin esa pareja, esta excepción dejaría que
++// la marca circular de 8 acciones expulsara la prueba de este borrado.
++// Tres cosas que la excepción NO hace:
++//   - no toca los journals que no se pueden interpretar: esos siguen
++//     bloqueando (rama `no-demostrable`, más abajo), porque nunca llegan al
++//     predicado;
++//   - no relaja nada si la BD no puede contestar (falla cerrado);
++//   - no oculta ni consume el journal: sigue en disco y lo resuelve la
++//     recuperación del próximo arranque.
+ function f1Borrados() {
+   const bor = journalsDeBorrados();
+@@ -6729,5 +6811,5 @@ function f1Borrados() {
+   for (const e of bor.entradas) {
+     if (e.clase === 'valido') {
+-      if (e.j.writer === yo) pendientes.push({ tipo: 'borrado', ruta: e.ruta, actionId: e.j.action_id });
++      if (e.j.writer === yo && !purgaP24Desligada(e.j).cumple) pendientes.push({ tipo: 'borrado', ruta: e.ruta, actionId: e.j.action_id });
+       continue;
+     }
+@@ -7102,4 +7184,21 @@ async function ejecutarBorrado(opts) {
+ // --- recuperación al arrancar ---------------------------------------------
+ async function resolverBorradoPendiente(j) {
++  // P26 (19 sept 2026): UNA excepción, decidida por el mismo predicado que usa
++  // F-1. Un `rollback-creacion-proyecto` en fase `purgando`, sin recursos y con
++  // la partición ya sin fila en `projects` está confirmado por la propia BD: ya
++  // no queda nada que reponer y solo falta retirar la carpeta. NO se consulta
++  // la marca `acciones_<writer>` — que guarda 8 ids y los expulsa —, ni siquiera
++  // para descartarla: que el id ya no esté (o que la marca no se pueda leer) no
++  // es «no aplicada» en este estado. Todo lo demás, incluido un
++  // `borrar-proyecto` cuyo id haya salido de la marca, sigue por el camino de
++  // siempre, más abajo.
++  const desligada = purgaP24Desligada(j);
++  if (desligada.cumple) {
++    appLog(`Borrado ${j.action_id} (${j.tipo}) — ya confirmado (fase de purga, sin recursos y ninguna fila usa la partición): se retira la carpeta sin consultar la marca de acciones.`);
++    const p = await finalizarPurga(j);
++    if (!p.ok) return { ok: false, actionId: j.action_id, clase: 'purga-incompleta', motivo: p.motivo, particionPendiente: !!p.particionPendiente, prueba: 'particion-desligada' };
++    return { ok: true, actionId: j.action_id, caso: 'B', clase: 'purgado', prueba: 'particion-desligada' };
++  }
++
+   const enMarca = estadoAccionEnMarca(j.action_id);
+ 
+@@ -7207,4 +7306,8 @@ function ejecutarAccionDeArchivo(opts) {
+   // Solo BLOQUEA (no resuelve): resolver un borrado desde aquí significaría
+   // mover carpetas en mitad de un guardado.
++  //
++  // P26: la única excepción es `purgaP24Desligada()` (un rollback de creación
++  // ya confirmado cuya deuda es solo una carpeta). Su prueba de recuperación
++  // no depende de la marca, así que no hay nada que proteger de la expulsión.
+   {
+     const gb = f1Borrados();

@@ -23,6 +23,13 @@ const BLOQUES_B5 = [
   'function cubreRecurso(r, ruta)',
   'function conflictoRecurso(r, ambito)',
   'function ocupacionComun(destino, opts)',
+  // P26: el predicado único de «purga P24 ya desligada». `f1Borrados()` y
+  // `resolverBorradoPendiente()` lo llaman, así que entra en el ámbito de todo
+  // arnés que extraiga cualquiera de las dos.
+  'function purgaP24Desligada(j)',
+  // P27: «¿alguna fila de projects usa esta partición?». Lo llaman el predicado de
+  // P26 y la guarda de `vaciarParticionDe()`.
+  'function particionUsadaPorFila(particion)',
   'function f1Borrados()',
   'function f1Global()',
   'function resumirDirectorio(dir)',
@@ -100,6 +107,10 @@ const CONSTS_B5 = [
   // P24: `leerJournalBorrado()` la consulta ahora para aceptar `recursos:[]` con
   // `sinRecursos:true` (solo tipos cuyo contrato permite cero recursos).
   'const BORRADOS_TIPOS_SIN_RECURSOS =',
+  // P26: las dos que necesita `purgaP24Desligada()` (forma de la partición y
+  // nombre de carpeta normalizado para compararla con las filas de `projects`).
+  'const PARTICION_PROYECTO_PERSISTENTE_RE =',
+  'const carpetaDeParticion =',
   'const BACKUP_KEEP =',
   "const RESTAURACIONES_DIR_NAME = '.panorama-restauraciones';",
   // H-1: las necesita `leerJournalRestauracion()`, que ahora entra en el ambito
