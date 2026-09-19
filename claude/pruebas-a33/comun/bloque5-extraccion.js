@@ -97,6 +97,9 @@ const CONSTS_B5 = [
   "const BORRADOS_DIR_NAME = '.panorama-borrados';",
   'const BORRADOS_JOURNAL_V =',
   'const BORRADOS_TIPOS =',
+  // P24: `leerJournalBorrado()` la consulta ahora para aceptar `recursos:[]` con
+  // `sinRecursos:true` (solo tipos cuyo contrato permite cero recursos).
+  'const BORRADOS_TIPOS_SIN_RECURSOS =',
   'const BACKUP_KEEP =',
   "const RESTAURACIONES_DIR_NAME = '.panorama-restauraciones';",
   // H-1: las necesita `leerJournalRestauracion()`, que ahora entra en el ambito

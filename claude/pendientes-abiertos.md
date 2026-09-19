@@ -36,6 +36,8 @@ verificadas como reales.
 | B1 | **CERRADO** (15 sept 2026) | Contexto de pasada (4→1 y 2→1 lecturas), lectura pura, rastro sin spam y `computeStaffingRatio` fuera del listado. Batería **77 OK/0**, Electron real **24 OK/0**, cuatro reversiones. Ver §B1, abajo |
 | C1 | **ABIERTO**, partido en dos (16 sept 2026) | Diagnóstico: **117** backups sin fila, **39,67 MB** (no ~80), **7 particiones** de proyectos borrados (72 MB), CV no decidibles. **C1-A — CERRADO:** inventario de residuos al arrancar (solo lectura, una línea en `app.log`), CV de «Eliminar evaluación» e «Importar» retirados solo con `aplicado+verificado`, y mensajes que ya no prometen «se resuelve sola». Batería **165 OK/0**, Electron real **31 OK/0**, siete reversiones. **C1-B — ABIERTO / DIFERIDO:** retirada de lo histórico, hasta tener garantías multi-PC/Drive. Ver §C1 |
 | P16 | **ABIERTO** *(16 sept 2026)* | **Particiones de Chromium dentro de la carpeta sincronizada.** Las vivas suman ~755 MB, ~721 MB de caché; una sola lleva ~523 MB de Service Worker de un origen https externo. Ubicación, sincronización innecesaria, crecimiento y ciclo de vida. Relacionado con A3.3 Bloque 8 / ciclo de vida de Drive y con P14. **No es C1.** Ver §P16 |
+| P24 | **CERRADO** (19 sept 2026) | **`projects:create` con importación fallida dejaba la partición huérfana sin journal.** Distinto de C1-B (huérfanos históricos, multi-PC) y de P16 (arquitectura): aquí la fila y la partición nacen y fallan en la MISMA sesión, sin ambigüedad de otro equipo. Reutiliza `ejecutarBorrado`/`resolverBorradoPendiente` con `tipo:'rollback-creacion-proyecto'` — nunca un `DELETE` directo. Si F-1 sigue ocupado tras reintento acotado (3×300ms) o el journal no se puede escribir, la fila **no se toca** (ella misma es la referencia durable). Batería real-Electron **62 OK/0**, reversiones **7 familias, 22 OK/0** (tras la inspección final: `sinRecursos` acotado por tipo y convergencia demostrada en el arranque real). Ver §P24 |
+| P25 | **ABIERTO — bajo** *(19 sept 2026)* | **`writeLocalStorageDumpToPartition()` no cierra `helperWin` si `loadFile()` rechaza** (el `.catch(reject)` final no llama a `helperWin.close()`, a diferencia de las otras dos ramas). Afecta a los cuatro llamadores (creación con import, restauración de backups). Encontrado al implementar P24; deliberadamente sin corregir, para no mezclar su diff. Ver §P24 |
 | E2 | **CERRADO** (15 sept 2026) | `vendor/service-status.js` como fuente única. Batería **67 OK/0**, Electron real **42 OK/0**, dos reversiones. Ver §E2, abajo |
 | P13 | **ABIERTO / ACEPTADO TEMPORALMENTE — baja-media** *(15 sept 2026)* | **Frescura del origen**: lanzador = snapshot del último backup persistido; dashboard abierto = estado vivo. **Decisión del usuario:** no se cambia la fuente ahora. Ver §P13 |
 | B3 | **CERRADO** (15 sept 2026) | Los errores relevantes **ya no dependen exclusivamente de `console`**. Cifrado de backup **fail-closed**, el Directorio avisa cuando no puede guardar, **15** líneas de rastro nuevas en `main.js` (9 con dedupe por sesión) y saneado de rutas. Los 19 `console.warn` siguen ahí: B3 añade al lado, no sustituye. Catch vacíos 26 → 17. Batería **85 OK/0**, Electron real **36 OK/0**, siete reversiones. Ver §B3, abajo |
@@ -2855,6 +2857,175 @@ arriba), status 1 ya no se lee ciegamente como ausencia, batería (55/0) y
 reversiones (8 familias, 33/0) discriminan correctamente, regresión focal en
 verde). El riesgo residual de `WM_QUERYENDSESSION` en guardianes
 v0.1.60–v0.1.69 sigue sin resolver, sin cambios respecto al párrafo de arriba.
+
+## P24 — CERRADO (19 sept 2026): rollback seguro de partición en creación fallida
+
+**Nace del diagnóstico 8D/P16** (particiones de Chromium), pero es un defecto
+distinto y separado: **evitar crear huérfanos NUEVOS**, no retirar los
+históricos (C1-B, sigue diferido) ni decidir arquitectura multi-PC (P16,
+Block 9).
+
+**Qué era.** `projects:create` con importación reserva una fila y su
+`partition_name` en `panorama.sqlite3`, y `seedNewProjectStorage()` la
+materializa en disco (construir la `BrowserWindow` con esa partición ya basta,
+aunque falle justo después). Si el sembrado fallaba, el código hacía
+`dbmod.run('DELETE FROM projects WHERE id=?', [id])` **directo, sin journal**
+— la fila desaparecía y la carpeta de la partición quedaba huérfana para
+siempre. **Reproducido en sandbox real (Electron, sin mocks):** forzando el
+fallo de `restore-helper.html`, la carpeta `Partitions/<nombre>` aparecía en
+disco con 0 filas en `projects` apuntando a ella.
+
+**Qué hace ahora.** El mismo protocolo que cualquier otro borrado
+(`ejecutarBorrado`/journal durable → commit → `finalizarPurga` →
+`resolverBorradoPendiente` al arrancar), con un `tipo` propio,
+`'rollback-creacion-proyecto'`, para no mezclarlo en el log con un
+`'borrar-proyecto'` real:
+
+```js
+const f1 = await f1GlobalConReintento();       // 3 intentos, 300ms, asíncrono
+if (!f1.libre) {
+  // fila SIN TOCAR: ella misma es la referencia durable id<->partition_name
+} else {
+  const r = await ejecutarBorrado({
+    tipo: 'rollback-creacion-proyecto', particion: partition, recursos: [],
+    permitirSinArchivos: true,
+    sentencias: () => [{ sql: 'DELETE FROM projects WHERE id=?', params: [id] }],
+  });
+  // r.aplicado === false (p.ej. journal no escribible) => fila SIN TOCAR también
+}
+throw e; // el error ORIGINAL de seedNewProjectStorage, siempre, sin sustituir
+```
+
+**Corrección empírica durante la implementación (importante, cambia el diseño
+autorizado en la ronda de validación anterior):** la idea original era obtener
+la ruta física con `session.fromPartition(j.particion).getStoragePath()`,
+"la forma correcta según Electron". **Medido en sandbox, dos veces:** llamar a
+`getStoragePath()` — incluso sin `clearStorageData()` — ya basta para que
+Chromium mantenga viva, en ESE proceso, una referencia a la partición que
+bloquea el `fs.rmSync` inmediatamente siguiente, **incluso en un arranque
+nuevo que nunca antes la había tocado**. La única forma medida que funciona:
+construir la ruta A MANO desde `app.getPath('sessionData')` (nunca desde
+`session.fromPartition`) y saltarse `clearStorageData()` por completo para
+este `tipo` — redundante cuando se va a destruir la carpeta entera.
+
+**Bug lateral encontrado y corregido (no era de P24, pero lo bloqueaba):**
+`leerJournalBorrado()` rechazaba cualquier journal con `recursos:[]` como
+"no-demostrable" — correcto para un journal corrupto, pero
+`rollback-creacion-proyecto` SIEMPRE tiene `recursos:[]` (no hay nada que
+retirar). El mismo riesgo ya existía, sin haberse disparado nunca en
+producción, en `purgar-backups` cuando todos los `file_path` faltan. Arreglo:
+el journal declara `sinRecursos:true` cuando `permitirSinArchivos` lo
+autorizó de verdad, y solo entonces se acepta vacío.
+
+**Batería** (`p24/test-p24-rollback.js` + `comprobar-p24.js`, Electron real —
+no extracción por firma: P24 depende de materialización genuina de
+particiones y del EBUSY real de Chromium, que ningún doble reproduce fiel):
+**32 OK / 0 FALLOS** — creación normal (con y sin import), seed falla (journal
++ DELETE + partición viva tras el fallo, como se espera en la misma sesión),
+F-1 ocupado (fila conservada), journal no escribible (fila conservada), otro
+proyecto intacto, siguiente arranque (proceso nuevo) completa la purga.
+
+**Reversiones** (`revertir-p24.js`, 5 familias — las copias revertidas se
+escriben TEMPORALMENTE en la raíz del proyecto, nunca bajo `claude/`, porque
+`require('./db')`/rutas de `__dirname` solo resuelven ahí; se borran siempre,
+con éxito o con fallo): **16 OK / 0 FALLOS**. R1 (vuelve al `DELETE` directo)
+reaparece el huérfano. R2 (borra igual con F-1 ocupado) rompe el fail-closed.
+R3 (sin verificar `fs.existsSync` tras `rmSync`) — comprobación estática,
+no se puede fabricar de forma fiable el caso real. R4 (ruta por
+`getStoragePath()` en vez de `sessionData` a mano) rompe la purga en el
+siguiente arranque — el mismo defecto que se corrigió durante la
+implementación, ahora blindado. R5 (borra el journal aunque la purga falle)
+rompe la recuperación posterior.
+
+**Regresión:** `node --check main.js` limpio · P9 298/0 · P22 75/0 · 8A 55/0 ·
+8B 25/0 · single-instance 11/0 · **C1 165/0** (una aserción estática,
+`C1-S23`, actualizada con nota: antes exigía UNA sola mención de `"Partitions"`
+en todo el código; ahora exige DOS —C1-A y P24— y comprueba por separado que
+`deleteProjectById` sigue sin tocar la carpeta).
+
+**Custodia:** todo en sandbox marcado bajo `%TEMP%`; los 7 huérfanos reales,
+`zfuedb`, C1-B, P10, P16 y la carpeta de Drive real no se han tocado.
+
+**P24 → CERRADO.** Nunca se pierde la referencia `id↔partition_name` sin que
+exista antes otra durable; F-1 ocupado y journal no escribible conservan la
+fila; `rmSync` fallido conserva el journal; el siguiente arranque completa la
+purga; reversiones discriminan; regresión focal en verde.
+
+**P25 → ABIERTO, deliberadamente sin corregir aquí.** `writeLocalStorageDumpToPartition()`
+no cierra `helperWin` si `loadFile()` rechaza (falta en el `.catch(reject)`
+final, a diferencia de las otras dos ramas) — afecta a sus cuatro llamadores,
+no solo a P24. Su diff queda separado a propósito.
+
+### P24 — INSPECCIÓN FINAL PRE-CIERRE (19 sept 2026): `sinRecursos` acotado y convergencia en el arranque real
+
+**Contrato de `sinRecursos:true` — corregido (demasiado amplio).** La primera
+versión aceptaba `recursos:[]` + `sinRecursos:true` para CUALQUIER `tipo` de
+`BORRADOS_TIPOS`, incluido `borrar-proyecto`. Ahora `leerJournalBorrado()` lo
+acepta solo si el `tipo` está en `BORRADOS_TIPOS_SIN_RECURSOS` = `{purgar-backups,
+borrar-prep, rollback-creacion-proyecto}`, que son exactamente los que llaman a
+`ejecutarBorrado` con `permitirSinArchivos:true` (o, el último, no tienen nunca
+nada que retirar). `borrar-proyecto` NO está: declara siempre sus dos carpetas y
+no pasa `permitirSinArchivos`, así que ningún journal suyo del producto lleva la
+marca. Cambio de una línea + una constante; el mensaje de rechazo y el resto del
+contrato del journal no se tocan. La marca sigue siendo `=== true` estricto y no
+salta ninguna otra exigencia (tipo, `action_id`, `writer`, fase, `particion`,
+`recursos` como array, validación de recursos no vacíos).
+
+**Orden real del arranque** (`app.whenReady`, `main.js`): `appLog('Arranque')` →
+guarda P9 → P22 (`autorizarCarpetaLocal`) → `showSplashWindow()` (sesión por
+defecto, sin partición de proyecto) → `startUserDataWatchdog`/`readStockTemplate`
+→ `waitForCloudSyncIdleAtStartup` → `checkCustomLocationDatabaseSanity` →
+`syncDriveSyncGuardWithLocation` → `checkMultiPcLock` → política A3.3 → `getDb` →
+rekey → acciones → **`recuperarBorradosPendientes()`** → restauraciones →
+`maybeRunPeriodicVacuum` → login → migración → `registrarInventarioDeResiduos`
+(solo `fs`) → **`createLauncherWindow()`**. Los únicos `session.fromPartition` de
+todo `main.js` son `clearStorageData`/`flushStorageData` de restauraciones y
+borrados de un proyecto REAL, y ninguno puede nombrar la partición de un
+`rollback-creacion-proyecto`: su fila ya no existe, y el nombre solo figura en el
+journal y en la carpeta. La única recuperación anterior que abre particiones de
+proyecto (restauraciones) va DESPUÉS de la de borrados; ninguna ventana de
+proyecto se abre sola.
+
+**Prueba del arranque real** (`p24/`, modo `reintento`, grupo `P24-16`):
+preparación por el propio producto (journal pendiente, fila borrada, carpeta
+viva, proceso cerrado), después un proceso NUEVO que carga `main.js` sin crear
+ventanas ni invocar handlers, con observadores pasivos (`app.on('session-created')`,
+`browser-window-created` y un registro de `rmSync/unlinkSync/renameSync` sobre
+`Partitions/` y `.panorama-borrados`, en una secuencia común). Medido: sesión por
+defecto → splash → reescritura del journal en fase de purga → `rmSync` de la
+partición (ok) → `unlink` del journal → lanzador. Ninguna sesión creada apunta a
+la carpeta; `existsSync === false`; el journal cae DESPUÉS; sin diálogo PS-2006 ni
+línea de purga fallida en el `app.log` de ese arranque. Custodia añadida al
+arnés: `LOCALAPPDATA`/`APPDATA` del proceso redirigidos al sandbox
+(`driveSyncGuardDataDir()` los lee; sin esto el arranque miraría la protección de
+apagado REAL). Comprobado antes y después: flag, heartbeat, Run y tarea reales
+intactos.
+
+**Reversiones nuevas:** R6 (marca indiscriminada) cae exactamente
+`P24-15 borrar-proyecto + recursos:[] + sinRecursos:true NO es válido`. R7
+(referencia a `session.fromPartition` ANTES de `recuperarBorradosPendientes`) cae
+todo el grupo del arranque real: partición tocada, `rmSync` con EBUSY, carpeta y
+journal vivos, cierre por PS-2006. Las tumbas de R1/R4/R5 se ampliaron solo con lo
+observado.
+
+**Cifras:** batería P24 **62 OK / 0** (18 de contrato + 12 de arranque real);
+reversiones **7 familias, 22 OK / 0**. Regresión por tocar el parser: Bloque 5
+borrados 80/0 y cableado 58/0, Bloque 4 acciones 243/0 y consumidores 168/0,
+A2 129/0 y 66/0, Bloque 3 223/0, C1 165/0. Ajuste de arnés (no de producto):
+`comun/bloque5-extraccion.js` incluye la nueva constante.
+
+**Hallazgos fuera de alcance — NO corregidos, decisión pendiente:**
+1. *(medido)* En la MISMA sesión, un import fallido deja el journal pendiente (el
+   `EBUSY` es lo normal ahí) y F-1 lo cuenta como borrado propio sin resolver:
+   `backup:save` y `projects:delete` de OTRO proyecto se rechazan con
+   `bloqueo:'accion-no-demostrable'` hasta reiniciar. Es inherente a reutilizar el
+   protocolo de borrados (F-1 protege la marca de acciones de ser desalojada), no
+   un fallo del arreglo, pero antes un import fallido no bloqueaba nada.
+2. *(razonado, no medido con un bloqueo real)* Si en el arranque la purga no puede
+   completarse (p. ej. Drive reteniendo archivos de `Partitions/` en `G:`),
+   `recuperarBorradosPendientes()` devuelve no-ok y el arranque muestra PS-2006 y
+   se cierra: mismo comportamiento fail-closed que cualquier borrado con purga
+   pendiente.
 
 ## Block 8B — lock multi-PC (18 sept 2026)
 

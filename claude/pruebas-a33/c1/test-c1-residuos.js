@@ -449,10 +449,18 @@ const shaBuf = (b) => crypto.createHash('sha256').update(b).digest('hex');
     !/localSafetyBackupsDirForProject|panorama-app-safety-backups/.test(cuerpo('async function deleteProjectById(id)')));
   S('22', 'borrar un proyecto declara DOS recursos: su carpeta de backups y su dashboard horneado',
     /origen: rutaBackupsPura\(row\) \},\s*\{ tipo: 'directorio', scope: 'subtree', origen: rutaDashboardPura\(id\) \}/.test(cuerpo('async function deleteProjectById(id)')));
-  S('23', '…y su partición de Electron solo se VACÍA (`clearStorageData`): la carpeta `Partitions/<nombre>` no es un recurso',
+  S('23', '…y su partición de Electron solo se VACÍA (`clearStorageData`): la carpeta `Partitions/<nombre>` no es un recurso [para un borrado de proyecto REAL]',
     /session\.fromPartition\(j\.particion\)\.clearStorageData\(\)/.test(SRC) &&
-    // desde C1-A la carpeta solo se nombra en el inventario, para contarla
-    (COD.match(/Partitions/g) || []).length === 1 && /path\.join\(ud, 'Partitions'\)/.test(INV));
+    // P24 (19 sept 2026): añade la SEGUNDA mención de "Partitions" del
+    // codebase — destruye físicamente la carpeta, pero SOLO para
+    // 'rollback-creacion-proyecto' (una partición que nació y falló en la
+    // MISMA sesión, sin la ambigüedad multi-PC de un huérfano histórico).
+    // Un 'borrar-proyecto' real sigue sin tocar la carpeta, a propósito — de
+    // ahí que aquí se compruebe la rama de vaciarParticionDe por separado,
+    // no el conteo global de apariciones de la palabra.
+    !/tipo === 'rollback-creacion-proyecto'[\s\S]*?fs\.rmSync/.test(cuerpo('async function deleteProjectById(id)')) &&
+    (COD.match(/Partitions/g) || []).length === 2 && /path\.join\(ud, 'Partitions'\)/.test(INV) &&
+    /app\.getPath\('sessionData'\), 'Partitions'/.test(cuerpo('async function vaciarParticionDe(j)')));
 
   // =========================================================================
   seccion('C1-E1. BACKUP HUÉRFANO REAL (resto de purga) — la purga de hoy NO lo ve');

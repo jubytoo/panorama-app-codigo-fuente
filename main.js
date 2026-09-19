@@ -6485,7 +6485,21 @@ function resolverAccionPendiente(j) {
 // ===========================================================================
 const BORRADOS_DIR_NAME = '.panorama-borrados';
 const BORRADOS_JOURNAL_V = 1;
-const BORRADOS_TIPOS = new Set(['borrar-proyecto', 'borrar-prep', 'purgar-backups']);
+// P24 (19 sept 2026): 'rollback-creacion-proyecto' es el rollback de una
+// creación con importación cuyo seed falló -- MISMO protocolo que un borrado
+// real (journal durable antes de nada destructivo, un commit, purga después),
+// pero NUNCA se confunde con 'borrar-proyecto' en el log: aquí nunca llegó a
+// haber un proyecto real que perder, y solo este tipo destruye físicamente la
+// carpeta de la partición (ver vaciarParticionDe) — un 'borrar-proyecto' real
+// sigue sin hacerlo, a propósito (ver P16/C1-B, retirada diferida).
+const BORRADOS_TIPOS = new Set(['borrar-proyecto', 'borrar-prep', 'purgar-backups', 'rollback-creacion-proyecto']);
+// P24: los ÚNICOS tipos cuyo contrato permite explícitamente cero recursos —
+// los mismos que llaman a `ejecutarBorrado` con `permitirSinArchivos:true`
+// (`purgar-backups`, `borrar-prep`) más `rollback-creacion-proyecto`, que
+// nunca tiene nada que retirar. `borrar-proyecto` NO está: declara siempre
+// sus dos carpetas y no pasa `permitirSinArchivos`, así que su journal nunca
+// lleva `sinRecursos` y uno que lo traiga no es del producto.
+const BORRADOS_TIPOS_SIN_RECURSOS = new Set(['purgar-backups', 'borrar-prep', 'rollback-creacion-proyecto']);
 
 function borradosDir() {
   return path.join(app.getPath('userData'), BORRADOS_DIR_NAME);
@@ -6560,8 +6574,15 @@ function leerJournalBorrado(ruta) {
   if (!esHex(j.base_commit_id, 32)) falta.push('base_commit_id no es un commit válido');
   if (j.fase !== 'retirando' && j.fase !== 'purgando') falta.push(`fase inesperada (${JSON.stringify(j.fase)})`);
   if (typeof j.startedAt !== 'string' || !j.startedAt) falta.push('startedAt vacío');
-  if (!Array.isArray(j.recursos) || j.recursos.length === 0) {
-    falta.push('recursos no es un array no vacío');
+  if (!Array.isArray(j.recursos)) {
+    falta.push('recursos no es un array');
+  } else if (j.recursos.length === 0) {
+    // P24: solo se acepta vacío si el propio journal declaró `sinRecursos`
+    // (escrito únicamente cuando `ejecutarBorrado` recibió `permitirSinArchivos`
+    // y de verdad no quedó nada que retirar) — un array vacío SIN esa marca
+    // sigue siendo indistinguible de un journal truncado, y sigue fallando
+    // cerrado igual que antes.
+    if (j.sinRecursos !== true || !BORRADOS_TIPOS_SIN_RECURSOS.has(j.tipo)) falta.push('recursos no es un array no vacío');
   } else {
     j.recursos.forEach((r, i) => {
       const p = (m) => falta.push(`recurso[${i}]: ${m}`);
@@ -6756,6 +6777,23 @@ function f1Global() {
   return { libre: true };
 }
 
+// P24 (19 sept 2026) -- F-1 no es un mutex en memoria, es un barrido de
+// journals en disco: una contienda real con OTRA operación de esta misma
+// instalación (otra ventana guardando/borrando algo a la vez) suele resolverse
+// en milisegundos. 3 intentos separados por 300ms (peor caso 600ms de espera,
+// solo en el camino de FALLO de una importación, nunca en el camino normal)
+// dan margen a esa contienda momentánea sin arriesgar una espera larga.
+// Siempre asíncrono (setTimeout dentro de una promesa): nunca Atomics.wait ni
+// una espera síncrona que congele el proceso principal.
+async function f1GlobalConReintento() {
+  for (let intento = 0; intento < 3; intento++) {
+    const g = f1Global();
+    if (g.libre) return g;
+    if (intento < 2) await new Promise((r) => setTimeout(r, 300));
+  }
+  return f1Global();
+}
+
 // --- inventario, sin efectos colaterales -----------------------------------
 function resumirDirectorio(dir) {
   let n = 0; let bytes = 0;
@@ -6822,8 +6860,54 @@ function purgarTodo(j) {
 
 // La partición NO es reversible y por eso NO es un recurso del journal: se
 // vacía aquí, después del commit, y se reintenta al arrancar si falla.
+//
+// P24 (19 sept 2026): para 'rollback-creacion-proyecto' además se destruye la
+// CARPETA física — nunca para un 'borrar-proyecto' real. Es seguro solo aquí:
+// la fila que motivó esta partición se creó y se deshizo en la MISMA
+// operación, sin haber podido sincronizarse a ningún otro equipo — ninguna de
+// las cautelas multi-PC de C1-B (huérfanos históricos, de origen ambiguo)
+// aplica a una partición que acaba de nacer y fallar en este mismo proceso.
+//
+// CORRECCIÓN EMPÍRICA (19 sept 2026, durante la implementación): la primera
+// versión de esta función usaba `session.fromPartition(j.particion)` —
+// primero para `clearStorageData()`, luego para `getStoragePath()` — y SOLO
+// DESPUÉS intentaba `fs.rmSync`. Medido en sandbox, en dos rondas de prueba:
+// no es únicamente que la MISMA sesión que falló al crear la partición
+// bloquee su propio `rmSync` (eso sí es el caso esperado y documentado más
+// abajo) — un proceso COMPLETAMENTE NUEVO, que nunca antes había tocado esa
+// partición, TAMBIÉN pierde la capacidad de borrarla en cuanto llama, aunque
+// sea una sola vez, a `session.fromPartition(esa partición)` — incluso solo
+// para leer `getStoragePath()`, sin `clearStorageData()`. Es decir:
+// `getStoragePath()` no es una lectura inocua, ES ya una referencia que dejar
+// vivo el Storage Service de Chromium para esa partición en ese proceso —
+// justo lo que un arranque de recuperación NO se puede permitir, porque
+// necesita poder borrar la carpeta acto seguido, en el MISMO proceso.
+// Confirmado el mecanismo correcto, también en sandbox: construir la ruta A
+// MANO desde `app.getPath('sessionData')` (nunca desde `session.fromPartition`)
+// y saltarse `clearStorageData()` por completo para este tipo —es redundante
+// cuando se va a destruir la carpeta entera— deja al proceso de recuperación
+// SIN ninguna referencia previa a la partición, y ahí sí completa el
+// `fs.rmSync`. `sessionData` (no `userData` directamente) porque hoy son
+// idénticos pero solo `sessionData` seguiría siendo correcto si algún día
+// llegaran a separarse (P16, sin decidir todavía).
 async function vaciarParticionDe(j) {
   if (!j.particion) return { ok: true };
+  if (j.tipo === 'rollback-creacion-proyecto') {
+    const nombre = String(j.particion).replace(/^persist:/, '');
+    const ruta = path.join(app.getPath('sessionData'), 'Partitions', nombre);
+    if (!fs.existsSync(ruta)) return { ok: true };
+    try {
+      fs.rmSync(ruta, { recursive: true, force: true });
+    } catch (e) {
+      appLog(`Borrado — no se pudo eliminar la carpeta de la partición ${j.particion}: ${String((e && e.message) || e)}`);
+      return { ok: false, particionPendiente: true, motivo: String((e && e.message) || e) };
+    }
+    if (fs.existsSync(ruta)) {
+      appLog(`Borrado — la carpeta de la partición ${j.particion} sigue existiendo tras intentar eliminarla.`);
+      return { ok: false, particionPendiente: true, motivo: 'la carpeta sigue existiendo tras fs.rmSync' };
+    }
+    return { ok: true };
+  }
   try {
     await session.fromPartition(j.particion).clearStorageData();
     return { ok: true };
@@ -6933,6 +7017,14 @@ async function ejecutarBorrado(opts) {
     base_commit_id: base, fase: 'retirando', startedAt: new Date().toISOString(),
     recursos,
   };
+  // P24 (19 sept 2026): `recursos:[]` es LEGÍTIMO cuando `permitirSinArchivos`
+  // lo autorizó (la fila existe pero no hay nada que retirar — ya pasaba con
+  // `purgar-backups` cuando todos los `file_path` ya faltaban, y es SIEMPRE
+  // el caso de `rollback-creacion-proyecto`). Sin esta marca, la relectura
+  // del journal (`leerJournalBorrado`, más abajo) lo rechazaba como
+  // "no-demostrable" — un journal bien formado, legítimamente vacío, no debe
+  // fallar-cerrado igual que uno truncado o corrupto.
+  if (recursos.length === 0 && o.permitirSinArchivos) journal.sinRecursos = true;
   if (o.particion) journal.particion = String(o.particion);
 
   // ---- F1: journal durable ANTES de mover nada ----------------------------
@@ -13113,9 +13205,36 @@ ipcMain.handle('projects:create', async (evt, { name, client, startDate, importJ
     try {
       await seedNewProjectStorage(row, storageKey, historyKey, imported.state, imported.history);
     } catch (e) {
-      // El proyecto ya se insertó en la BD para tener su partición reservada;
-      // si sembrar sus datos falla no se deja un proyecto fantasma a medias.
-      dbmod.run('DELETE FROM projects WHERE id=?', [id]);
+      // P24 (19 sept 2026): el proyecto ya se insertó en la BD para tener su
+      // partición reservada. Antes esto borraba la fila directamente, sin
+      // journal, dejando la partición huérfana para siempre (medido y
+      // reproducido en sandbox). Ahora se reutiliza el MISMO protocolo que
+      // cualquier otro borrado (journal durable -> commit -> purga), nunca un
+      // borrado directo. Si por lo que sea no se puede ni empezar el rollback
+      // con seguridad (F-1 ocupado, o el propio journal no se puede escribir),
+      // la fila NO se toca: sigue siendo, ella misma, la referencia durable
+      // id<->partition_name (ya vive en panorama.sqlite3, con su propia
+      // robustez de escritura) — nunca se pierde esa referencia sin que exista
+      // antes otra. El usuario sigue viendo, en todos los casos, el error
+      // ORIGINAL de seedNewProjectStorage: los problemas del rollback en sí se
+      // registran aparte y nunca lo sustituyen.
+      const f1 = await f1GlobalConReintento();
+      if (!f1.libre) {
+        appLog(`Aviso — P24: no se pudo iniciar la limpieza de la partición del proyecto ${id} (F-1 ocupado tras reintento); la fila queda tal cual, incompleta pero visible y borrable a mano. Motivo: ${f1.motivo}`);
+      } else {
+        const r = await ejecutarBorrado({
+          tipo: 'rollback-creacion-proyecto',
+          particion: partition,
+          recursos: [],
+          permitirSinArchivos: true,
+          sentencias: () => [{ sql: 'DELETE FROM projects WHERE id=?', params: [id] }],
+        });
+        if (!r.aplicado) {
+          appLog(`Aviso — P24: no se pudo escribir el journal de rollback para el proyecto ${id}; la fila queda tal cual, incompleta pero visible y borrable a mano. Motivo: ${r.error}`);
+        } else if (r.purga && r.purga.ok === false) {
+          appLog(`Aviso — P24: proyecto ${id} borrado, pero la partición ${partition} no se pudo limpiar del todo (queda pendiente para el próximo arranque). Motivo: ${r.purga.motivo}`);
+        }
+      }
       throw e;
     }
   }
